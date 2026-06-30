@@ -12,6 +12,7 @@ public record ContactResponse(
         String title,
         String greetingName,
         Long companyId,
+        String companyName,
         String contactKind,
         String contactValue,
         String notes,

@@ -44,6 +44,7 @@ public class DtoMapper {
                 p != null ? p.getTitle() : null,
                 p != null ? p.getGreetingName() : null,
                 ct.getCompany() != null ? ct.getCompany().getId() : null,
+                ct.getCompany() != null ? ct.getCompany().getName() : null,
                 ct.getContactKind(), ct.getContactValue(), ct.getNotes(),
                 ct.isConfirmed(), ct.getConfirmedAt(), ct.getConfirmedBy(), ct.getConfirmNotes());
     }

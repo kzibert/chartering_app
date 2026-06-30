@@ -106,6 +106,7 @@ export interface ContactResponse {
   title?: string;
   greetingName?: string;
   companyId?: number;
+  companyName?: string;
   contactKind: string; // 'email' | 'phone'
   contactValue: string;
   notes?: string;
@@ -131,6 +132,22 @@ export interface ConfirmRequest {
 export interface LookupResponse {
   id: number;
   name: string;
+}
+
+/**
+ * One row in the (client-side only) email list used for mass-mail prep.
+ * Keyed by contactId; carries the person/company context + referencing ids so the
+ * exported sheet is self-describing.
+ */
+export interface EmailListEntry {
+  contactId: number;
+  email: string;
+  personId?: number;
+  personName?: string;
+  greetingName?: string;
+  title?: string;
+  companyId?: number;
+  companyName?: string;
 }
 
 // Query param shapes for list endpoints.

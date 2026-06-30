@@ -1,28 +1,42 @@
 import { ReactNode } from 'react';
-import { Layout, Menu, Typography } from 'antd';
+import { Badge, Layout, Menu, Typography } from 'antd';
 import {
   DashboardOutlined,
   ContainerOutlined,
   BankOutlined,
   TeamOutlined,
   MailOutlined,
+  UnorderedListOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useEmailList } from '../emailList/store';
 
 const { Sider, Header, Content } = Layout;
 
-const ITEMS = [
-  { key: '/', icon: <DashboardOutlined />, label: 'Dashboard' },
-  { key: '/vessels', icon: <ContainerOutlined />, label: 'Vessels' },
-  { key: '/companies', icon: <BankOutlined />, label: 'Companies' },
-  { key: '/people', icon: <TeamOutlined />, label: 'People' },
-  { key: '/contacts', icon: <MailOutlined />, label: 'Contacts' },
-];
+const KEYS = ['/', '/vessels', '/companies', '/people', '/contacts', '/email-list'];
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const selected = ITEMS.some((i) => i.key === location.pathname) ? location.pathname : '/';
+  const { entries } = useEmailList();
+  const selected = KEYS.includes(location.pathname) ? location.pathname : '/';
+
+  const items = [
+    { key: '/', icon: <DashboardOutlined />, label: 'Dashboard' },
+    { key: '/vessels', icon: <ContainerOutlined />, label: 'Vessels' },
+    { key: '/companies', icon: <BankOutlined />, label: 'Companies' },
+    { key: '/people', icon: <TeamOutlined />, label: 'People' },
+    { key: '/contacts', icon: <MailOutlined />, label: 'Contacts' },
+    {
+      key: '/email-list',
+      icon: <UnorderedListOutlined />,
+      label: (
+        <Badge count={entries.length} size="small" offset={[12, 0]}>
+          <span style={{ color: 'inherit' }}>Email list</span>
+        </Badge>
+      ),
+    },
+  ];
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -34,7 +48,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           theme="dark"
           mode="inline"
           selectedKeys={[selected]}
-          items={ITEMS}
+          items={items}
           onClick={(e) => navigate(e.key)}
         />
       </Sider>

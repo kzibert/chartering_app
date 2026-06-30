@@ -1,6 +1,7 @@
 import { List, Space, Tag } from 'antd';
 import CopyableValue from './CopyableValue';
 import GreetingName from './GreetingName';
+import AddToListButton from './AddToListButton';
 import type { ContactResponse } from '../api/types';
 
 /**
@@ -25,6 +26,7 @@ export default function ContactLine({
         <Tag color={ct.contactKind === 'email' ? 'blue' : 'default'}>{ct.contactKind}</Tag>
         <CopyableValue value={ct.contactValue} />
         {ct.confirmed && <Tag color="success">confirmed</Tag>}
+        <AddToListButton ct={ct} />
       </Space>
     </List.Item>
   );

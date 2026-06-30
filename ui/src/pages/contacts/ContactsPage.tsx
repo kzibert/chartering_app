@@ -6,6 +6,7 @@ import { useContacts, useContactMutations } from '../../api/hooks';
 import { useTableControls } from '../../components/useTableControls';
 import ConfirmTag from '../../components/ConfirmTag';
 import CopyableValue from '../../components/CopyableValue';
+import AddToListButton from '../../components/AddToListButton';
 import ContactForm from './ContactForm';
 import type { ContactFilter, ContactResponse } from '../../api/types';
 
@@ -50,9 +51,10 @@ export default function ContactsPage() {
     {
       title: 'Actions',
       key: 'actions',
-      width: 150,
+      width: 180,
       render: (_, c) => (
         <Space>
+          <AddToListButton ct={c} />
           <Button size="small" onClick={() => { setEditing(c); setFormOpen(true); }}>Edit</Button>
           <Popconfirm title="Delete this contact?" onConfirm={() => remove.mutate(c.id)}>
             <Button size="small" danger>Delete</Button>
