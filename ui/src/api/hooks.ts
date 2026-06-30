@@ -63,7 +63,11 @@ export function useVesselMutations() {
       vesselsApi.confirm(v.id, v.confirmed, v.body),
     onSuccess: () => invalidate('vessels', 'vessel'),
   });
-  return { create, update, remove, confirm };
+  const ban = useMutation({
+    mutationFn: (v: { id: number; banned: boolean }) => vesselsApi.setBanned(v.id, v.banned),
+    onSuccess: () => invalidate('vessels', 'vessel', 'company'),
+  });
+  return { create, update, remove, confirm, ban };
 }
 
 /* ---------------- companies ---------------- */
@@ -106,7 +110,11 @@ export function useCompanyMutations() {
       companiesApi.confirm(v.id, v.confirmed, v.body),
     onSuccess: () => invalidate('companies', 'company'),
   });
-  return { create, update, remove, confirm };
+  const ban = useMutation({
+    mutationFn: (v: { id: number; banned: boolean }) => companiesApi.setBanned(v.id, v.banned),
+    onSuccess: () => invalidate('companies', 'company'),
+  });
+  return { create, update, remove, confirm, ban };
 }
 
 /* ---------------- people ---------------- */
@@ -153,5 +161,9 @@ export function useContactMutations() {
       contactsApi.confirm(v.id, v.confirmed, v.body),
     onSuccess: () => invalidate('contacts'),
   });
-  return { create, update, remove, confirm };
+  const ban = useMutation({
+    mutationFn: (v: { id: number; banned: boolean }) => contactsApi.setBanned(v.id, v.banned),
+    onSuccess: () => invalidate('contacts', 'company'),
+  });
+  return { create, update, remove, confirm, ban };
 }

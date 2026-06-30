@@ -126,4 +126,12 @@ public class VesselController {
             @RequestBody(required = false) ConfirmRequest req) {
         return ResponseEntity.ok(vesselService.setConfirmed(id, confirmed, req));
     }
+
+    @PatchMapping("/{id}/ban")
+    @Operation(summary = "Ban a vessel as Russian-rooted (or unban with ?banned=false)")
+    public ResponseEntity<VesselResponse> ban(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "true") boolean banned) {
+        return ResponseEntity.ok(vesselService.setBanned(id, banned));
+    }
 }

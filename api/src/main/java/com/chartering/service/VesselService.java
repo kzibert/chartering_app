@@ -111,6 +111,14 @@ public class VesselService {
     }
 
     @Transactional
+    public VesselResponse setBanned(Long id, boolean banned) {
+        Vessel v = vesselRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Vessel", id));
+        v.setBanned(banned);
+        return mapper.toVesselResponse(vesselRepository.save(v));
+    }
+
+    @Transactional
     public VesselResponse setConfirmed(Long id, boolean confirmed, ConfirmRequest req) {
         Vessel v = vesselRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Vessel", id));

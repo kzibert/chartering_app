@@ -37,4 +37,9 @@ export const companiesApi = {
     client
       .patch<CompanyResponse>(`/companies/${id}/confirm`, body ?? {}, { params: { confirmed } })
       .then((r) => r.data),
+
+  setBanned: (id: number, banned: boolean) =>
+    client
+      .patch<CompanyResponse>(`/companies/${id}/ban`, {}, { params: { banned } })
+      .then((r) => r.data),
 };

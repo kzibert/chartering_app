@@ -66,4 +66,12 @@ public class ContactController {
             @RequestBody(required = false) ConfirmRequest req) {
         return ResponseEntity.ok(contactService.setConfirmed(id, confirmed, req));
     }
+
+    @PatchMapping("/{id}/ban")
+    @Operation(summary = "Ban a contact as Russian-rooted (or unban with ?banned=false)")
+    public ResponseEntity<ContactResponse> ban(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "true") boolean banned) {
+        return ResponseEntity.ok(contactService.setBanned(id, banned));
+    }
 }

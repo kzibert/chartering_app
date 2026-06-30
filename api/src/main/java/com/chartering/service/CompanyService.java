@@ -88,6 +88,14 @@ public class CompanyService {
     }
 
     @Transactional
+    public CompanyResponse setBanned(Long id, boolean banned) {
+        Company c = companyRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Company", id));
+        c.setBanned(banned);
+        return mapper.toCompanyResponse(companyRepository.save(c));
+    }
+
+    @Transactional
     public CompanyResponse setConfirmed(Long id, boolean confirmed, ConfirmRequest req) {
         Company c = companyRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Company", id));

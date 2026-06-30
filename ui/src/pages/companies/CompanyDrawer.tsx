@@ -9,6 +9,7 @@ import {
 } from '../../api/hooks';
 import ConfirmTag from '../../components/ConfirmTag';
 import ContactLine from '../../components/ContactLine';
+import BanButton from '../../components/BanButton';
 import GreetingName from '../../components/GreetingName';
 import VesselDrawer from '../vessels/VesselDrawer';
 import VesselForm from '../vessels/VesselForm';
@@ -22,7 +23,7 @@ interface Props {
 
 export default function CompanyDrawer({ companyId, onClose, onEdit }: Props) {
   const { data, isLoading } = useCompany(companyId);
-  const { confirm, remove } = useCompanyMutations();
+  const { confirm, remove, ban } = useCompanyMutations();
   const c = data?.company;
 
   const [vesselId, setVesselId] = useState<number>();
@@ -39,6 +40,11 @@ export default function CompanyDrawer({ companyId, onClose, onEdit }: Props) {
         c && (
           <Space>
             <Button onClick={() => onEdit(c)}>Edit</Button>
+            <BanButton
+              banned={c.banned}
+              loading={ban.isPending}
+              onToggle={(b) => ban.mutate({ id: c.id, banned: b })}
+            />
             <Button danger loading={remove.isPending} onClick={() => remove.mutate(c.id, { onSuccess: onClose })}>
               Delete
             </Button>
@@ -59,6 +65,7 @@ export default function CompanyDrawer({ companyId, onClose, onEdit }: Props) {
               onConfirm={(body) => confirm.mutate({ id: c.id, confirmed: true, body })}
               onUnconfirm={() => confirm.mutate({ id: c.id, confirmed: false })}
             />
+            {c.banned && <Tag color="red">banned</Tag>}
             {c.cityName && <Tag>{c.cityName}</Tag>}
             {c.shipowner && <Tag color="blue">owner</Tag>}
             {c.charterer && <Tag color="green">charterer</Tag>}

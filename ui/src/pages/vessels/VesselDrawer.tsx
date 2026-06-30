@@ -3,6 +3,7 @@ import { Button, Card, Descriptions, Drawer, List, Space, Spin, Tag, Typography 
 import { useVessel, useVesselMutations } from '../../api/hooks';
 import ConfirmTag from '../../components/ConfirmTag';
 import ContactLine from '../../components/ContactLine';
+import BanButton from '../../components/BanButton';
 import CompanyDrawer from '../companies/CompanyDrawer';
 import CompanyForm from '../companies/CompanyForm';
 import type { CompanyResponse, VesselResponse } from '../../api/types';
@@ -15,7 +16,7 @@ interface Props {
 
 export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
   const { data, isLoading } = useVessel(vesselId);
-  const { confirm, remove } = useVesselMutations();
+  const { confirm, remove, ban } = useVesselMutations();
   const v = data?.vessel;
 
   const [companyId, setCompanyId] = useState<number>();
@@ -32,6 +33,11 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
         v && (
           <Space>
             <Button onClick={() => onEdit(v)}>Edit</Button>
+            <BanButton
+              banned={v.banned}
+              loading={ban.isPending}
+              onToggle={(b) => ban.mutate({ id: v.id, banned: b })}
+            />
             <Button
               danger
               loading={remove.isPending}
@@ -47,7 +53,7 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
         <Spin />
       ) : (
         <>
-          <div style={{ marginBottom: 12 }}>
+          <Space style={{ marginBottom: 12 }} wrap>
             <ConfirmTag
               confirmed={v.confirmed}
               confirmedAt={v.confirmedAt}
@@ -56,7 +62,8 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
               onConfirm={(body) => confirm.mutate({ id: v.id, confirmed: true, body })}
               onUnconfirm={() => confirm.mutate({ id: v.id, confirmed: false })}
             />
-          </div>
+            {v.banned && <Tag color="red">banned</Tag>}
+          </Space>
           <Descriptions column={2} size="small" bordered>
             <Descriptions.Item label="IMO">{v.imoNumber ?? '—'}</Descriptions.Item>
             <Descriptions.Item label="Year">{v.yearBuilt ?? '—'}</Descriptions.Item>

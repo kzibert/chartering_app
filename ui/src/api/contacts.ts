@@ -27,4 +27,9 @@ export const contactsApi = {
     client
       .patch<ContactResponse>(`/contacts/${id}/confirm`, body ?? {}, { params: { confirmed } })
       .then((r) => r.data),
+
+  setBanned: (id: number, banned: boolean) =>
+    client
+      .patch<ContactResponse>(`/contacts/${id}/ban`, {}, { params: { banned } })
+      .then((r) => r.data),
 };

@@ -38,4 +38,9 @@ export const vesselsApi = {
     client
       .patch<VesselResponse>(`/vessels/${id}/confirm`, body ?? {}, { params: { confirmed } })
       .then((r) => r.data),
+
+  setBanned: (id: number, banned: boolean) =>
+    client
+      .patch<VesselResponse>(`/vessels/${id}/ban`, {}, { params: { banned } })
+      .then((r) => r.data),
 };

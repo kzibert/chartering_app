@@ -68,6 +68,13 @@ public class ContactService {
     }
 
     @Transactional
+    public ContactResponse setBanned(Long id, boolean banned) {
+        Contact ct = find(id);
+        ct.setBanned(banned);
+        return mapper.toContactResponse(contactRepository.save(ct));
+    }
+
+    @Transactional
     public ContactResponse setConfirmed(Long id, boolean confirmed, ConfirmRequest req) {
         Contact ct = find(id);
         ct.setConfirmed(confirmed);

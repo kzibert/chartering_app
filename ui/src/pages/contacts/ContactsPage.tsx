@@ -7,6 +7,7 @@ import { useTableControls } from '../../components/useTableControls';
 import ConfirmTag from '../../components/ConfirmTag';
 import CopyableValue from '../../components/CopyableValue';
 import AddToListButton from '../../components/AddToListButton';
+import BanButton from '../../components/BanButton';
 import ContactForm from './ContactForm';
 import type { ContactFilter, ContactResponse } from '../../api/types';
 
@@ -14,7 +15,7 @@ export default function ContactsPage() {
   const [form] = Form.useForm();
   const [filters, setFilters] = useState<Partial<ContactFilter>>({});
   const tc = useTableControls();
-  const { confirm, remove } = useContactMutations();
+  const { confirm, remove, ban } = useContactMutations();
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<ContactResponse | null>(null);
 
@@ -60,11 +61,17 @@ export default function ContactsPage() {
     {
       title: 'Actions',
       key: 'actions',
-      width: 180,
+      width: 260,
       render: (_, c) => (
-        <Space>
+        <Space wrap>
           <AddToListButton ct={c} />
           <Button size="small" onClick={() => { setEditing(c); setFormOpen(true); }}>Edit</Button>
+          <BanButton
+            banned={c.banned}
+            loading={ban.isPending}
+            size="small"
+            onToggle={(b) => ban.mutate({ id: c.id, banned: b })}
+          />
           <Popconfirm title="Delete this contact?" onConfirm={() => remove.mutate(c.id)}>
             <Button size="small" danger>Delete</Button>
           </Popconfirm>
