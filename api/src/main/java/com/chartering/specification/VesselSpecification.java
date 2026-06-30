@@ -59,6 +59,11 @@ public final class VesselSpecification {
         return (root, query, cb) -> includeBanned ? null : cb.isFalse(root.get("banned"));
     }
 
+    /** Filter by provenance: true = imported legacy, false = created in-app; null = all. */
+    public static Specification<Vessel> legacyEquals(Boolean legacy) {
+        return (root, query, cb) -> legacy == null ? null : cb.equal(root.get("legacy"), legacy);
+    }
+
     public static Specification<Vessel> numberRange(String field, BigDecimal min, BigDecimal max) {
         return (root, query, cb) -> {
             if (min == null && max == null) return null;

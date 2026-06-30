@@ -39,6 +39,7 @@ export default function ContactsPage() {
       render: (v: string, c) => (
         <Space size={4}>
           <CopyableValue value={v} />
+          {!c.legacy && <Tag color="green">new</Tag>}
           {c.banned && <Tag color="red">banned</Tag>}
         </Space>
       ),
@@ -102,6 +103,17 @@ export default function ContactsPage() {
             <Button type="primary" htmlType="submit" icon={<SearchOutlined />}>Search</Button>
             <Button onClick={() => { form.resetFields(); applyFilters({}); }}>Reset</Button>
             <Button icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true); }}>New contact</Button>
+            <Form.Item name="legacy" noStyle>
+              <Select
+                allowClear
+                placeholder="Source: all"
+                style={{ width: 180 }}
+                options={[
+                  { value: false, label: 'New (app)' },
+                  { value: true, label: 'Legacy (imported)' },
+                ]}
+              />
+            </Form.Item>
             <Form.Item name="includeBanned" valuePropName="checked" noStyle>
               <Checkbox>Include banned (Russian-rooted)</Checkbox>
             </Form.Item>

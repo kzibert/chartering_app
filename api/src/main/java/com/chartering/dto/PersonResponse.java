@@ -10,5 +10,6 @@ public record PersonResponse(
         String greetingName,
         Long companyId,
         String companyName,
-        String notes) {
+        String notes,
+        boolean legacy) {
 }

@@ -32,4 +32,9 @@ public final class ContactSpecification {
     public static Specification<Contact> excludeBanned(boolean includeBanned) {
         return (root, query, cb) -> includeBanned ? null : cb.isFalse(root.get("banned"));
     }
+
+    /** Filter by provenance: true = imported legacy, false = created in-app; null = all. */
+    public static Specification<Contact> legacyEquals(Boolean legacy) {
+        return (root, query, cb) -> legacy == null ? null : cb.equal(root.get("legacy"), legacy);
+    }
 }

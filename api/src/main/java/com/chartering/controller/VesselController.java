@@ -49,11 +49,12 @@ public class VesselController {
             @RequestParam(required = false) String ownerName,
             @RequestParam(required = false) Boolean confirmed,
             @RequestParam(defaultValue = "false") boolean includeBanned,
+            @RequestParam(required = false) Boolean legacy,
             @PageableDefault(size = 20, sort = "name") Pageable pageable) {
 
         VesselFilter filter = new VesselFilter(name, imoNumber, minDwt, maxDwt, minDwcc, maxDwcc,
                 minGrain, maxGrain, minBale, maxBale, minDraft, maxDraft, minYear, maxYear,
-                vesselType, flag, ownerId, ownerName, confirmed, includeBanned);
+                vesselType, flag, ownerId, ownerName, confirmed, includeBanned, legacy);
         return ResponseEntity.ok(vesselService.search(filter, pageable));
     }
 
@@ -84,11 +85,12 @@ public class VesselController {
             @RequestParam(required = false) String ownerName,
             @RequestParam(required = false) Boolean confirmed,
             @RequestParam(defaultValue = "false") boolean includeBanned,
+            @RequestParam(required = false) Boolean legacy,
             @RequestParam(defaultValue = "false") boolean confirmedOnly) {
 
         VesselFilter filter = new VesselFilter(name, imoNumber, minDwt, maxDwt, minDwcc, maxDwcc,
                 minGrain, maxGrain, minBale, maxBale, minDraft, maxDraft, minYear, maxYear,
-                vesselType, flag, ownerId, ownerName, confirmed, includeBanned);
+                vesselType, flag, ownerId, ownerName, confirmed, includeBanned, legacy);
         return ResponseEntity.ok(vesselService.ownerEmailContacts(filter, confirmedOnly));
     }
 

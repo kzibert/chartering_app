@@ -74,6 +74,10 @@ public class Vessel {
     @Column(nullable = false)
     private boolean banned = false;
 
+    /** true = imported legacy row; false = created in-app (new data). Defaults to new. */
+    @Column(name = "is_legacy", nullable = false)
+    private boolean legacy = false;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private OffsetDateTime createdAt;

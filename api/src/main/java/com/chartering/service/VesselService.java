@@ -72,7 +72,8 @@ public class VesselService {
                 VesselSpecification.ownerIdEquals(f.ownerId()),
                 VesselSpecification.ownerNameContains(f.ownerName()),
                 VesselSpecification.confirmedEquals(f.confirmed()),
-                VesselSpecification.excludeBanned(f.includeBanned()));
+                VesselSpecification.excludeBanned(f.includeBanned()),
+                VesselSpecification.legacyEquals(f.legacy()));
     }
 
     @Transactional(readOnly = true)
@@ -161,6 +162,6 @@ public class VesselService {
             Integer minYear, Integer maxYear,
             List<String> vesselType, List<String> flag,
             Long ownerId, String ownerName, Boolean confirmed,
-            boolean includeBanned) {
+            boolean includeBanned, Boolean legacy) {
     }
 }

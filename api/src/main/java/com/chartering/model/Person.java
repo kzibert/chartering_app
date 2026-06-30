@@ -33,4 +33,8 @@ public class Person {
 
     @Column(name = "legacy_id")
     private Long legacyId;
+
+    /** true = imported legacy row; false = created in-app (new data). Defaults to new. */
+    @Column(name = "is_legacy", nullable = false)
+    private boolean legacy = false;
 }

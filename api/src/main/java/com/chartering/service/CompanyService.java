@@ -39,7 +39,8 @@ public class CompanyService {
                 CompanySpecification.hasRegionId(f.regionId()),
                 CompanySpecification.hasPortId(f.portId()),
                 CompanySpecification.hasTonnageCategoryId(f.tonnageCategoryId()),
-                CompanySpecification.excludeBanned(f.includeBanned()));
+                CompanySpecification.excludeBanned(f.includeBanned()),
+                CompanySpecification.legacyEquals(f.legacy()));
         return PageResponse.from(companyRepository.findAll(spec, pageable).map(mapper::toCompanyResponse));
     }
 
@@ -126,6 +127,6 @@ public class CompanyService {
             String name, String city,
             Boolean shipowner, Boolean charterer, Boolean broker, Boolean agent,
             Boolean confirmed, Long regionId, Long portId, Long tonnageCategoryId,
-            boolean includeBanned) {
+            boolean includeBanned, Boolean legacy) {
     }
 }

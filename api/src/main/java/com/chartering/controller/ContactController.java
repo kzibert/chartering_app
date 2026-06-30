@@ -28,8 +28,9 @@ public class ContactController {
             @RequestParam(required = false) Long companyId,
             @RequestParam(required = false) Boolean confirmed,
             @RequestParam(defaultValue = "false") boolean includeBanned,
+            @RequestParam(required = false) Boolean legacy,
             @PageableDefault(size = 20) Pageable pageable) {
-        return ResponseEntity.ok(contactService.search(kind, value, companyId, confirmed, includeBanned, pageable));
+        return ResponseEntity.ok(contactService.search(kind, value, companyId, confirmed, includeBanned, legacy, pageable));
     }
 
     @GetMapping("/{id}")

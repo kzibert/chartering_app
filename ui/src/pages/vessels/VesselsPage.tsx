@@ -72,6 +72,7 @@ export default function VesselsPage() {
       render: (name: string, v) => (
         <Space size={4}>
           {name}
+          {!v.legacy && <Tag color="green">new</Tag>}
           {v.banned && <Tag color="red">banned</Tag>}
         </Space>
       ),
@@ -166,6 +167,17 @@ export default function VesselsPage() {
                 Add confirmed emails to list
               </Button>
             </Tooltip>
+            <Form.Item name="legacy" noStyle>
+              <Select
+                allowClear
+                placeholder="Source: all"
+                style={{ width: 180 }}
+                options={[
+                  { value: false, label: 'New (app)' },
+                  { value: true, label: 'Legacy (imported)' },
+                ]}
+              />
+            </Form.Item>
             <Form.Item name="includeBanned" valuePropName="checked" noStyle>
               <Checkbox>Include banned (Russian-rooted)</Checkbox>
             </Form.Item>

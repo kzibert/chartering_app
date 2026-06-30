@@ -34,6 +34,11 @@ public final class CompanySpecification {
         return (root, query, cb) -> includeBanned ? null : cb.isFalse(root.get("banned"));
     }
 
+    /** Filter by provenance: true = imported legacy, false = created in-app; null = all. */
+    public static Specification<Company> legacyEquals(Boolean legacy) {
+        return (root, query, cb) -> legacy == null ? null : cb.equal(root.get("legacy"), legacy);
+    }
+
     public static Specification<Company> hasRegionId(Long regionId) {
         return (root, query, cb) -> {
             if (regionId == null) return null;

@@ -51,4 +51,8 @@ public class Contact {
     /** Russian-rooted entity excluded from filters by default (see db/banned_flags.sql). */
     @Column(nullable = false)
     private boolean banned = false;
+
+    /** true = imported legacy row; false = created in-app (new data). Defaults to new. */
+    @Column(name = "is_legacy", nullable = false)
+    private boolean legacy = false;
 }

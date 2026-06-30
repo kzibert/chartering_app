@@ -42,6 +42,7 @@ export default function CompaniesPage() {
       render: (name: string, c) => (
         <Space size={4}>
           {name}
+          {!c.legacy && <Tag color="green">new</Tag>}
           {c.banned && <Tag color="red">banned</Tag>}
         </Space>
       ),
@@ -119,6 +120,17 @@ export default function CompaniesPage() {
             <Button type="primary" htmlType="submit" icon={<SearchOutlined />}>Search</Button>
             <Button onClick={() => { form.resetFields(); applyFilters({}); }}>Reset</Button>
             <Button icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true); }}>New company</Button>
+            <Form.Item name="legacy" noStyle>
+              <Select
+                allowClear
+                placeholder="Source: all"
+                style={{ width: 180 }}
+                options={[
+                  { value: false, label: 'New (app)' },
+                  { value: true, label: 'Legacy (imported)' },
+                ]}
+              />
+            </Form.Item>
             <Form.Item name="includeBanned" valuePropName="checked" noStyle>
               <Checkbox>Include banned (Russian-rooted)</Checkbox>
             </Form.Item>
