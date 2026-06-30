@@ -167,12 +167,11 @@ export default function VesselsPage() {
                 Add confirmed emails to list
               </Button>
             </Tooltip>
-            <Form.Item name="legacy" noStyle>
+            <Form.Item name="legacy" noStyle initialValue="">
               <Select
-                allowClear
-                placeholder="Source: all"
                 style={{ width: 180 }}
                 options={[
+                  { value: '', label: 'Source: all' },
                   { value: false, label: 'New (app)' },
                   { value: true, label: 'Legacy (imported)' },
                 ]}
