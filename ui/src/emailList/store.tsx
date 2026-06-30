@@ -41,6 +41,7 @@ interface EmailListContextValue {
   entries: EmailListEntry[];
   has: (contactId: number) => boolean;
   add: (entry: EmailListEntry) => void;
+  addMany: (entries: EmailListEntry[]) => void;
   remove: (contactId: number) => void;
   update: (contactId: number, patch: Partial<EmailListEntry>) => void;
   clear: () => void;
@@ -71,6 +72,15 @@ export function EmailListProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
+  // Bulk add (dedup by contactId) in a single state update.
+  const addMany = useCallback((items: EmailListEntry[]) => {
+    setEntries((prev) => {
+      const seen = new Set(prev.map((e) => e.contactId));
+      const additions = items.filter((it) => !seen.has(it.contactId));
+      return additions.length ? [...prev, ...additions] : prev;
+    });
+  }, []);
+
   const remove = useCallback((contactId: number) => {
     setEntries((prev) => prev.filter((e) => e.contactId !== contactId));
   }, []);
@@ -84,8 +94,8 @@ export function EmailListProvider({ children }: { children: ReactNode }) {
   const clear = useCallback(() => setEntries([]), []);
 
   const value = useMemo(
-    () => ({ entries, has, add, remove, update, clear }),
-    [entries, has, add, remove, update, clear],
+    () => ({ entries, has, add, addMany, remove, update, clear }),
+    [entries, has, add, addMany, remove, update, clear],
   );
 
   return <EmailListContext.Provider value={value}>{children}</EmailListContext.Provider>;

@@ -18,7 +18,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -31,7 +35,30 @@ public class VesselService {
 
     @Transactional(readOnly = true)
     public PageResponse<VesselResponse> search(VesselFilter f, Pageable pageable) {
-        Specification<Vessel> spec = Specification.allOf(
+        return PageResponse.from(
+                vesselRepository.findAll(buildSpec(f), pageable).map(mapper::toVesselResponse));
+    }
+
+    /**
+     * Email contacts of the owner companies of every vessel matching {@code f}.
+     * confirmedOnly=true keeps only confirmed emails. Distinct by contact; an owner with
+     * no contacts (or vessels with no owner) simply contributes nothing.
+     */
+    @Transactional(readOnly = true)
+    public List<ContactResponse> ownerEmailContacts(VesselFilter f, boolean confirmedOnly) {
+        Set<Long> ownerIds = vesselRepository.findAll(buildSpec(f)).stream()
+                .map(Vessel::getOwner)
+                .filter(Objects::nonNull)
+                .map(Company::getId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (ownerIds.isEmpty()) return List.of();
+        return contactRepository.findEmailContactsByCompanyIds(ownerIds, confirmedOnly).stream()
+                .map(mapper::toContactResponse)
+                .toList();
+    }
+
+    private Specification<Vessel> buildSpec(VesselFilter f) {
+        return Specification.allOf(
                 VesselSpecification.nameContains(f.name()),
                 VesselSpecification.imoEquals(f.imoNumber()),
                 VesselSpecification.numberRange("deadweightTonnage", f.minDwt(), f.maxDwt()),
@@ -45,7 +72,6 @@ public class VesselService {
                 VesselSpecification.ownerIdEquals(f.ownerId()),
                 VesselSpecification.ownerNameContains(f.ownerName()),
                 VesselSpecification.confirmedEquals(f.confirmed()));
-        return PageResponse.from(vesselRepository.findAll(spec, pageable).map(mapper::toVesselResponse));
     }
 
     @Transactional(readOnly = true)

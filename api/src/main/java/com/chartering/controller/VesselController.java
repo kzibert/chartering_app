@@ -56,6 +56,40 @@ public class VesselController {
         return ResponseEntity.ok(vesselService.search(filter, pageable));
     }
 
+    @GetMapping("/contacts")
+    @Operation(summary = "Owner-company email contacts for all vessels matching the filter",
+            description = "Same filters as the vessel search (pagination ignored — operates on the "
+                    + "whole filtered set). Returns the email contacts of the owner companies of "
+                    + "every matching vessel; confirmedOnly=true restricts to confirmed emails. "
+                    + "Powers the Vessels-tab bulk add-to-email-list actions.")
+    public ResponseEntity<List<ContactResponse>> ownerEmailContacts(
+            @RequestParam(required = false) String name,
+            @RequestParam(required = false) String imoNumber,
+            @RequestParam(required = false) BigDecimal minDwt,
+            @RequestParam(required = false) BigDecimal maxDwt,
+            @RequestParam(required = false) BigDecimal minDwcc,
+            @RequestParam(required = false) BigDecimal maxDwcc,
+            @RequestParam(required = false) BigDecimal minGrain,
+            @RequestParam(required = false) BigDecimal maxGrain,
+            @RequestParam(required = false) BigDecimal minBale,
+            @RequestParam(required = false) BigDecimal maxBale,
+            @RequestParam(required = false) BigDecimal minDraft,
+            @RequestParam(required = false) BigDecimal maxDraft,
+            @RequestParam(required = false) Integer minYear,
+            @RequestParam(required = false) Integer maxYear,
+            @RequestParam(required = false) List<String> vesselType,
+            @RequestParam(required = false) List<String> flag,
+            @RequestParam(required = false) Long ownerId,
+            @RequestParam(required = false) String ownerName,
+            @RequestParam(required = false) Boolean confirmed,
+            @RequestParam(defaultValue = "false") boolean confirmedOnly) {
+
+        VesselFilter filter = new VesselFilter(name, imoNumber, minDwt, maxDwt, minDwcc, maxDwcc,
+                minGrain, maxGrain, minBale, maxBale, minDraft, maxDraft, minYear, maxYear,
+                vesselType, flag, ownerId, ownerName, confirmed);
+        return ResponseEntity.ok(vesselService.ownerEmailContacts(filter, confirmedOnly));
+    }
+
     @GetMapping("/{id}")
     @Operation(summary = "Get a vessel with its owner company and that company's contacts")
     public ResponseEntity<VesselDetailResponse> get(@PathVariable Long id) {

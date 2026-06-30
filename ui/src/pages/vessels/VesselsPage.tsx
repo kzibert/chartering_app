@@ -1,11 +1,13 @@
 import { useState } from 'react';
-import { Button, Card, Col, Form, Input, InputNumber, Row, Select, Space, Table } from 'antd';
-import { PlusOutlined, SearchOutlined } from '@ant-design/icons';
+import { App, Button, Card, Col, Form, Input, InputNumber, Row, Select, Space, Table, Tooltip } from 'antd';
+import { PlusOutlined, SearchOutlined, MailOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useVessels, useVesselTypes, useFlags } from '../../api/hooks';
 import { useTableControls } from '../../components/useTableControls';
 import ConfirmTag from '../../components/ConfirmTag';
 import { useVesselMutations } from '../../api/hooks';
+import { vesselsApi } from '../../api/vessels';
+import { useEmailList, contactToEntry } from '../../emailList/store';
 import VesselDrawer from './VesselDrawer';
 import VesselForm from './VesselForm';
 import type { VesselFilter, VesselResponse } from '../../api/types';
@@ -17,10 +19,37 @@ export default function VesselsPage() {
   const { data: types } = useVesselTypes();
   const { data: flags } = useFlags();
   const { confirm } = useVesselMutations();
+  const { entries, addMany } = useEmailList();
+  const { message } = App.useApp();
 
   const [selectedId, setSelectedId] = useState<number>();
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<VesselResponse | null>(null);
+  const [bulkLoading, setBulkLoading] = useState<'all' | 'confirmed' | null>(null);
+
+  // Pull the owner-company emails for the whole filtered vessel set into the email list.
+  const addOwnerEmails = async (confirmedOnly: boolean) => {
+    setBulkLoading(confirmedOnly ? 'confirmed' : 'all');
+    try {
+      const contacts = await vesselsApi.ownerEmailContacts(filters, confirmedOnly);
+      if (contacts.length === 0) {
+        message.info('No matching email contacts for the filtered vessels');
+        return;
+      }
+      const seen = new Set(entries.map((e) => e.contactId));
+      const added = contacts.filter((c) => !seen.has(c.id)).length;
+      addMany(contacts.map(contactToEntry));
+      const dup = contacts.length - added;
+      message.success(
+        `Added ${added} email${added === 1 ? '' : 's'} to the list` +
+          (dup ? ` (${dup} already there)` : ''),
+      );
+    } catch {
+      /* the axios interceptor surfaces the error */
+    } finally {
+      setBulkLoading(null);
+    }
+  };
 
   const query = useVessels({
     ...filters,
@@ -102,10 +131,30 @@ export default function VesselsPage() {
               </Form.Item>
             </Col>
           </Row>
-          <Space>
+          <Space wrap>
             <Button type="primary" htmlType="submit" icon={<SearchOutlined />}>Search</Button>
             <Button onClick={() => { form.resetFields(); applyFilters({}); }}>Reset</Button>
             <Button icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true); }}>New vessel</Button>
+            <Tooltip title="Add every email of the owner companies of all vessels matching the current filters to the Email list">
+              <Button
+                icon={<MailOutlined />}
+                loading={bulkLoading === 'all'}
+                disabled={bulkLoading !== null}
+                onClick={() => addOwnerEmails(false)}
+              >
+                Add all emails to list
+              </Button>
+            </Tooltip>
+            <Tooltip title="Same, but only confirmed emails">
+              <Button
+                icon={<MailOutlined />}
+                loading={bulkLoading === 'confirmed'}
+                disabled={bulkLoading !== null}
+                onClick={() => addOwnerEmails(true)}
+              >
+                Add confirmed emails to list
+              </Button>
+            </Tooltip>
           </Space>
         </Form>
       </Card>
