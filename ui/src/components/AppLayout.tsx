@@ -31,9 +31,12 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       key: '/email-list',
       icon: <UnorderedListOutlined />,
       label: (
-        <Badge count={entries.length} size="small" offset={[12, 0]}>
-          <span style={{ color: 'inherit' }}>Email list</span>
-        </Badge>
+        <span>
+          Email list
+          {entries.length > 0 && (
+            <Badge count={entries.length} size="small" style={{ marginInlineStart: 8 }} />
+          )}
+        </span>
       ),
     },
   ];
