@@ -20,6 +20,7 @@ public record VesselResponse(
         String flag,
         Long ownerId,
         String ownerName,
+        String notes,
         boolean confirmed,
         OffsetDateTime confirmedAt,
         String confirmedBy,

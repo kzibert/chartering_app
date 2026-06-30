@@ -23,6 +23,7 @@ export default function CompanyForm({ open, editing, onClose }: Props) {
           broker: editing.broker,
           agent: editing.agent,
           cityName: editing.cityName,
+          notes: editing.notes,
         });
       } else {
         form.resetFields();

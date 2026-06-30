@@ -31,7 +31,7 @@ export default function VesselForm({ open, editing, onClose }: Props) {
           vesselType: editing.vesselType,
           flag: editing.flag,
           ownerId: editing.ownerId,
-          notes: undefined,
+          notes: editing.notes,
         });
       } else {
         form.resetFields();

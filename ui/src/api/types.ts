@@ -23,6 +23,7 @@ export interface VesselResponse {
   flag?: string;
   ownerId?: number;
   ownerName?: string;
+  notes?: string;
   confirmed: boolean;
   confirmedAt?: string;
   confirmedBy?: string;

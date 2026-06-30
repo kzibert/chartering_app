@@ -72,6 +72,12 @@ export default function CompanyDrawer({ companyId, onClose, onEdit }: Props) {
             {c.broker && <Tag color="gold">broker</Tag>}
             {c.agent && <Tag color="purple">agent</Tag>}
           </Space>
+          {c.notes && (
+            <Typography.Paragraph style={{ marginBottom: 12, whiteSpace: 'pre-wrap' }}>
+              <Typography.Text type="secondary">Notes: </Typography.Text>
+              {c.notes}
+            </Typography.Paragraph>
+          )}
           <Tabs
             items={[
               {

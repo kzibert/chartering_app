@@ -24,6 +24,7 @@ public class DtoMapper {
                 v.getYearBuilt(), v.getVesselType(), v.getFlag(),
                 owner != null ? owner.getId() : null,
                 owner != null ? owner.getName() : null,
+                v.getNotes(),
                 v.isConfirmed(), v.getConfirmedAt(), v.getConfirmedBy(), v.getConfirmNotes(),
                 v.isBanned(), v.isLegacy());
     }
