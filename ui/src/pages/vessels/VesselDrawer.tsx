@@ -74,10 +74,13 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
             <Descriptions.Item label="Max draft">{v.maximumDraft ?? '—'}</Descriptions.Item>
             <Descriptions.Item label="Type">{v.vesselType ?? '—'}</Descriptions.Item>
             <Descriptions.Item label="Flag">{v.flag ?? '—'}</Descriptions.Item>
-            <Descriptions.Item label="Notes" span={2}>
-              {v.notes ? <span style={{ whiteSpace: 'pre-wrap' }}>{v.notes}</span> : '—'}
-            </Descriptions.Item>
           </Descriptions>
+          {v.notes && (
+            <Typography.Paragraph style={{ marginTop: 16, whiteSpace: 'pre-wrap' }}>
+              <Typography.Text type="secondary">Notes: </Typography.Text>
+              {v.notes}
+            </Typography.Paragraph>
+          )}
 
           <Typography.Title level={5} style={{ marginTop: 20 }}>
             Owner
