@@ -24,7 +24,8 @@ public class DtoMapper {
                 v.getYearBuilt(), v.getVesselType(), v.getFlag(),
                 owner != null ? owner.getId() : null,
                 owner != null ? owner.getName() : null,
-                v.isConfirmed(), v.getConfirmedAt(), v.getConfirmedBy(), v.getConfirmNotes());
+                v.isConfirmed(), v.getConfirmedAt(), v.getConfirmedBy(), v.getConfirmNotes(),
+                v.isBanned());
     }
 
     public CompanyResponse toCompanyResponse(Company c) {
@@ -32,7 +33,8 @@ public class DtoMapper {
                 c.getId(), c.getName(),
                 c.isShipowner(), c.isCharterer(), c.isBroker(), c.isAgent(),
                 c.getCityName(), c.getNotes(),
-                c.isConfirmed(), c.getConfirmedAt(), c.getConfirmedBy(), c.getConfirmNotes());
+                c.isConfirmed(), c.getConfirmedAt(), c.getConfirmedBy(), c.getConfirmNotes(),
+                c.isBanned());
     }
 
     public ContactResponse toContactResponse(Contact ct) {
@@ -46,7 +48,8 @@ public class DtoMapper {
                 ct.getCompany() != null ? ct.getCompany().getId() : null,
                 ct.getCompany() != null ? ct.getCompany().getName() : null,
                 ct.getContactKind(), ct.getContactValue(), ct.getNotes(),
-                ct.isConfirmed(), ct.getConfirmedAt(), ct.getConfirmedBy(), ct.getConfirmNotes());
+                ct.isConfirmed(), ct.getConfirmedAt(), ct.getConfirmedBy(), ct.getConfirmNotes(),
+                ct.isBanned());
     }
 
     public PersonResponse toPersonResponse(Person p) {

@@ -23,5 +23,6 @@ public record VesselResponse(
         boolean confirmed,
         OffsetDateTime confirmedAt,
         String confirmedBy,
-        String confirmNotes) {
+        String confirmNotes,
+        boolean banned) {
 }

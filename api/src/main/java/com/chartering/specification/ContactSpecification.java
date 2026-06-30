@@ -27,4 +27,9 @@ public final class ContactSpecification {
         return (root, query, cb) -> confirmed == null ? null
                 : cb.equal(root.get("confirmed"), confirmed);
     }
+
+    /** Exclude Russian-rooted (banned) contacts unless explicitly included. */
+    public static Specification<Contact> excludeBanned(boolean includeBanned) {
+        return (root, query, cb) -> includeBanned ? null : cb.isFalse(root.get("banned"));
+    }
 }

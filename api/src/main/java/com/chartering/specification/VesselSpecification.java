@@ -54,6 +54,11 @@ public final class VesselSpecification {
                 : cb.equal(root.get("confirmed"), confirmed);
     }
 
+    /** Exclude Russian-rooted (banned) vessels unless explicitly included. */
+    public static Specification<Vessel> excludeBanned(boolean includeBanned) {
+        return (root, query, cb) -> includeBanned ? null : cb.isFalse(root.get("banned"));
+    }
+
     public static Specification<Vessel> numberRange(String field, BigDecimal min, BigDecimal max) {
         return (root, query, cb) -> {
             if (min == null && max == null) return null;

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, Card, Checkbox, Col, Form, Input, Row, Select, Space, Table } from 'antd';
+import { Button, Card, Checkbox, Col, Form, Input, Row, Select, Space, Table, Tag } from 'antd';
 import { PlusOutlined, SearchOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useCompanies, useRegions, usePorts, useTonnageCategories, useCompanyMutations } from '../../api/hooks';
@@ -35,7 +35,17 @@ export default function CompaniesPage() {
   };
 
   const columns: ColumnsType<CompanyResponse> = [
-    { title: 'Name', dataIndex: 'name', sorter: true },
+    {
+      title: 'Name',
+      dataIndex: 'name',
+      sorter: true,
+      render: (name: string, c) => (
+        <Space size={4}>
+          {name}
+          {c.banned && <Tag color="red">banned</Tag>}
+        </Space>
+      ),
+    },
     { title: 'City', dataIndex: 'cityName' },
     {
       title: 'Roles',
@@ -105,10 +115,13 @@ export default function CompaniesPage() {
               </Form.Item>
             </Col>
           </Row>
-          <Space>
+          <Space wrap>
             <Button type="primary" htmlType="submit" icon={<SearchOutlined />}>Search</Button>
             <Button onClick={() => { form.resetFields(); applyFilters({}); }}>Reset</Button>
             <Button icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true); }}>New company</Button>
+            <Form.Item name="includeBanned" valuePropName="checked" noStyle>
+              <Checkbox>Include banned (Russian-rooted)</Checkbox>
+            </Form.Item>
           </Space>
         </Form>
       </Card>

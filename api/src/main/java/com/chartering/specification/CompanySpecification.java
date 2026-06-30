@@ -29,6 +29,11 @@ public final class CompanySpecification {
                 : cb.equal(root.get("confirmed"), confirmed);
     }
 
+    /** Exclude Russian-rooted (banned) companies unless explicitly included. */
+    public static Specification<Company> excludeBanned(boolean includeBanned) {
+        return (root, query, cb) -> includeBanned ? null : cb.isFalse(root.get("banned"));
+    }
+
     public static Specification<Company> hasRegionId(Long regionId) {
         return (root, query, cb) -> {
             if (regionId == null) return null;

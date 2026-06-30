@@ -36,10 +36,11 @@ public class CompanyController {
             @RequestParam(required = false) Long regionId,
             @RequestParam(required = false) Long portId,
             @RequestParam(required = false) Long tonnageCategoryId,
+            @RequestParam(defaultValue = "false") boolean includeBanned,
             @PageableDefault(size = 20, sort = "name") Pageable pageable) {
 
         CompanyFilter filter = new CompanyFilter(name, city, shipowner, charterer, broker, agent,
-                confirmed, regionId, portId, tonnageCategoryId);
+                confirmed, regionId, portId, tonnageCategoryId, includeBanned);
         return ResponseEntity.ok(companyService.search(filter, pageable));
     }
 

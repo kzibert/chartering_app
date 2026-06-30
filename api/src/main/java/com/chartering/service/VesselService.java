@@ -52,7 +52,7 @@ public class VesselService {
                 .map(Company::getId)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
         if (ownerIds.isEmpty()) return List.of();
-        return contactRepository.findEmailContactsByCompanyIds(ownerIds, confirmedOnly).stream()
+        return contactRepository.findEmailContactsByCompanyIds(ownerIds, confirmedOnly, f.includeBanned()).stream()
                 .map(mapper::toContactResponse)
                 .toList();
     }
@@ -71,7 +71,8 @@ public class VesselService {
                 VesselSpecification.flagIn(f.flag()),
                 VesselSpecification.ownerIdEquals(f.ownerId()),
                 VesselSpecification.ownerNameContains(f.ownerName()),
-                VesselSpecification.confirmedEquals(f.confirmed()));
+                VesselSpecification.confirmedEquals(f.confirmed()),
+                VesselSpecification.excludeBanned(f.includeBanned()));
     }
 
     @Transactional(readOnly = true)
@@ -151,6 +152,7 @@ public class VesselService {
             BigDecimal minDraft, BigDecimal maxDraft,
             Integer minYear, Integer maxYear,
             List<String> vesselType, List<String> flag,
-            Long ownerId, String ownerName, Boolean confirmed) {
+            Long ownerId, String ownerName, Boolean confirmed,
+            boolean includeBanned) {
     }
 }

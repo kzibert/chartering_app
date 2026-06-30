@@ -27,6 +27,7 @@ export interface VesselResponse {
   confirmedAt?: string;
   confirmedBy?: string;
   confirmNotes?: string;
+  banned: boolean;
 }
 
 export interface VesselDetailResponse {
@@ -63,6 +64,7 @@ export interface CompanyResponse {
   confirmedAt?: string;
   confirmedBy?: string;
   confirmNotes?: string;
+  banned: boolean;
 }
 
 export interface CompanyDetailResponse {
@@ -114,6 +116,7 @@ export interface ContactResponse {
   confirmedAt?: string;
   confirmedBy?: string;
   confirmNotes?: string;
+  banned: boolean;
 }
 
 export interface ContactRequest {
@@ -177,6 +180,7 @@ export interface VesselFilter extends PageParams {
   ownerId?: number;
   ownerName?: string;
   confirmed?: boolean;
+  includeBanned?: boolean;
 }
 
 export interface CompanyFilter extends PageParams {
@@ -190,6 +194,7 @@ export interface CompanyFilter extends PageParams {
   regionId?: number;
   portId?: number;
   tonnageCategoryId?: number;
+  includeBanned?: boolean;
 }
 
 export interface ContactFilter extends PageParams {
@@ -197,4 +202,5 @@ export interface ContactFilter extends PageParams {
   value?: string;
   companyId?: number;
   confirmed?: boolean;
+  includeBanned?: boolean;
 }

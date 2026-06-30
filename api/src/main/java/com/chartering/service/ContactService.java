@@ -29,12 +29,14 @@ public class ContactService {
 
     @Transactional(readOnly = true)
     public PageResponse<ContactResponse> search(String kind, String value, Long companyId,
-                                                Boolean confirmed, Pageable pageable) {
+                                                Boolean confirmed, boolean includeBanned,
+                                                Pageable pageable) {
         Specification<Contact> spec = Specification.allOf(
                 ContactSpecification.kindEquals(kind),
                 ContactSpecification.valueContains(value),
                 ContactSpecification.companyIdEquals(companyId),
-                ContactSpecification.confirmedEquals(confirmed));
+                ContactSpecification.confirmedEquals(confirmed),
+                ContactSpecification.excludeBanned(includeBanned));
         return PageResponse.from(contactRepository.findAll(spec, pageable).map(mapper::toContactResponse));
     }
 

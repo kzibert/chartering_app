@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { App, Button, Card, Col, Form, Input, InputNumber, Row, Select, Space, Table, Tooltip } from 'antd';
+import { App, Button, Card, Checkbox, Col, Form, Input, InputNumber, Row, Select, Space, Table, Tag, Tooltip } from 'antd';
 import { PlusOutlined, SearchOutlined, MailOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useVessels, useVesselTypes, useFlags } from '../../api/hooks';
@@ -64,7 +64,18 @@ export default function VesselsPage() {
   };
 
   const columns: ColumnsType<VesselResponse> = [
-    { title: 'Name', dataIndex: 'name', sorter: true, fixed: 'left' },
+    {
+      title: 'Name',
+      dataIndex: 'name',
+      sorter: true,
+      fixed: 'left',
+      render: (name: string, v) => (
+        <Space size={4}>
+          {name}
+          {v.banned && <Tag color="red">banned</Tag>}
+        </Space>
+      ),
+    },
     { title: 'IMO', dataIndex: 'imoNumber' },
     { title: 'DWT', dataIndex: 'deadweightTonnage', sorter: true },
     { title: 'DWCC', dataIndex: 'deadweightCargoCapacity', sorter: true },
@@ -155,6 +166,9 @@ export default function VesselsPage() {
                 Add confirmed emails to list
               </Button>
             </Tooltip>
+            <Form.Item name="includeBanned" valuePropName="checked" noStyle>
+              <Checkbox>Include banned (Russian-rooted)</Checkbox>
+            </Form.Item>
           </Space>
         </Form>
       </Card>

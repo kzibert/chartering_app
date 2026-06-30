@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, Card, Col, Form, Input, Popconfirm, Row, Select, Space, Table, Tag } from 'antd';
+import { Button, Card, Checkbox, Col, Form, Input, Popconfirm, Row, Select, Space, Table, Tag } from 'antd';
 import { PlusOutlined, SearchOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useContacts, useContactMutations } from '../../api/hooks';
@@ -32,7 +32,16 @@ export default function ContactsPage() {
       width: 90,
       render: (k: string) => <Tag color={k === 'email' ? 'blue' : 'default'}>{k}</Tag>,
     },
-    { title: 'Value', dataIndex: 'contactValue', render: (v: string) => <CopyableValue value={v} /> },
+    {
+      title: 'Value',
+      dataIndex: 'contactValue',
+      render: (v: string, c) => (
+        <Space size={4}>
+          <CopyableValue value={v} />
+          {c.banned && <Tag color="red">banned</Tag>}
+        </Space>
+      ),
+    },
     { title: 'Person', dataIndex: 'personName' },
     {
       title: 'Status',
@@ -82,10 +91,13 @@ export default function ContactsPage() {
               </Form.Item>
             </Col>
           </Row>
-          <Space>
+          <Space wrap>
             <Button type="primary" htmlType="submit" icon={<SearchOutlined />}>Search</Button>
             <Button onClick={() => { form.resetFields(); applyFilters({}); }}>Reset</Button>
             <Button icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true); }}>New contact</Button>
+            <Form.Item name="includeBanned" valuePropName="checked" noStyle>
+              <Checkbox>Include banned (Russian-rooted)</Checkbox>
+            </Form.Item>
           </Space>
         </Form>
       </Card>

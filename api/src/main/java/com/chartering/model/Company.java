@@ -56,6 +56,10 @@ public class Company {
     @Column(name = "confirm_notes")
     private String confirmNotes;
 
+    /** Russian-rooted entity excluded from filters by default (see db/banned_flags.sql). */
+    @Column(nullable = false)
+    private boolean banned = false;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private OffsetDateTime createdAt;

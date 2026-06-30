@@ -38,7 +38,8 @@ public class CompanyService {
                 CompanySpecification.confirmedEquals(f.confirmed()),
                 CompanySpecification.hasRegionId(f.regionId()),
                 CompanySpecification.hasPortId(f.portId()),
-                CompanySpecification.hasTonnageCategoryId(f.tonnageCategoryId()));
+                CompanySpecification.hasTonnageCategoryId(f.tonnageCategoryId()),
+                CompanySpecification.excludeBanned(f.includeBanned()));
         return PageResponse.from(companyRepository.findAll(spec, pageable).map(mapper::toCompanyResponse));
     }
 
@@ -116,6 +117,7 @@ public class CompanyService {
     public record CompanyFilter(
             String name, String city,
             Boolean shipowner, Boolean charterer, Boolean broker, Boolean agent,
-            Boolean confirmed, Long regionId, Long portId, Long tonnageCategoryId) {
+            Boolean confirmed, Long regionId, Long portId, Long tonnageCategoryId,
+            boolean includeBanned) {
     }
 }

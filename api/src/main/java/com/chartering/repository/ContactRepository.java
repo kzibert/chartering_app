@@ -26,9 +26,11 @@ public interface ContactRepository
             where c.contactKind = 'email'
               and comp.id in :companyIds
               and (:confirmedOnly = false or c.confirmed = true)
+              and (:includeBanned = true or c.banned = false)
             order by comp.id, c.contactValue
             """)
     List<Contact> findEmailContactsByCompanyIds(
             @Param("companyIds") Collection<Long> companyIds,
-            @Param("confirmedOnly") boolean confirmedOnly);
+            @Param("confirmedOnly") boolean confirmedOnly,
+            @Param("includeBanned") boolean includeBanned);
 }
