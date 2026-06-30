@@ -1,10 +1,10 @@
 # Java / Maven
-clean-api/target/
+api/target/
 *.class
 
 # Node / Vite
-clean-ui/node_modules/
-clean-ui/dist/
+ui/node_modules/
+ui/dist/
 npm-debug.log*
 
 # Env overrides (commit .env.example, not .env)

@@ -1,0 +1,47 @@
+spring:
+  application:
+    name: chartering-api
+  profiles:
+    default: dev               # overridden by SPRING_PROFILES_ACTIVE=docker in the container
+  jpa:
+    hibernate:
+      ddl-auto: validate          # schema is owned by the seed dump (db/seed); validate catches drift
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+server:
+  port: 8081
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+---
+spring:
+  config:
+    activate:
+      on-profile: dev
+  datasource:
+    url: jdbc:postgresql://localhost:5433/chartering
+    username: chartering_user
+    password: password
+  jpa:
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+---
+spring:
+  config:
+    activate:
+      on-profile: docker
+  datasource:
+    url: jdbc:postgresql://db:5432/chartering
+    username: chartering_user
+    password: password
+  jpa:
+    show-sql: false

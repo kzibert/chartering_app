@@ -1,64 +1,54 @@
-# Self-contained chartering-clean stack: Postgres (seeded from the bundled dump) +
+# Self-contained chartering stack: Postgres (seeded from the bundled dump) +
 # Spring Boot API + React/nginx UI. No dependency on any external project or network.
 #
 #   docker compose up -d --build        # build images, start everything
 #   docker compose down                 # stop (keeps data volume)
 #   docker compose down -v              # stop + wipe DB (next up re-seeds from db/seed)
 #
-# Container names are kept stable (chartering_clean_db / _api) because the API's
-# docker Spring profile and the UI's nginx.conf reference those hostnames.
+# Compose project name is fixed to "chartering" so container/volume/network names are
+# stable and prefixed (chartering-db-1, chartering_db_data, ...). Services reach each
+# other by service name (db / api) over the default network.
+name: chartering
+
 services:
-  chartering_clean_db:
+  db:
     image: postgres:16-alpine
-    container_name: chartering_clean_db
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-chartering_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
-      POSTGRES_DB: ${POSTGRES_DB:-chartering_clean}
+      POSTGRES_DB: ${POSTGRES_DB:-chartering}
     ports:
       - "${DB_PORT:-5433}:5432"
     volumes:
-      - chartering_clean_db_data:/var/lib/postgresql/data
+      - db_data:/var/lib/postgresql/data
       # *.sql here runs once on first init (empty volume) -> seeds schema + data.
       - ./db/seed:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chartering_user} -d ${POSTGRES_DB:-chartering_clean}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chartering_user} -d ${POSTGRES_DB:-chartering}"]
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - dbnet
 
-  clean-api:
-    build: ./clean-api
-    container_name: chartering_clean_api
+  api:
+    build: ./api
     restart: unless-stopped
     depends_on:
-      chartering_clean_db:
+      db:
         condition: service_healthy
     environment:
       SPRING_PROFILES_ACTIVE: docker
     ports:
       - "${API_PORT:-8081}:8081"
-    networks:
-      - dbnet
 
-  clean-ui:
-    build: ./clean-ui
-    container_name: chartering_clean_ui
+  ui:
+    build: ./ui
     restart: unless-stopped
     depends_on:
-      - clean-api
+      - api
     ports:
       - "${UI_PORT:-8082}:80"
-    networks:
-      - dbnet
-
-networks:
-  dbnet:
-    driver: bridge
 
 volumes:
-  chartering_clean_db_data:
+  db_data:
     driver: local
