@@ -1,0 +1,18 @@
+# Java / Maven
+clean-api/target/
+*.class
+
+# Node / Vite
+clean-ui/node_modules/
+clean-ui/dist/
+npm-debug.log*
+
+# Env overrides (commit .env.example, not .env)
+.env
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
