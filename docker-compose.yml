@@ -38,8 +38,33 @@ services:
         condition: service_healthy
     environment:
       SPRING_PROFILES_ACTIVE: docker
+      # Circulars / SMTP. All optional: with MAIL_ENABLED unset the app starts normally and
+      # the Circulars tab explains what is missing instead of offering a Send button.
+      # Set these in .env (see .env.example) — never commit real credentials.
+      MAIL_ENABLED: ${MAIL_ENABLED:-false}
+      MAIL_HOST: ${MAIL_HOST:-smtp.zoho.eu}
+      MAIL_PORT: ${MAIL_PORT:-465}
+      MAIL_SSL: ${MAIL_SSL:-true}
+      MAIL_STARTTLS: ${MAIL_STARTTLS:-false}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-Chartering Desk}
+      MAIL_REPLY_TO: ${MAIL_REPLY_TO:-}
+      MAIL_UNSUBSCRIBE: ${MAIL_UNSUBSCRIBE:-}
+      MAIL_MIN_DELAY_MS: ${MAIL_MIN_DELAY_MS:-3000}
+      MAIL_MAX_DELAY_MS: ${MAIL_MAX_DELAY_MS:-10000}
+      MAIL_MAX_RECIPIENTS: ${MAIL_MAX_RECIPIENTS:-200}
+      MAIL_MAX_RETRIES: ${MAIL_MAX_RETRIES:-2}
+      MAIL_RETRY_BACKOFF_MS: ${MAIL_RETRY_BACKOFF_MS:-10000}
+      MAIL_ABORT_AFTER_FAILURES: ${MAIL_ABORT_AFTER_FAILURES:-5}
     ports:
       - "${API_PORT:-8081}:8081"
+    volumes:
+      # Campaign log lands on the host so it outlives container recreation and can be opened
+      # directly. A run that finished clean is overwritten by the next one; a run that failed,
+      # aborted or was interrupted is rotated to a timestamped file instead of being lost.
+      - ./logs:/app/logs
 
   ui:
     build: ./ui

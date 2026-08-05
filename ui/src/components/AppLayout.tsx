@@ -7,13 +7,14 @@ import {
   TeamOutlined,
   MailOutlined,
   UnorderedListOutlined,
+  SendOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useEmailList } from '../emailList/store';
 
 const { Sider, Header, Content } = Layout;
 
-const KEYS = ['/', '/vessels', '/companies', '/people', '/contacts', '/email-list'];
+const KEYS = ['/', '/vessels', '/companies', '/people', '/contacts', '/email-list', '/circulars'];
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
@@ -39,6 +40,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         </span>
       ),
     },
+    { key: '/circulars', icon: <SendOutlined />, label: 'Circulars' },
   ];
 
   return (

@@ -212,3 +212,96 @@ export interface ContactFilter extends PageParams {
   includeBanned?: boolean;
   legacy?: boolean;
 }
+
+/* ---------------- circulars ---------------- */
+
+export type CampaignState =
+  | 'IDLE'
+  | 'RUNNING'
+  | 'COMPLETED'
+  | 'COMPLETED_WITH_ERRORS'
+  | 'CANCELLED'
+  | 'ABORTED';
+
+/** Mail-merge fields sent per recipient — mirrors EmailListEntry. */
+export interface CampaignRecipient {
+  email: string;
+  contactId?: number;
+  greetingName?: string;
+  personName?: string;
+  title?: string;
+  companyName?: string;
+}
+
+export interface CampaignRequest {
+  subject: string;
+  htmlBody: string;
+  recipients: CampaignRecipient[];
+  /** Omitted/null means send with no footer — it does not fall back to the default. */
+  footerId?: number | null;
+}
+
+export interface CampaignStatus {
+  state: CampaignState;
+  running: boolean;
+  subject?: string;
+  total: number;
+  sent: number;
+  failed: number;
+  skipped: number;
+  currentEmail?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  etaSeconds?: number;
+  lastError?: string;
+  message?: string;
+}
+
+export interface CampaignConfig {
+  enabled: boolean;
+  ready: boolean;
+  missingSettings?: string[];
+  smtpHost?: string;
+  smtpPort: number;
+  username?: string;
+  fromAddress?: string;
+  fromName?: string;
+  replyTo?: string;
+  /** Gap between messages is random in [minDelayMs, maxDelayMs] — never fixed. */
+  minDelayMs: number;
+  maxDelayMs: number;
+  maxRecipientsPerCampaign: number;
+  unsubscribeConfigured: boolean;
+}
+
+/* ---------------- circular templates & footers ---------------- */
+
+export interface EmailTemplateRequest {
+  name: string;
+  subject?: string;
+  bodyHtml: string;
+}
+
+export interface EmailTemplateResponse {
+  id: number;
+  name: string;
+  subject?: string;
+  bodyHtml: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface EmailFooterRequest {
+  name: string;
+  html: string;
+  defaultFooter: boolean;
+}
+
+export interface EmailFooterResponse {
+  id: number;
+  name: string;
+  html: string;
+  defaultFooter: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}

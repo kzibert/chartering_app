@@ -10,6 +10,10 @@ npm-debug.log*
 # Env overrides (commit .env.example, not .env)
 .env
 
+# Campaign send logs (bind-mounted from the api container) — operational data,
+# and they contain recipient addresses.
+logs/
+
 # OS / editor
 .DS_Store
 Thumbs.db

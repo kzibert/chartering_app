@@ -6,6 +6,7 @@ import CompaniesPage from './pages/companies/CompaniesPage';
 import PeoplePage from './pages/people/PeoplePage';
 import ContactsPage from './pages/contacts/ContactsPage';
 import EmailListPage from './pages/emailList/EmailListPage';
+import CircularsPage from './pages/circulars/CircularsPage';
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
         <Route path="/people" element={<PeoplePage />} />
         <Route path="/contacts" element={<ContactsPage />} />
         <Route path="/email-list" element={<EmailListPage />} />
+        <Route path="/circulars" element={<CircularsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppLayout>

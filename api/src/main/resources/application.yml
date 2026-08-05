@@ -12,12 +12,52 @@ spring:
         jdbc:
           time_zone: UTC
 
+  # SMTP transport for circulars. Defaults target Zoho's EU data centre on implicit
+  # SSL (465). For STARTTLS instead, set MAIL_PORT=587, MAIL_SSL=false, MAIL_STARTTLS=true.
+  # MAIL_USERNAME is the full mailbox address; MAIL_PASSWORD must be an app-specific
+  # password when two-factor auth is on the Zoho account (a normal password is rejected).
+  mail:
+    host: ${MAIL_HOST:smtp.zoho.eu}
+    port: ${MAIL_PORT:465}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: ${MAIL_SSL:true}
+            trust: ${MAIL_HOST:smtp.zoho.eu}
+          starttls:
+            enable: ${MAIL_STARTTLS:false}
+          connectiontimeout: 15000
+          timeout: 30000
+          writetimeout: 30000
+
 server:
   port: 8081
 
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
+
+# Pacing and safety rails for bulk circulars — see MailCampaignProperties for what
+# each one protects against. Off by default: the app refuses to send until you set
+# MAIL_ENABLED=true along with real credentials.
+chartering:
+  mail:
+    enabled: ${MAIL_ENABLED:false}
+    from-address: ${MAIL_FROM:}
+    from-name: ${MAIL_FROM_NAME:Chartering Desk}
+    reply-to: ${MAIL_REPLY_TO:}
+    unsubscribe-mailto: ${MAIL_UNSUBSCRIBE:}
+    min-delay-ms: ${MAIL_MIN_DELAY_MS:3000}
+    max-delay-ms: ${MAIL_MAX_DELAY_MS:10000}
+    max-recipients-per-campaign: ${MAIL_MAX_RECIPIENTS:200}
+    max-retries: ${MAIL_MAX_RETRIES:2}
+    retry-backoff-ms: ${MAIL_RETRY_BACKOFF_MS:10000}
+    abort-after-consecutive-failures: ${MAIL_ABORT_AFTER_FAILURES:5}
+    log-file: ${MAIL_LOG_FILE:logs/campaign-current.log}
 
 ---
 spring:
@@ -45,3 +85,9 @@ spring:
     password: password
   jpa:
     show-sql: false
+
+# WORKDIR is /app in the container; compose bind-mounts ./logs there so the campaign
+# log outlives container recreation and can be opened directly on the host.
+chartering:
+  mail:
+    log-file: ${MAIL_LOG_FILE:/app/logs/campaign-current.log}

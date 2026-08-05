@@ -1,5 +1,6 @@
 package com.chartering.exception;
 
+import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -27,9 +28,30 @@ public class GlobalExceptionHandler {
         return body(HttpStatus.BAD_REQUEST, msg);
     }
 
+    /** Violations on @RequestParam/@PathVariable in @Validated controllers. */
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<Map<String, Object>> handleConstraintViolation(ConstraintViolationException ex) {
+        String msg = ex.getConstraintViolations().stream()
+                .map(v -> v.getPropertyPath() + ": " + v.getMessage())
+                .collect(Collectors.joining("; "));
+        return body(HttpStatus.BAD_REQUEST, msg);
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException ex) {
         return body(HttpStatus.BAD_REQUEST, ex.getMessage());
+    }
+
+    /** Mail isn't set up (or the SMTP host is unreachable) — the server can't serve the request yet. */
+    @ExceptionHandler(MailNotConfiguredException.class)
+    public ResponseEntity<Map<String, Object>> handleMailNotConfigured(MailNotConfiguredException ex) {
+        return body(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
+    }
+
+    /** Conflicting state, e.g. starting a campaign while one is already running. */
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<Map<String, Object>> handleIllegalState(IllegalStateException ex) {
+        return body(HttpStatus.CONFLICT, ex.getMessage());
     }
 
     private ResponseEntity<Map<String, Object>> body(HttpStatus status, String message) {
