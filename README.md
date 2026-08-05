@@ -42,6 +42,10 @@ db/
   seed/chartering.sql    # auto-seed dump (runs on first DB init)
   chartering.dump        # same data in pg_restore (-Fc) format, for manual restore
   schema.sql             # DDL reference (the dump already contains the schema)
+db-export/               # portable full snapshot for reproducing the DB elsewhere
+  chartering-full.dump   # pg_dump -Fc, --no-owner (restore with pg_restore)
+  chartering-full.sql    # same content as plain SQL (restore with psql)
+  README.md              # restore instructions
 api/                     # Spring Boot backend, package com.chartering (multi-stage Dockerfile)
 ui/                      # React SPA (multi-stage: node build -> nginx)
 ```
