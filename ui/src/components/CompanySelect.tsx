@@ -18,10 +18,22 @@ export default function CompanySelect({ value, onChange, placeholder, allowClear
     queryFn: () => companiesApi.search({ name: term || undefined, size: 20, sort: 'name,asc' }),
   });
 
-  const options = (data?.content ?? []).map((c) => ({
-    value: c.id,
-    label: c.cityName ? `${c.name} — ${c.cityName}` : c.name,
-  }));
+  // The selected company is often outside the current search page (a restored filter,
+  // or a record being edited). Without this the Select would render the bare id.
+  const { data: selected } = useQuery({
+    queryKey: ['company', value],
+    queryFn: () => companiesApi.get(value!),
+    enabled: value != null,
+  });
+
+  const label = (c: { name: string; cityName?: string }) =>
+    c.cityName ? `${c.name} — ${c.cityName}` : c.name;
+
+  const found = (data?.content ?? []).map((c) => ({ value: c.id, label: label(c) }));
+  const options =
+    value != null && selected && !found.some((o) => o.value === value)
+      ? [{ value, label: label(selected.company) }, ...found]
+      : found;
 
   return (
     <Select

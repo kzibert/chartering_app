@@ -4,12 +4,14 @@ import { PlusOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { usePeople, usePersonMutations } from '../../api/hooks';
 import CompanySelect from '../../components/CompanySelect';
+import { usePersistedState } from '../../components/usePersistedState';
 import GreetingName from '../../components/GreetingName';
 import PersonForm from './PersonForm';
 import type { PersonResponse } from '../../api/types';
 
 export default function PeoplePage() {
-  const [companyId, setCompanyId] = useState<number>();
+  // No Reset button here — clearing the select ("All companies") is the reset.
+  const [companyId, setCompanyId] = usePersistedState<number | undefined>('people.companyId', undefined);
   const { data, isLoading } = usePeople(companyId);
   const { remove } = usePersonMutations();
   const [formOpen, setFormOpen] = useState(false);

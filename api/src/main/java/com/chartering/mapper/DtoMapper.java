@@ -29,13 +29,19 @@ public class DtoMapper {
                 v.isBanned(), v.isLegacy());
     }
 
-    public CompanyResponse toCompanyResponse(Company c) {
+    /**
+     * {@code noWorkingEmail} is derived from the company's contacts, which this mapper
+     * cannot see — callers must resolve it (batched, for lists) and pass it in. There is
+     * deliberately no single-argument overload: defaulting it to false would quietly
+     * under-report dead companies wherever someone forgot.
+     */
+    public CompanyResponse toCompanyResponse(Company c, boolean noWorkingEmail) {
         return new CompanyResponse(
                 c.getId(), c.getName(),
                 c.isShipowner(), c.isCharterer(), c.isBroker(), c.isAgent(),
                 c.getCityName(), c.getNotes(),
                 c.isConfirmed(), c.getConfirmedAt(), c.getConfirmedBy(), c.getConfirmNotes(),
-                c.isBanned(), c.isLegacy());
+                c.isBanned(), c.isLegacy(), noWorkingEmail);
     }
 
     public ContactResponse toContactResponse(Contact ct) {
@@ -50,7 +56,7 @@ public class DtoMapper {
                 ct.getCompany() != null ? ct.getCompany().getName() : null,
                 ct.getContactKind(), ct.getContactValue(), ct.getNotes(),
                 ct.isConfirmed(), ct.getConfirmedAt(), ct.getConfirmedBy(), ct.getConfirmNotes(),
-                ct.isBanned(), ct.isLegacy());
+                ct.isBanned(), ct.isLegacy(), ct.isMain(), ct.isWorking());
     }
 
     public PersonResponse toPersonResponse(Person p) {

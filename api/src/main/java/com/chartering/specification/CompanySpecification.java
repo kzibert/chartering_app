@@ -1,7 +1,11 @@
 package com.chartering.specification;
 
 import com.chartering.model.Company;
+import com.chartering.model.Contact;
+import com.chartering.model.Person;
 import jakarta.persistence.criteria.JoinType;
+import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.Subquery;
 import org.springframework.data.jpa.domain.Specification;
 
 public final class CompanySpecification {
@@ -17,6 +21,51 @@ public final class CompanySpecification {
     public static Specification<Company> cityContains(String city) {
         return (root, query, cb) -> city == null || city.isBlank() ? null
                 : cb.like(cb.lower(root.get("cityName")), "%" + city.toLowerCase() + "%");
+    }
+
+    /**
+     * Companies employing someone whose name matches. Uses an EXISTS subquery rather than a
+     * join so the row count stays one-per-company (no distinct needed for paging).
+     */
+    public static Specification<Company> hasPersonNamed(String personName) {
+        return (root, query, cb) -> {
+            if (personName == null || personName.isBlank()) return null;
+            String pattern = "%" + personName.toLowerCase() + "%";
+            Subquery<Long> sub = query.subquery(Long.class);
+            Root<Person> person = sub.from(Person.class);
+            return cb.exists(sub.select(person.get("id")).where(
+                    cb.equal(person.get("company").get("id"), root.get("id")),
+                    cb.or(cb.like(cb.lower(person.get("fullName")), pattern),
+                            cb.like(cb.lower(person.get("greetingName")), pattern))));
+        };
+    }
+
+    /**
+     * Companies whose email addresses are all flagged not working. A company with no email
+     * at all does not match — that is a gap in the data, not a set of dead addresses.
+     * Passing false inverts it (companies that still have at least one working email).
+     */
+    public static Specification<Company> noWorkingEmail(Boolean noWorkingEmail) {
+        return (root, query, cb) -> {
+            if (noWorkingEmail == null) return null;
+
+            Subquery<Long> anyEmail = query.subquery(Long.class);
+            Root<Contact> e = anyEmail.from(Contact.class);
+            anyEmail.select(e.get("id")).where(
+                    cb.equal(e.get("company").get("id"), root.get("id")),
+                    cb.equal(e.get("contactKind"), "email"));
+
+            Subquery<Long> workingEmail = query.subquery(Long.class);
+            Root<Contact> w = workingEmail.from(Contact.class);
+            workingEmail.select(w.get("id")).where(
+                    cb.equal(w.get("company").get("id"), root.get("id")),
+                    cb.equal(w.get("contactKind"), "email"),
+                    cb.isTrue(w.get("working")));
+
+            return noWorkingEmail
+                    ? cb.and(cb.exists(anyEmail), cb.not(cb.exists(workingEmail)))
+                    : cb.exists(workingEmail);
+        };
     }
 
     public static Specification<Company> roleIsTrue(String roleField, Boolean value) {

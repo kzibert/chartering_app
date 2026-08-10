@@ -29,7 +29,9 @@ public class ContactController {
             @RequestParam(required = false) Boolean confirmed,
             @RequestParam(defaultValue = "false") boolean includeBanned,
             @RequestParam(required = false) Boolean legacy,
-            @PageableDefault(size = 20) Pageable pageable) {
+            // Explicit default sort: without one the row order is physical, so toggling
+            // main/confirm on a row makes it jump to the end of the list.
+            @PageableDefault(size = 20, sort = "id") Pageable pageable) {
         return ResponseEntity.ok(contactService.search(kind, value, companyId, confirmed, includeBanned, legacy, pageable));
     }
 
@@ -66,6 +68,30 @@ public class ContactController {
             @RequestParam(defaultValue = "true") boolean confirmed,
             @RequestBody(required = false) ConfirmRequest req) {
         return ResponseEntity.ok(contactService.setConfirmed(id, confirmed, req));
+    }
+
+    @PatchMapping("/{id}/main")
+    @Operation(summary = "Mark a contact as its company's main email/phone (or clear with ?main=false)",
+            description = "At most one main email and one main phone per company — promoting a "
+                    + "contact demotes the previous holder of that slot. Bulk email-list actions "
+                    + "prefer the main email and fall back to the company's first one.")
+    public ResponseEntity<ContactResponse> main(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "true") boolean main) {
+        return ResponseEntity.ok(contactService.setMain(id, main));
+    }
+
+    @PatchMapping("/{id}/working")
+    @Operation(summary = "Flag a contact as not working (or revive it with ?working=true)",
+            description = "A non-working email is left out of bulk email-list collection and "
+                    + "dropped again when a campaign starts, so a stale email-list entry still "
+                    + "cannot be mailed. A company whose every email is flagged not-working is "
+                    + "reported with noWorkingEmail=true and can be listed via the company "
+                    + "search's noWorkingEmail filter.")
+    public ResponseEntity<ContactResponse> working(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "false") boolean working) {
+        return ResponseEntity.ok(contactService.setWorking(id, working));
     }
 
     @PatchMapping("/{id}/ban")

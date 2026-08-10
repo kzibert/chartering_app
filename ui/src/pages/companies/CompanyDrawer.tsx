@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, Collapse, Drawer, List, Space, Spin, Table, Tabs, Tag, Typography } from 'antd';
+import { Button, Collapse, Drawer, List, Space, Spin, Table, Tabs, Tag, Tooltip, Typography } from 'antd';
 import {
   useCompany,
   useCompanyContacts,
@@ -65,6 +65,11 @@ export default function CompanyDrawer({ companyId, onClose, onEdit }: Props) {
               onConfirm={(body) => confirm.mutate({ id: c.id, confirmed: true, body })}
               onUnconfirm={() => confirm.mutate({ id: c.id, confirmed: false })}
             />
+            {c.noWorkingEmail && (
+              <Tooltip title="Every email address on file for this company is flagged not working">
+                <Tag color="red">no working email</Tag>
+              </Tooltip>
+            )}
             {c.banned && <Tag color="red">banned</Tag>}
             {c.cityName && <Tag>{c.cityName}</Tag>}
             {c.shipowner && <Tag color="blue">owner</Tag>}

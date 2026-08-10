@@ -19,5 +19,7 @@ public record CompanyResponse(
         String confirmedBy,
         String confirmNotes,
         boolean banned,
-        boolean legacy) {
+        boolean legacy,
+        /** derived: the company has email addresses, but every one is flagged not working */
+        boolean noWorkingEmail) {
 }

@@ -21,5 +21,7 @@ public record ContactResponse(
         String confirmedBy,
         String confirmNotes,
         boolean banned,
-        boolean legacy) {
+        boolean legacy,
+        boolean main,
+        boolean working) {
 }

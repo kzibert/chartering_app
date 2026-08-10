@@ -10,12 +10,15 @@ import com.chartering.repository.VesselRepository;
 import com.chartering.specification.CompanySpecification;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -31,6 +34,7 @@ public class CompanyService {
         Specification<Company> spec = Specification.allOf(
                 CompanySpecification.nameContains(f.name()),
                 CompanySpecification.cityContains(f.city()),
+                CompanySpecification.hasPersonNamed(f.personName()),
                 CompanySpecification.roleIsTrue("shipowner", f.shipowner()),
                 CompanySpecification.roleIsTrue("charterer", f.charterer()),
                 CompanySpecification.roleIsTrue("broker", f.broker()),
@@ -40,25 +44,43 @@ public class CompanyService {
                 CompanySpecification.hasPortId(f.portId()),
                 CompanySpecification.hasTonnageCategoryId(f.tonnageCategoryId()),
                 CompanySpecification.excludeBanned(f.includeBanned()),
+                CompanySpecification.noWorkingEmail(f.noWorkingEmail()),
                 CompanySpecification.legacyEquals(f.legacy()));
-        return PageResponse.from(companyRepository.findAll(spec, pageable).map(mapper::toCompanyResponse));
+        Page<Company> page = companyRepository.findAll(spec, pageable);
+        // One extra query for the whole page rather than one per row.
+        Set<Long> dead = deadEmailCompanyIds(page.getContent().stream().map(Company::getId).toList());
+        return PageResponse.from(page.map(c -> mapper.toCompanyResponse(c, dead.contains(c.getId()))));
+    }
+
+    /** Of these companies, the ones whose every email address is flagged not working. */
+    private Set<Long> deadEmailCompanyIds(Collection<Long> companyIds) {
+        if (companyIds.isEmpty()) return Set.of();
+        return Set.copyOf(contactRepository.findCompanyIdsWithoutWorkingEmail(companyIds));
+    }
+
+    private boolean hasNoWorkingEmail(Long companyId) {
+        return !deadEmailCompanyIds(List.of(companyId)).isEmpty();
     }
 
     @Transactional(readOnly = true)
     public CompanyDetailResponse getDetail(Long id) {
         Company c = companyRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Company", id));
-        List<ContactResponse> contacts = contactRepository.findByCompanyId(id).stream()
+        List<ContactResponse> contacts = contactRepository.findByCompanyIdOrderByMainDescIdAsc(id).stream()
                 .map(mapper::toContactResponse).toList();
         List<VesselResponse> vessels = vesselRepository.findByOwnerId(id).stream()
                 .map(mapper::toVesselResponse).toList();
-        return new CompanyDetailResponse(mapper.toCompanyResponse(c), contacts, vessels);
+        // The contacts are already loaded here — derive the flag rather than re-query.
+        List<ContactResponse> emails = contacts.stream()
+                .filter(ct -> "email".equals(ct.contactKind())).toList();
+        boolean noWorkingEmail = !emails.isEmpty() && emails.stream().noneMatch(ContactResponse::working);
+        return new CompanyDetailResponse(mapper.toCompanyResponse(c, noWorkingEmail), contacts, vessels);
     }
 
     @Transactional(readOnly = true)
     public List<ContactResponse> getContacts(Long id) {
         requireExists(id);
-        return contactRepository.findByCompanyId(id).stream().map(mapper::toContactResponse).toList();
+        return contactRepository.findByCompanyIdOrderByMainDescIdAsc(id).stream().map(mapper::toContactResponse).toList();
     }
 
     @Transactional(readOnly = true)
@@ -71,7 +93,7 @@ public class CompanyService {
     public CompanyResponse create(CompanyRequest req) {
         Company c = new Company();
         apply(c, req);
-        return mapper.toCompanyResponse(companyRepository.save(c));
+        return mapper.toCompanyResponse(companyRepository.save(c), hasNoWorkingEmail(c.getId()));
     }
 
     @Transactional
@@ -79,7 +101,7 @@ public class CompanyService {
         Company c = companyRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Company", id));
         apply(c, req);
-        return mapper.toCompanyResponse(companyRepository.save(c));
+        return mapper.toCompanyResponse(companyRepository.save(c), hasNoWorkingEmail(c.getId()));
     }
 
     @Transactional
@@ -93,7 +115,7 @@ public class CompanyService {
         Company c = companyRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Company", id));
         c.setBanned(banned);
-        return mapper.toCompanyResponse(companyRepository.save(c));
+        return mapper.toCompanyResponse(companyRepository.save(c), hasNoWorkingEmail(c.getId()));
     }
 
     @Transactional
@@ -104,7 +126,7 @@ public class CompanyService {
         c.setConfirmedAt(confirmed ? OffsetDateTime.now() : null);
         c.setConfirmedBy(confirmed && req != null ? req.getConfirmedBy() : null);
         c.setConfirmNotes(confirmed && req != null ? req.getConfirmNotes() : null);
-        return mapper.toCompanyResponse(companyRepository.save(c));
+        return mapper.toCompanyResponse(companyRepository.save(c), hasNoWorkingEmail(c.getId()));
     }
 
     private void requireExists(Long id) {
@@ -124,9 +146,9 @@ public class CompanyService {
     }
 
     public record CompanyFilter(
-            String name, String city,
+            String name, String city, String personName,
             Boolean shipowner, Boolean charterer, Boolean broker, Boolean agent,
             Boolean confirmed, Long regionId, Long portId, Long tonnageCategoryId,
-            boolean includeBanned, Boolean legacy) {
+            boolean includeBanned, Boolean legacy, Boolean noWorkingEmail) {
     }
 }

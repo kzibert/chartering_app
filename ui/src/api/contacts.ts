@@ -32,4 +32,14 @@ export const contactsApi = {
     client
       .patch<ContactResponse>(`/contacts/${id}/ban`, {}, { params: { banned } })
       .then((r) => r.data),
+
+  setMain: (id: number, main: boolean) =>
+    client
+      .patch<ContactResponse>(`/contacts/${id}/main`, {}, { params: { main } })
+      .then((r) => r.data),
+
+  setWorking: (id: number, working: boolean) =>
+    client
+      .patch<ContactResponse>(`/contacts/${id}/working`, {}, { params: { working } })
+      .then((r) => r.data),
 };

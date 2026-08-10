@@ -41,6 +41,8 @@ docker-compose.yml       # db + api + ui (compose project "chartering")
 db/
   seed/chartering.sql    # auto-seed dump (runs on first DB init)
   email_templates.sql    # idempotent patch: circular templates + footers (baked into the seed)
+  main_contact_flag.sql  # idempotent patch: per-company main email/phone (baked into the seed)
+  not_working_contact_flag.sql # idempotent patch: dead email/phone flag (baked into the seed)
   chartering.dump        # same data in pg_restore (-Fc) format, for manual restore
   schema.sql             # DDL reference (the dump already contains the schema)
 db-export/               # portable full snapshot for reproducing the DB elsewhere

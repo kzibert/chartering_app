@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Button, Card, Checkbox, Col, Form, Input, Row, Select, Space, Table, Tag } from 'antd';
-import { PlusOutlined, SearchOutlined } from '@ant-design/icons';
+import { Button, Card, Checkbox, Col, Form, Input, Row, Select, Space, Table, Tag, Tooltip } from 'antd';
+import { PlusOutlined, SearchOutlined, WarningOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useCompanies, useRegions, usePorts, useTonnageCategories, useCompanyMutations } from '../../api/hooks';
 import { useTableControls } from '../../components/useTableControls';
+import { usePersistedFilters } from '../../components/usePersistedState';
 import ConfirmTag from '../../components/ConfirmTag';
 import CompanyDrawer from './CompanyDrawer';
 import CompanyForm from './CompanyForm';
@@ -11,8 +12,8 @@ import type { CompanyFilter, CompanyResponse } from '../../api/types';
 
 export default function CompaniesPage() {
   const [form] = Form.useForm();
-  const [filters, setFilters] = useState<Partial<CompanyFilter>>({});
-  const tc = useTableControls();
+  const [filters, setFilters] = usePersistedFilters<Partial<CompanyFilter>>('companies', form);
+  const tc = useTableControls(undefined, 'companies');
   const { data: regions } = useRegions();
   const { data: ports } = usePorts();
   const { data: tonnage } = useTonnageCategories();
@@ -23,6 +24,7 @@ export default function CompaniesPage() {
   const [editing, setEditing] = useState<CompanyResponse | null>(null);
 
   const query = useCompanies({ ...filters, page: tc.state.page, size: tc.state.size, sort: tc.state.sort });
+  const deadOnly = filters.noWorkingEmail === true;
 
   const applyFilters = (values: Partial<CompanyFilter>) => {
     // unchecked role booleans come through as false; drop them so they don't over-filter
@@ -39,9 +41,15 @@ export default function CompaniesPage() {
       title: 'Name',
       dataIndex: 'name',
       sorter: true,
+      sortOrder: tc.sortOrderFor('name'),
       render: (name: string, c) => (
         <Space size={4}>
           {name}
+          {c.noWorkingEmail && (
+            <Tooltip title="Every email address on file for this company is flagged not working">
+              <Tag color="red">no working email</Tag>
+            </Tooltip>
+          )}
           {!c.legacy && <Tag color="green">new</Tag>}
           {c.banned && <Tag color="red">banned</Tag>}
         </Space>
@@ -83,6 +91,11 @@ export default function CompaniesPage() {
           <Row gutter={12}>
             <Col xs={12} md={6}><Form.Item name="name" label="Name"><Input allowClear /></Form.Item></Col>
             <Col xs={12} md={6}><Form.Item name="city" label="City"><Input allowClear /></Form.Item></Col>
+            <Col xs={12} md={6}>
+              <Form.Item name="personName" label="Person" tooltip="Company employing someone with this name">
+                <Input allowClear placeholder="e.g. Andersen" />
+              </Form.Item>
+            </Col>
             <Col xs={12} md={4}>
               <Form.Item name="confirmed" label="Confirmed">
                 <Select allowClear options={[{ value: true, label: 'Confirmed' }, { value: false, label: 'Needs confirm' }]} />
@@ -120,6 +133,29 @@ export default function CompaniesPage() {
             <Button type="primary" htmlType="submit" icon={<SearchOutlined />}>Search</Button>
             <Button onClick={() => { form.resetFields(); applyFilters({}); }}>Reset</Button>
             <Button icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true); }}>New company</Button>
+            <Tooltip title="Companies that have email addresses but every one is flagged not working">
+              <Button
+                icon={<WarningOutlined />}
+                danger
+                type={deadOnly ? 'primary' : 'default'}
+                onClick={() => {
+                  // Shows *all* such companies, so it clears the other filters rather than
+                  // narrowing by whatever search happened to be active (persisted filters
+                  // would otherwise make this look empty). Toggling off returns to the
+                  // unfiltered list.
+                  form.resetFields();
+                  if (deadOnly) {
+                    applyFilters({});
+                  } else {
+                    form.setFieldValue('noWorkingEmail', true);
+                    applyFilters({ noWorkingEmail: true });
+                  }
+                }}
+              >
+                {deadOnly ? 'Showing: no working email' : 'No working email'}
+              </Button>
+            </Tooltip>
+            <Form.Item name="noWorkingEmail" valuePropName="checked" hidden><Checkbox /></Form.Item>
             <Form.Item name="legacy" noStyle initialValue="">
               <Select
                 style={{ width: 180 }}

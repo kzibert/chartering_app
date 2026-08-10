@@ -14,6 +14,16 @@ export default function AddToListButton({ ct }: { ct: ContactResponse }) {
   if (ct.contactKind !== 'email') return null;
   const inList = has(ct.id);
 
+  // A dead address can still be removed from the list, just never added to it — the
+  // campaign would drop it at send time anyway, so offering the add is only misleading.
+  if (!ct.working && !inList) {
+    return (
+      <Tooltip title="Marked not working — excluded from circulations">
+        <Button type="text" size="small" disabled aria-label="Not working" icon={<PlusOutlined />} />
+      </Tooltip>
+    );
+  }
+
   return (
     <Tooltip title={inList ? 'In email list — click to remove' : 'Add email to list'}>
       <Button

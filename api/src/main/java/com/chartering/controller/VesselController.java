@@ -63,6 +63,8 @@ public class VesselController {
             description = "Same filters as the vessel search (pagination ignored — operates on the "
                     + "whole filtered set). Returns the email contacts of the owner companies of "
                     + "every matching vessel; confirmedOnly=true restricts to confirmed emails. "
+                    + "mainOnly=true collapses each owner to a single address — the one flagged as "
+                    + "the company's main email, or its first email when none is flagged. "
                     + "Powers the Vessels-tab bulk add-to-email-list actions.")
     public ResponseEntity<List<ContactResponse>> ownerEmailContacts(
             @RequestParam(required = false) String name,
@@ -86,12 +88,15 @@ public class VesselController {
             @RequestParam(required = false) Boolean confirmed,
             @RequestParam(defaultValue = "false") boolean includeBanned,
             @RequestParam(required = false) Boolean legacy,
-            @RequestParam(defaultValue = "false") boolean confirmedOnly) {
+            @RequestParam(defaultValue = "false") boolean confirmedOnly,
+            @RequestParam(defaultValue = "false") boolean mainOnly) {
 
         VesselFilter filter = new VesselFilter(name, imoNumber, minDwt, maxDwt, minDwcc, maxDwcc,
                 minGrain, maxGrain, minBale, maxBale, minDraft, maxDraft, minYear, maxYear,
                 vesselType, flag, ownerId, ownerName, confirmed, includeBanned, legacy);
-        return ResponseEntity.ok(vesselService.ownerEmailContacts(filter, confirmedOnly));
+        return ResponseEntity.ok(mainOnly
+                ? vesselService.ownerMainEmailContacts(filter, confirmedOnly)
+                : vesselService.ownerEmailContacts(filter, confirmedOnly));
     }
 
     @GetMapping("/{id}")

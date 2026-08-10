@@ -4,17 +4,20 @@ import { PlusOutlined, SearchOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useContacts, useContactMutations } from '../../api/hooks';
 import { useTableControls } from '../../components/useTableControls';
+import { usePersistedFilters } from '../../components/usePersistedState';
 import ConfirmTag from '../../components/ConfirmTag';
 import CopyableValue from '../../components/CopyableValue';
 import AddToListButton from '../../components/AddToListButton';
+import MainContactButton from '../../components/MainContactButton';
+import WorkingToggleButton from '../../components/WorkingToggleButton';
 import BanButton from '../../components/BanButton';
 import ContactForm from './ContactForm';
 import type { ContactFilter, ContactResponse } from '../../api/types';
 
 export default function ContactsPage() {
   const [form] = Form.useForm();
-  const [filters, setFilters] = useState<Partial<ContactFilter>>({});
-  const tc = useTableControls();
+  const [filters, setFilters] = usePersistedFilters<Partial<ContactFilter>>('contacts', form);
+  const tc = useTableControls(undefined, 'contacts');
   const { confirm, remove, ban } = useContactMutations();
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<ContactResponse | null>(null);
@@ -39,6 +42,8 @@ export default function ContactsPage() {
       render: (v: string, c) => (
         <Space size={4}>
           <CopyableValue value={v} />
+          {c.main && <Tag color="gold">main</Tag>}
+          {!c.working && <Tag color="red">not working</Tag>}
           {!c.legacy && <Tag color="green">new</Tag>}
           {c.banned && <Tag color="red">banned</Tag>}
         </Space>
@@ -62,9 +67,13 @@ export default function ContactsPage() {
     {
       title: 'Actions',
       key: 'actions',
-      width: 260,
+      // Wide enough for the star + not-working + add-to-list icons plus the three
+      // labelled buttons, so email rows don't wrap onto a second line.
+      width: 320,
       render: (_, c) => (
         <Space wrap>
+          <MainContactButton ct={c} />
+          <WorkingToggleButton ct={c} />
           <AddToListButton ct={c} />
           <Button size="small" onClick={() => { setEditing(c); setFormOpen(true); }}>Edit</Button>
           <BanButton

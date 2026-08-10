@@ -1,5 +1,5 @@
-import { useState } from 'react';
 import type { TablePaginationConfig } from 'antd';
+import { usePersistedState } from './usePersistedState';
 
 export interface TableState {
   page: number; // 0-based for the API
@@ -7,9 +7,16 @@ export interface TableState {
   sort?: string; // "field,dir" for Spring Data
 }
 
-/** Bridges antd Table pagination/sort to the backend's page/size/sort params. */
-export function useTableControls(initial?: Partial<TableState>) {
-  const [state, setState] = useState<TableState>({ page: 0, size: 20, ...initial });
+/**
+ * Bridges antd Table pagination/sort to the backend's page/size/sort params.
+ * Pass `persistKey` to keep the page/size/sort across tab switches, so returning
+ * to a search lands on the same page of results you left.
+ */
+export function useTableControls(initial?: Partial<TableState>, persistKey?: string) {
+  const [state, setState] = usePersistedState<TableState>(
+    persistKey && `${persistKey}.table`,
+    { page: 0, size: 20, ...initial },
+  );
 
   // Loosely typed (any) so the same handler binds to Table<T> for any record type T.
   function onChange(
@@ -45,5 +52,17 @@ export function useTableControls(initial?: Partial<TableState>) {
     setState((p) => ({ ...p, page: 0 }));
   }
 
-  return { state, onChange, pagination, resetPage };
+  /**
+   * antd `sortOrder` for a sortable column. A restored sort drives the query, but the
+   * Table's own header state starts empty on remount — without this the arrow would
+   * disappear while the results stayed sorted.
+   */
+  function sortOrderFor(field: string): 'ascend' | 'descend' | undefined {
+    if (!state.sort) return undefined;
+    const [sorted, dir] = state.sort.split(',');
+    if (sorted !== field) return undefined;
+    return dir === 'desc' ? 'descend' : 'ascend';
+  }
+
+  return { state, onChange, pagination, resetPage, sortOrderFor };
 }

@@ -6,6 +6,7 @@ import com.chartering.dto.CampaignRecipientRequest;
 import com.chartering.dto.CampaignRequest;
 import com.chartering.dto.CampaignStatusResponse;
 import com.chartering.exception.MailNotConfiguredException;
+import com.chartering.repository.ContactRepository;
 import jakarta.annotation.PreDestroy;
 import jakarta.mail.Address;
 import jakarta.mail.Message;
@@ -72,6 +73,7 @@ public class EmailCampaignService {
     private final CampaignLogService campaignLog;
     private final EmailFooterService footers;
     private final HtmlSanitizer sanitizer;
+    private final ContactRepository contacts;
 
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "email-campaign");
@@ -88,13 +90,15 @@ public class EmailCampaignService {
                                 MailTemplateService templates,
                                 CampaignLogService campaignLog,
                                 EmailFooterService footers,
-                                HtmlSanitizer sanitizer) {
+                                HtmlSanitizer sanitizer,
+                                ContactRepository contacts) {
         this.mailSender = mailSender;
         this.props = props;
         this.templates = templates;
         this.campaignLog = campaignLog;
         this.footers = footers;
         this.sanitizer = sanitizer;
+        this.contacts = contacts;
     }
 
     /**
@@ -126,10 +130,18 @@ public class EmailCampaignService {
                     "A campaign is already running. Wait for it to finish or cancel it first.");
         }
 
-        List<CampaignRecipientRequest> recipients = dedupe(req.getRecipients());
-        int duplicates = req.getRecipients().size() - recipients.size();
+        List<CampaignRecipientRequest> deduped = dedupe(req.getRecipients());
+        int duplicates = req.getRecipients().size() - deduped.size();
+
+        // Last line of defence: an email list is a client-side snapshot, so an address
+        // flagged not-working after it was collected would otherwise still be mailed.
+        List<CampaignRecipientRequest> recipients = dropNotWorking(deduped);
+        int dead = deduped.size() - recipients.size();
+
         if (recipients.isEmpty()) {
-            throw new IllegalArgumentException("No valid recipients left after removing duplicates and blanks.");
+            throw new IllegalArgumentException(dead > 0
+                    ? "No valid recipients left: every remaining address is flagged as not working."
+                    : "No valid recipients left after removing duplicates and blanks.");
         }
         if (recipients.size() > props.getMaxRecipientsPerCampaign()) {
             throw new IllegalArgumentException(
@@ -153,6 +165,9 @@ public class EmailCampaignService {
                 props.getMinDelayMs(), props.getMaxDelayMs());
         if (duplicates > 0) {
             campaignLog.append("NOTE   %d duplicate address(es) removed before sending".formatted(duplicates));
+        }
+        if (dead > 0) {
+            campaignLog.append("NOTE   %d address(es) skipped: flagged as not working".formatted(dead));
         }
         log.info("Campaign started: {} recipient(s), subject '{}' ({})",
                 recipients.size(), req.getSubject(), carriedOver);
@@ -370,6 +385,18 @@ public class EmailCampaignService {
     // ---------------------------------------------------------------- helpers
 
     /** Keep the first occurrence of each address, case-insensitively. */
+    /**
+     * Drop recipients whose address is flagged not working. Matched on the address itself
+     * rather than contactId, so a hand-typed or edited row in the email list is caught too.
+     */
+    private List<CampaignRecipientRequest> dropNotWorking(List<CampaignRecipientRequest> input) {
+        Set<String> dead = contacts.findNotWorkingEmailValues();
+        if (dead.isEmpty()) return input;
+        return input.stream()
+                .filter(r -> !dead.contains(r.getEmail().trim().toLowerCase(Locale.ROOT)))
+                .toList();
+    }
+
     private List<CampaignRecipientRequest> dedupe(List<CampaignRecipientRequest> input) {
         Set<String> seen = new LinkedHashSet<>();
         List<CampaignRecipientRequest> out = new ArrayList<>();

@@ -24,10 +24,13 @@ public class CompanyController {
     private final CompanyService companyService;
 
     @GetMapping
-    @Operation(summary = "Search companies")
+    @Operation(summary = "Search companies",
+            description = "noWorkingEmail=true lists only companies whose every email address is "
+                    + "flagged not working (companies with no email at all are not included).")
     public ResponseEntity<PageResponse<CompanyResponse>> search(
             @RequestParam(required = false) String name,
             @RequestParam(required = false) String city,
+            @RequestParam(required = false) String personName,
             @RequestParam(required = false) Boolean shipowner,
             @RequestParam(required = false) Boolean charterer,
             @RequestParam(required = false) Boolean broker,
@@ -38,10 +41,11 @@ public class CompanyController {
             @RequestParam(required = false) Long tonnageCategoryId,
             @RequestParam(defaultValue = "false") boolean includeBanned,
             @RequestParam(required = false) Boolean legacy,
+            @RequestParam(required = false) Boolean noWorkingEmail,
             @PageableDefault(size = 20, sort = "name") Pageable pageable) {
 
-        CompanyFilter filter = new CompanyFilter(name, city, shipowner, charterer, broker, agent,
-                confirmed, regionId, portId, tonnageCategoryId, includeBanned, legacy);
+        CompanyFilter filter = new CompanyFilter(name, city, personName, shipowner, charterer, broker, agent,
+                confirmed, regionId, portId, tonnageCategoryId, includeBanned, legacy, noWorkingEmail);
         return ResponseEntity.ok(companyService.search(filter, pageable));
     }
 

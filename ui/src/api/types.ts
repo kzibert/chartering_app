@@ -68,6 +68,8 @@ export interface CompanyResponse {
   confirmNotes?: string;
   banned: boolean;
   legacy: boolean;
+  /** derived: the company has emails, but every one is flagged not working */
+  noWorkingEmail: boolean;
 }
 
 export interface CompanyDetailResponse {
@@ -122,6 +124,10 @@ export interface ContactResponse {
   confirmNotes?: string;
   banned: boolean;
   legacy: boolean;
+  /** the company's default contact of this kind (one main email + one main phone per company) */
+  main: boolean;
+  /** false = dead/bounced; excluded from bulk collection and from campaign sends */
+  working: boolean;
 }
 
 export interface ContactRequest {
@@ -192,6 +198,8 @@ export interface VesselFilter extends PageParams {
 export interface CompanyFilter extends PageParams {
   name?: string;
   city?: string;
+  /** matches a person's full name or greeting name */
+  personName?: string;
   shipowner?: boolean;
   charterer?: boolean;
   broker?: boolean;
@@ -202,6 +210,8 @@ export interface CompanyFilter extends PageParams {
   tonnageCategoryId?: number;
   includeBanned?: boolean;
   legacy?: boolean;
+  /** true = only companies whose every email is flagged not working */
+  noWorkingEmail?: boolean;
 }
 
 export interface ContactFilter extends PageParams {

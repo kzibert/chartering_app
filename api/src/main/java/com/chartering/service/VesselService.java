@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
@@ -46,15 +47,39 @@ public class VesselService {
      */
     @Transactional(readOnly = true)
     public List<ContactResponse> ownerEmailContacts(VesselFilter f, boolean confirmedOnly) {
-        Set<Long> ownerIds = vesselRepository.findAll(buildSpec(f)).stream()
-                .map(Vessel::getOwner)
-                .filter(Objects::nonNull)
-                .map(Company::getId)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<Long> ownerIds = ownerIds(f);
         if (ownerIds.isEmpty()) return List.of();
         return contactRepository.findEmailContactsByCompanyIds(ownerIds, confirmedOnly, f.includeBanned()).stream()
                 .map(mapper::toContactResponse)
                 .toList();
+    }
+
+    /**
+     * One email per owner company: the one flagged main, else that company's first.
+     * The repository orders main-first within each company, so keeping the first row
+     * of each group applies exactly that rule.
+     */
+    @Transactional(readOnly = true)
+    public List<ContactResponse> ownerMainEmailContacts(VesselFilter f, boolean confirmedOnly) {
+        Set<Long> ownerIds = ownerIds(f);
+        if (ownerIds.isEmpty()) return List.of();
+        return contactRepository.findEmailContactsByCompanyIds(ownerIds, confirmedOnly, f.includeBanned()).stream()
+                .collect(Collectors.toMap(
+                        c -> c.getCompany().getId(),
+                        c -> c,
+                        (first, later) -> first,
+                        LinkedHashMap::new))
+                .values().stream()
+                .map(mapper::toContactResponse)
+                .toList();
+    }
+
+    private Set<Long> ownerIds(VesselFilter f) {
+        return vesselRepository.findAll(buildSpec(f)).stream()
+                .map(Vessel::getOwner)
+                .filter(Objects::nonNull)
+                .map(Company::getId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     private Specification<Vessel> buildSpec(VesselFilter f) {
@@ -81,10 +106,16 @@ public class VesselService {
         Vessel v = vesselRepository.findWithOwnerById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Vessel", id));
         Company owner = v.getOwner();
-        CompanyResponse ownerDto = owner != null ? mapper.toCompanyResponse(owner) : null;
         List<ContactResponse> ownerContacts = owner == null ? List.of()
-                : contactRepository.findByCompanyId(owner.getId()).stream()
+                : contactRepository.findByCompanyIdOrderByMainDescIdAsc(owner.getId()).stream()
                         .map(mapper::toContactResponse).toList();
+        // Derived from the contacts already loaded above rather than a second query.
+        List<ContactResponse> ownerEmails = ownerContacts.stream()
+                .filter(ct -> "email".equals(ct.contactKind())).toList();
+        boolean ownerNoWorkingEmail =
+                !ownerEmails.isEmpty() && ownerEmails.stream().noneMatch(ContactResponse::working);
+        CompanyResponse ownerDto = owner != null
+                ? mapper.toCompanyResponse(owner, ownerNoWorkingEmail) : null;
         return new VesselDetailResponse(mapper.toVesselResponse(v), ownerDto, ownerContacts);
     }
 

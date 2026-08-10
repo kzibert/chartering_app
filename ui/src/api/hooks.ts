@@ -165,5 +165,15 @@ export function useContactMutations() {
     mutationFn: (v: { id: number; banned: boolean }) => contactsApi.setBanned(v.id, v.banned),
     onSuccess: () => invalidate('contacts', 'company'),
   });
-  return { create, update, remove, confirm, ban };
+  // Promoting demotes the company's previous main, so the whole company must be refetched.
+  const setMain = useMutation({
+    mutationFn: (v: { id: number; main: boolean }) => contactsApi.setMain(v.id, v.main),
+    onSuccess: () => invalidate('contacts', 'company'),
+  });
+  // Flipping this can change the company's "no working email" label, so refresh companies too.
+  const setWorking = useMutation({
+    mutationFn: (v: { id: number; working: boolean }) => contactsApi.setWorking(v.id, v.working),
+    onSuccess: () => invalidate('contacts', 'company', 'companies'),
+  });
+  return { create, update, remove, confirm, ban, setMain, setWorking };
 }

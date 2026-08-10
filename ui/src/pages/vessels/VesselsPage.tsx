@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { App, Button, Card, Checkbox, Col, Form, Input, InputNumber, Row, Select, Space, Table, Tag, Tooltip } from 'antd';
-import { PlusOutlined, SearchOutlined, MailOutlined } from '@ant-design/icons';
+import { PlusOutlined, SearchOutlined, MailOutlined, StarOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useVessels, useVesselTypes, useFlags } from '../../api/hooks';
 import { useTableControls } from '../../components/useTableControls';
+import { usePersistedFilters } from '../../components/usePersistedState';
 import ConfirmTag from '../../components/ConfirmTag';
+import MultiCheckSelect from '../../components/MultiCheckSelect';
 import { useVesselMutations } from '../../api/hooks';
 import { vesselsApi } from '../../api/vessels';
 import { useEmailList, contactToEntry } from '../../emailList/store';
@@ -14,8 +16,8 @@ import type { VesselFilter, VesselResponse } from '../../api/types';
 
 export default function VesselsPage() {
   const [form] = Form.useForm();
-  const [filters, setFilters] = useState<Partial<VesselFilter>>({});
-  const tc = useTableControls({ size: 20 });
+  const [filters, setFilters] = usePersistedFilters<Partial<VesselFilter>>('vessels', form);
+  const tc = useTableControls({ size: 20 }, 'vessels');
   const { data: types } = useVesselTypes();
   const { data: flags } = useFlags();
   const { confirm } = useVesselMutations();
@@ -25,13 +27,14 @@ export default function VesselsPage() {
   const [selectedId, setSelectedId] = useState<number>();
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<VesselResponse | null>(null);
-  const [bulkLoading, setBulkLoading] = useState<'all' | 'confirmed' | null>(null);
+  const [bulkLoading, setBulkLoading] = useState<'all' | 'confirmed' | 'main' | null>(null);
 
   // Pull the owner-company emails for the whole filtered vessel set into the email list.
-  const addOwnerEmails = async (confirmedOnly: boolean) => {
-    setBulkLoading(confirmedOnly ? 'confirmed' : 'all');
+  // mainOnly keeps one address per owner: its main email, or its first when none is flagged.
+  const addOwnerEmails = async (confirmedOnly: boolean, mainOnly = false) => {
+    setBulkLoading(mainOnly ? 'main' : confirmedOnly ? 'confirmed' : 'all');
     try {
-      const contacts = await vesselsApi.ownerEmailContacts(filters, confirmedOnly);
+      const contacts = await vesselsApi.ownerEmailContacts(filters, confirmedOnly, mainOnly);
       if (contacts.length === 0) {
         message.info('No matching email contacts for the filtered vessels');
         return;
@@ -68,6 +71,7 @@ export default function VesselsPage() {
       title: 'Name',
       dataIndex: 'name',
       sorter: true,
+      sortOrder: tc.sortOrderFor('name'),
       fixed: 'left',
       render: (name: string, v) => (
         <Space size={4}>
@@ -78,12 +82,12 @@ export default function VesselsPage() {
       ),
     },
     { title: 'IMO', dataIndex: 'imoNumber' },
-    { title: 'DWT', dataIndex: 'deadweightTonnage', sorter: true },
-    { title: 'DWCC', dataIndex: 'deadweightCargoCapacity', sorter: true },
-    { title: 'Grain m³', dataIndex: 'grainCapacityM3', sorter: true },
+    { title: 'DWT', dataIndex: 'deadweightTonnage', sorter: true, sortOrder: tc.sortOrderFor('deadweightTonnage') },
+    { title: 'DWCC', dataIndex: 'deadweightCargoCapacity', sorter: true, sortOrder: tc.sortOrderFor('deadweightCargoCapacity') },
+    { title: 'Grain m³', dataIndex: 'grainCapacityM3', sorter: true, sortOrder: tc.sortOrderFor('grainCapacityM3') },
     { title: 'Bale m³', dataIndex: 'baleCapacityM3' },
     { title: 'Draft', dataIndex: 'maximumDraft' },
-    { title: 'Year', dataIndex: 'yearBuilt', sorter: true },
+    { title: 'Year', dataIndex: 'yearBuilt', sorter: true, sortOrder: tc.sortOrderFor('yearBuilt') },
     { title: 'Type', dataIndex: 'vesselType' },
     { title: 'Flag', dataIndex: 'flag' },
     { title: 'Owner', dataIndex: 'ownerName' },
@@ -134,12 +138,12 @@ export default function VesselsPage() {
             <Col xs={12} md={3}><Form.Item name="maxYear" label="Year max"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
             <Col xs={12} md={6}>
               <Form.Item name="vesselType" label="Type">
-                <Select mode="multiple" allowClear maxTagCount="responsive" options={(types ?? []).map((t) => ({ value: t, label: t }))} />
+                <MultiCheckSelect options={types ?? []} placeholder="Any type" />
               </Form.Item>
             </Col>
             <Col xs={12} md={6}>
               <Form.Item name="flag" label="Flag">
-                <Select mode="multiple" allowClear maxTagCount="responsive" options={(flags ?? []).map((f) => ({ value: f, label: f }))} />
+                <MultiCheckSelect options={flags ?? []} placeholder="Any flag" />
               </Form.Item>
             </Col>
           </Row>
@@ -165,6 +169,16 @@ export default function VesselsPage() {
                 onClick={() => addOwnerEmails(true)}
               >
                 Add confirmed emails to list
+              </Button>
+            </Tooltip>
+            <Tooltip title="One email per owner company: the one marked main, or its first email if none is marked">
+              <Button
+                icon={<StarOutlined />}
+                loading={bulkLoading === 'main'}
+                disabled={bulkLoading !== null}
+                onClick={() => addOwnerEmails(false, true)}
+              >
+                Add main emails to list
               </Button>
             </Tooltip>
             <Form.Item name="legacy" noStyle initialValue="">

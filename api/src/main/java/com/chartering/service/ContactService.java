@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.Objects;
 
 @Service
 @RequiredArgsConstructor
@@ -85,17 +86,60 @@ public class ContactService {
         return mapper.toContactResponse(contactRepository.save(ct));
     }
 
+    /**
+     * Flag this contact as its company's main email/phone, demoting whatever held that
+     * slot before. Demoting is part of the same transaction as promoting, so the partial
+     * unique index never sees two mains at once.
+     */
+    @Transactional
+    public ContactResponse setMain(Long id, boolean main) {
+        Contact ct = find(id);
+        if (main) {
+            if (ct.getCompany() == null) {
+                throw new IllegalArgumentException(
+                        "Contact " + id + " belongs to no company, so it cannot be a company's main contact");
+            }
+            contactRepository.clearMain(ct.getCompany().getId(), ct.getContactKind(), id);
+        }
+        ct.setMain(main);
+        return mapper.toContactResponse(contactRepository.save(ct));
+    }
+
+    /**
+     * Flag an address/number as dead (or revive it). The main flag is deliberately left
+     * alone: a company's main email can be dead, and the bulk collection simply falls
+     * through to the next working one — so reviving it later restores the old preference.
+     */
+    @Transactional
+    public ContactResponse setWorking(Long id, boolean working) {
+        Contact ct = find(id);
+        ct.setWorking(working);
+        return mapper.toContactResponse(contactRepository.save(ct));
+    }
+
     private Contact find(Long id) {
         return contactRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Contact", id));
     }
 
     private void apply(Contact ct, ContactRequest req) {
+        Company newCompany = resolveCompany(req.getCompanyId());
+        // Moving a main contact to another company (or to none) surrenders the main slot:
+        // the target may already have one, and keeping the flag would breach the unique index.
+        Long oldCompanyId = ct.getCompany() != null ? ct.getCompany().getId() : null;
+        Long newCompanyId = newCompany != null ? newCompany.getId() : null;
+        if (ct.isMain() && !Objects.equals(oldCompanyId, newCompanyId)) {
+            ct.setMain(false);
+        }
+        // Likewise for a kind change (email <-> phone): main is per company *and* kind.
+        if (ct.isMain() && !Objects.equals(ct.getContactKind(), req.getContactKind())) {
+            ct.setMain(false);
+        }
         ct.setContactKind(req.getContactKind());
         ct.setContactValue(req.getContactValue());
         ct.setNotes(req.getNotes());
         ct.setPerson(resolvePerson(req.getPersonId()));
-        ct.setCompany(resolveCompany(req.getCompanyId()));
+        ct.setCompany(newCompany);
     }
 
     private Person resolvePerson(Long personId) {

@@ -55,4 +55,20 @@ public class Contact {
     /** true = imported legacy row; false = created in-app (new data). Defaults to new. */
     @Column(name = "is_legacy", nullable = false)
     private boolean legacy = false;
+
+    /**
+     * The company's default contact of this kind — at most one main email and one main
+     * phone per company (enforced by ux_contacts_main_per_company_kind). Bulk email-list
+     * actions prefer it and fall back to the company's first email when nothing is flagged.
+     */
+    @Column(name = "is_main", nullable = false)
+    private boolean main = false;
+
+    /**
+     * false = the address/number is dead (bounced, disconnected). Stored positively and
+     * defaulting to true so untouched rows stay reachable. Non-working emails are left out
+     * of bulk email-list collection and dropped again at campaign send time.
+     */
+    @Column(name = "is_working", nullable = false)
+    private boolean working = true;
 }

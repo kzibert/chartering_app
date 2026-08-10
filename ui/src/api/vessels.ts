@@ -19,10 +19,15 @@ export const vesselsApi = {
     client.get<VesselDetailResponse>(`/vessels/${id}`).then((r) => r.data),
 
   // Email contacts of the owner companies of every vessel matching the filter.
-  ownerEmailContacts: (filter: Partial<VesselFilter>, confirmedOnly: boolean) =>
+  // mainOnly collapses each owner to one address: its main email, else its first.
+  ownerEmailContacts: (
+    filter: Partial<VesselFilter>,
+    confirmedOnly: boolean,
+    mainOnly = false,
+  ) =>
     client
       .get<ContactResponse[]>('/vessels/contacts', {
-        params: cleanParams({ ...filter, confirmedOnly }),
+        params: cleanParams({ ...filter, confirmedOnly, mainOnly }),
       })
       .then((r) => r.data),
 
