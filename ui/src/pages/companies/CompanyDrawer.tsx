@@ -1,39 +1,119 @@
-import { useState } from 'react';
-import { Button, Collapse, Drawer, List, Space, Spin, Table, Tabs, Tag, Tooltip, Typography } from 'antd';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Button,
+  Collapse,
+  Drawer,
+  List,
+  Popconfirm,
+  Space,
+  Spin,
+  Table,
+  Tabs,
+  Tag,
+  Tooltip,
+  Typography,
+} from 'antd';
+import {
+  DeleteOutlined,
+  EditOutlined,
+  LinkOutlined,
+  PlusOutlined,
+  SwapOutlined,
+} from '@ant-design/icons';
+import type { ColumnsType } from 'antd/es/table';
 import {
   useCompany,
   useCompanyContacts,
   useCompanyVessels,
   useCompanyMutations,
+  useContactMutations,
   usePeople,
+  usePersonMutations,
+  useVesselMutations,
 } from '../../api/hooks';
 import ConfirmTag from '../../components/ConfirmTag';
 import ContactLine from '../../components/ContactLine';
+import EditToolbar, { useEditMode } from '../../components/EditToolbar';
 import BanButton from '../../components/BanButton';
 import GreetingName from '../../components/GreetingName';
 import VesselDrawer from '../vessels/VesselDrawer';
 import VesselForm from '../vessels/VesselForm';
-import type { CompanyResponse, ContactResponse, VesselResponse } from '../../api/types';
+import { LinkVesselModal, MoveVesselModal } from '../vessels/VesselOwnerModals';
+import ContactForm from '../contacts/ContactForm';
+import PersonForm from '../people/PersonForm';
+import { recordRecent } from '../../recent/store';
+import type {
+  CompanyResponse,
+  ContactRequest,
+  ContactResponse,
+  PersonResponse,
+  VesselResponse,
+} from '../../api/types';
+
+type TabKey = 'vessels' | 'people' | 'contacts';
 
 interface Props {
   companyId?: number;
+  /** Tab to land on. Re-applied whenever the drawer switches company. */
+  initialTab?: TabKey;
   onClose: () => void;
   onEdit: (c: CompanyResponse) => void;
 }
 
-export default function CompanyDrawer({ companyId, onClose, onEdit }: Props) {
+export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClose, onEdit }: Props) {
   const { data, isLoading } = useCompany(companyId);
   const { confirm, remove, ban } = useCompanyMutations();
   const c = data?.company;
 
   const [vesselId, setVesselId] = useState<number>();
+
+  // Controlled so opening a person from the dashboard can land on the People tab;
+  // as a side effect each company starts on its own initial tab rather than
+  // inheriting whichever tab the previously viewed company was left on.
+  const [tab, setTab] = useState<TabKey>(initialTab);
+  useEffect(() => setTab(initialTab), [companyId, initialTab]);
+
+  // Feeds the dashboard's "recently opened" trail.
+  useEffect(() => {
+    if (c) recordRecent({ kind: 'company', id: c.id, title: c.name, subtitle: c.cityName });
+  }, [c?.id, c?.name, c?.cityName]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // One form instance per drawer, driven by whichever row was clicked — rather than a
+  // modal per row, which would mount hundreds of them for a company with many contacts.
+  // `editing == null` while open means "add new", prefilled from the *Defaults below.
   const [vesselFormOpen, setVesselFormOpen] = useState(false);
   const [editingVessel, setEditingVessel] = useState<VesselResponse | null>(null);
+  const [linkVesselOpen, setLinkVesselOpen] = useState(false);
+  const [movingVessel, setMovingVessel] = useState<VesselResponse | null>(null);
+  const [contactFormOpen, setContactFormOpen] = useState(false);
+  const [editingContact, setEditingContact] = useState<ContactResponse | null>(null);
+  const [contactDefaults, setContactDefaults] = useState<Partial<ContactRequest>>();
+  const [personFormOpen, setPersonFormOpen] = useState(false);
+  const [editingPerson, setEditingPerson] = useState<PersonResponse | null>(null);
+
+  // Memoised so the forms' prefill effect doesn't re-run on every drawer render.
+  const vesselDefaults = useMemo(() => ({ ownerId: companyId }), [companyId]);
+  const personDefaults = useMemo(() => ({ companyId }), [companyId]);
+
+  const openVesselForm = (v: VesselResponse | null) => {
+    setEditingVessel(v);
+    setVesselFormOpen(true);
+  };
+  const openPersonForm = (p: PersonResponse | null) => {
+    setEditingPerson(p);
+    setPersonFormOpen(true);
+  };
+  const openContactForm = (ct: ContactResponse | null, personId?: number) => {
+    setEditingContact(ct);
+    setContactDefaults(ct ? undefined : { companyId, personId });
+    setContactFormOpen(true);
+  };
 
   return (
     <Drawer
       open={companyId != null}
-      width={620}
+      // Roomy enough for the vessel table's edit-mode action buttons.
+      width={720}
       title={c?.name ?? 'Company'}
       onClose={onClose}
       extra={
@@ -84,26 +164,79 @@ export default function CompanyDrawer({ companyId, onClose, onEdit }: Props) {
             </Typography.Paragraph>
           )}
           <Tabs
+            activeKey={tab}
+            onChange={(k) => setTab(k as TabKey)}
             items={[
               {
                 key: 'vessels',
                 label: 'Vessels',
-                children: <CompanyVesselsTab id={c.id} onOpenVessel={setVesselId} />,
+                children: (
+                  <CompanyVesselsTab
+                    id={c.id}
+                    onOpenVessel={setVesselId}
+                    onAddVessel={() => openVesselForm(null)}
+                    onLinkVessel={() => setLinkVesselOpen(true)}
+                    onEditVessel={openVesselForm}
+                    onMoveVessel={setMovingVessel}
+                  />
+                ),
               },
-              { key: 'people', label: 'People', children: <CompanyPeopleTab id={c.id} /> },
-              { key: 'contacts', label: 'Contacts', children: <CompanyContactsTab id={c.id} /> },
+              {
+                key: 'people',
+                label: 'People',
+                children: (
+                  <CompanyPeopleTab
+                    id={c.id}
+                    onAddPerson={() => openPersonForm(null)}
+                    onEditPerson={openPersonForm}
+                    onAddContact={(personId) => openContactForm(null, personId)}
+                    onEditContact={(ct) => openContactForm(ct)}
+                  />
+                ),
+              },
+              {
+                key: 'contacts',
+                label: 'Contacts',
+                children: (
+                  <CompanyContactsTab
+                    id={c.id}
+                    onAddContact={() => openContactForm(null)}
+                    onEditContact={(ct) => openContactForm(ct)}
+                  />
+                ),
+              },
             ]}
           />
 
           <VesselDrawer
             vesselId={vesselId}
             onClose={() => setVesselId(undefined)}
-            onEdit={(v) => { setEditingVessel(v); setVesselFormOpen(true); }}
+            onEdit={openVesselForm}
           />
           <VesselForm
             open={vesselFormOpen}
             editing={editingVessel}
+            defaults={vesselDefaults}
             onClose={() => setVesselFormOpen(false)}
+          />
+          <LinkVesselModal
+            open={linkVesselOpen}
+            companyId={c.id}
+            companyName={c.name}
+            onClose={() => setLinkVesselOpen(false)}
+          />
+          <MoveVesselModal vessel={movingVessel} onClose={() => setMovingVessel(null)} />
+          <ContactForm
+            open={contactFormOpen}
+            editing={editingContact}
+            defaults={contactDefaults}
+            onClose={() => setContactFormOpen(false)}
+          />
+          <PersonForm
+            open={personFormOpen}
+            editing={editingPerson}
+            defaults={personDefaults}
+            onClose={() => setPersonFormOpen(false)}
           />
         </>
       )}
@@ -111,51 +244,143 @@ export default function CompanyDrawer({ companyId, onClose, onEdit }: Props) {
   );
 }
 
-function CompanyVesselsTab({ id, onOpenVessel }: { id: number; onOpenVessel: (vesselId: number) => void }) {
+function CompanyVesselsTab({
+  id,
+  onOpenVessel,
+  onAddVessel,
+  onLinkVessel,
+  onEditVessel,
+  onMoveVessel,
+}: {
+  id: number;
+  onOpenVessel: (vesselId: number) => void;
+  onAddVessel: () => void;
+  onLinkVessel: () => void;
+  onEditVessel: (v: VesselResponse) => void;
+  onMoveVessel: (v: VesselResponse) => void;
+}) {
   const { data, isLoading } = useCompanyVessels(id);
+  const { remove } = useVesselMutations();
+  const [editMode, setEditMode] = useEditMode(id);
+
+  const columns: ColumnsType<VesselResponse> = [
+    {
+      title: 'Name',
+      dataIndex: 'name',
+      render: (name: string, v) => (
+        <Typography.Link onClick={() => onOpenVessel(v.id)}>{name}</Typography.Link>
+      ),
+    },
+    { title: 'DWT', dataIndex: 'deadweightTonnage' },
+    { title: 'Year', dataIndex: 'yearBuilt' },
+    { title: 'Type', dataIndex: 'vesselType' },
+  ];
+  if (editMode) {
+    columns.push({
+      title: 'Actions',
+      key: 'actions',
+      width: 210,
+      render: (_, v) => (
+        <Space size={4}>
+          <Button size="small" onClick={() => onEditVessel(v)}>Edit</Button>
+          <Tooltip title="Reassign to another company, or leave unassigned">
+            <Button size="small" icon={<SwapOutlined />} onClick={() => onMoveVessel(v)}>
+              Move
+            </Button>
+          </Tooltip>
+          <Popconfirm
+            title="Delete this vessel?"
+            description="This removes the vessel from the database entirely."
+            onConfirm={() => remove.mutate(v.id)}
+          >
+            <Button size="small" danger>Delete</Button>
+          </Popconfirm>
+        </Space>
+      ),
+    });
+  }
+
   return (
-    <Table
-      rowKey="id"
-      size="small"
-      loading={isLoading}
-      dataSource={data ?? []}
-      pagination={false}
-      columns={[
-        {
-          title: 'Name',
-          dataIndex: 'name',
-          render: (name: string, v) => (
-            <Typography.Link onClick={() => onOpenVessel(v.id)}>{name}</Typography.Link>
-          ),
-        },
-        { title: 'DWT', dataIndex: 'deadweightTonnage' },
-        { title: 'Year', dataIndex: 'yearBuilt' },
-        { title: 'Type', dataIndex: 'vesselType' },
-      ]}
-    />
+    <>
+      <EditToolbar editing={editMode} onToggle={setEditMode}>
+        <Button size="small" icon={<PlusOutlined />} onClick={onAddVessel}>
+          Add new
+        </Button>
+        <Tooltip title="Attach a vessel that already exists in the database">
+          <Button size="small" icon={<LinkOutlined />} onClick={onLinkVessel}>
+            Add existing
+          </Button>
+        </Tooltip>
+      </EditToolbar>
+      <Table<VesselResponse>
+        rowKey="id"
+        size="small"
+        loading={isLoading}
+        dataSource={data ?? []}
+        pagination={false}
+        columns={columns}
+      />
+    </>
   );
 }
 
-function CompanyContactsTab({ id }: { id: number }) {
+function CompanyContactsTab({
+  id,
+  onAddContact,
+  onEditContact,
+}: {
+  id: number;
+  onAddContact: () => void;
+  onEditContact: (ct: ContactResponse) => void;
+}) {
   const { data, isLoading } = useCompanyContacts(id);
+  const { remove } = useContactMutations();
+  const [editMode, setEditMode] = useEditMode(id);
+
   return (
-    <List
-      size="small"
-      loading={isLoading}
-      dataSource={data ?? []}
-      locale={{ emptyText: 'No contacts' }}
-      renderItem={(ct) => <ContactLine ct={ct} />}
-    />
+    <>
+      <EditToolbar editing={editMode} onToggle={setEditMode}>
+        <Button size="small" icon={<PlusOutlined />} onClick={onAddContact}>
+          Add contact
+        </Button>
+      </EditToolbar>
+      <List
+        size="small"
+        loading={isLoading}
+        dataSource={data ?? []}
+        locale={{ emptyText: 'No contacts' }}
+        renderItem={(ct) => (
+          <ContactLine
+            ct={ct}
+            editing={editMode}
+            onEdit={onEditContact}
+            onDelete={(target) => remove.mutate(target.id)}
+          />
+        )}
+      />
+    </>
   );
 }
 
 /** People at the company: name + copiable greeting shown compactly, click to expand contacts. */
-function CompanyPeopleTab({ id }: { id: number }) {
+function CompanyPeopleTab({
+  id,
+  onAddPerson,
+  onEditPerson,
+  onAddContact,
+  onEditContact,
+}: {
+  id: number;
+  onAddPerson: () => void;
+  onEditPerson: (p: PersonResponse) => void;
+  onAddContact: (personId: number) => void;
+  onEditContact: (ct: ContactResponse) => void;
+}) {
   const { data: people, isLoading: loadingPeople } = usePeople(id);
   const { data: contacts, isLoading: loadingContacts } = useCompanyContacts(id);
-
-  if (loadingPeople || loadingContacts) return <Spin />;
-  if (!people || people.length === 0) return <Typography.Text type="secondary">No people.</Typography.Text>;
+  const { remove: removePerson } = usePersonMutations();
+  const { remove: removeContact } = useContactMutations();
+  const [editMode, setEditMode] = useEditMode(id);
 
   const byPerson = new Map<number, ContactResponse[]>();
   (contacts ?? []).forEach((ct) => {
@@ -166,32 +391,104 @@ function CompanyPeopleTab({ id }: { id: number }) {
   });
 
   return (
-    <Collapse
-      accordion
-      items={people.map((p) => {
-        const personContacts = byPerson.get(p.id) ?? [];
-        return {
-          key: String(p.id),
-          label: (
-            <Space wrap>
-              <strong>{p.fullName}</strong>
-              <GreetingName title={p.title} name={p.greetingName} type="success" />
-              <Typography.Text type="secondary">
-                {personContacts.length} contact{personContacts.length === 1 ? '' : 's'}
-              </Typography.Text>
-            </Space>
-          ),
-          children: personContacts.length ? (
-            <List
-              size="small"
-              dataSource={personContacts}
-              renderItem={(ct) => <ContactLine ct={ct} showGreeting={false} />}
-            />
-          ) : (
-            <Typography.Text type="secondary">No contacts</Typography.Text>
-          ),
-        };
-      })}
-    />
+    <>
+      <EditToolbar editing={editMode} onToggle={setEditMode}>
+        <Button size="small" icon={<PlusOutlined />} onClick={onAddPerson}>
+          Add person
+        </Button>
+      </EditToolbar>
+      {loadingPeople || loadingContacts ? (
+        <Spin />
+      ) : !people || people.length === 0 ? (
+        <Typography.Text type="secondary">No people.</Typography.Text>
+      ) : (
+        <Collapse
+          accordion
+          // Expanding a panel is how you look at a person here, so that is what the
+          // dashboard's trail records. Collapsing yields no key and records nothing.
+          onChange={(key) => {
+            const openId = Number(Array.isArray(key) ? key[0] : key);
+            const p = people.find((x) => x.id === openId);
+            if (p) {
+              recordRecent({
+                kind: 'person',
+                id: p.id,
+                title: p.fullName,
+                subtitle: p.companyName,
+                companyId: p.companyId,
+              });
+            }
+          }}
+          items={people.map((p) => {
+            const personContacts = byPerson.get(p.id) ?? [];
+            return {
+              key: String(p.id),
+              label: (
+                <Space wrap>
+                  <strong>{p.fullName}</strong>
+                  <GreetingName title={p.title} name={p.greetingName} type="success" />
+                  <Typography.Text type="secondary">
+                    {personContacts.length} contact{personContacts.length === 1 ? '' : 's'}
+                  </Typography.Text>
+                  {editMode && (
+                    // The label is the Collapse's own toggle, and the confirm popup is a
+                    // React child of this span — without stopping propagation here, both
+                    // the buttons and their confirmations would expand/collapse the panel.
+                    <span onClick={(e) => e.stopPropagation()}>
+                      <Space size={4}>
+                        <Tooltip title="Edit person">
+                          <Button
+                            size="small"
+                            aria-label={`Edit ${p.fullName}`}
+                            icon={<EditOutlined />}
+                            onClick={() => onEditPerson(p)}
+                          />
+                        </Tooltip>
+                        <Tooltip title="Add contact for this person">
+                          <Button
+                            size="small"
+                            aria-label={`Add contact for ${p.fullName}`}
+                            icon={<PlusOutlined />}
+                            onClick={() => onAddContact(p.id)}
+                          />
+                        </Tooltip>
+                        <Popconfirm
+                          title="Delete this person?"
+                          onConfirm={() => removePerson.mutate(p.id)}
+                        >
+                          <Button
+                            size="small"
+                            danger
+                            aria-label={`Delete ${p.fullName}`}
+                            icon={<DeleteOutlined />}
+                          />
+                        </Popconfirm>
+                      </Space>
+                    </span>
+                  )}
+                </Space>
+              ),
+              children: personContacts.length ? (
+                <List
+                  size="small"
+                  dataSource={personContacts}
+                  renderItem={(ct) => (
+                    <ContactLine
+                      ct={ct}
+                      showGreeting={false}
+                      editing={editMode}
+                      onEdit={onEditContact}
+                      onDelete={(target) => removeContact.mutate(target.id)}
+                    />
+                  )}
+                />
+              ) : (
+                <Typography.Text type="secondary">No contacts</Typography.Text>
+              ),
+            };
+          })}
+        />
+      )}
+    </>
   );
 }

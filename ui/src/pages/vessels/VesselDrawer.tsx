@@ -1,12 +1,16 @@
-import { useState } from 'react';
-import { Button, Card, Descriptions, Drawer, List, Space, Spin, Tag, Typography } from 'antd';
-import { useVessel, useVesselMutations } from '../../api/hooks';
+import { useEffect, useMemo, useState } from 'react';
+import { Button, Card, Descriptions, Drawer, List, Space, Spin, Tag, Tooltip, Typography } from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
+import { useContactMutations, useVessel, useVesselMutations } from '../../api/hooks';
+import { recordRecent } from '../../recent/store';
 import ConfirmTag from '../../components/ConfirmTag';
 import ContactLine from '../../components/ContactLine';
+import EditToolbar, { useEditMode } from '../../components/EditToolbar';
 import BanButton from '../../components/BanButton';
 import CompanyDrawer from '../companies/CompanyDrawer';
 import CompanyForm from '../companies/CompanyForm';
-import type { CompanyResponse, VesselResponse } from '../../api/types';
+import ContactForm from '../contacts/ContactForm';
+import type { CompanyResponse, ContactResponse, VesselResponse } from '../../api/types';
 
 interface Props {
   vesselId?: number;
@@ -22,6 +26,28 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
   const [companyId, setCompanyId] = useState<number>();
   const [companyFormOpen, setCompanyFormOpen] = useState(false);
   const [editingCompany, setEditingCompany] = useState<CompanyResponse | null>(null);
+
+  // Owner contacts follow the same rules as the company drawer's Contacts tab:
+  // read-only until Edit is on, which then reveals add/edit/delete and the
+  // main / not-working toggles.
+  const { remove: removeContact } = useContactMutations();
+  const [contactsEditing, setContactsEditing] = useEditMode(vesselId);
+  const [contactFormOpen, setContactFormOpen] = useState(false);
+  const [editingContact, setEditingContact] = useState<ContactResponse | null>(null);
+
+  const ownerId = data?.owner?.id;
+  // A contact added here belongs to the owner company — that is what this list shows.
+  const contactDefaults = useMemo(() => ({ companyId: ownerId }), [ownerId]);
+
+  const openContactForm = (ct: ContactResponse | null) => {
+    setEditingContact(ct);
+    setContactFormOpen(true);
+  };
+
+  // Feeds the dashboard's "recently opened" trail.
+  useEffect(() => {
+    if (v) recordRecent({ kind: 'vessel', id: v.id, title: v.name, subtitle: v.ownerName });
+  }, [v?.id, v?.name, v?.ownerName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <Drawer
@@ -109,11 +135,30 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
           <Typography.Title level={5} style={{ marginTop: 20 }}>
             Owner contacts ({data?.ownerContacts.length ?? 0})
           </Typography.Title>
+          <EditToolbar editing={contactsEditing} onToggle={setContactsEditing}>
+            <Tooltip title={ownerId ? '' : 'Link an owner company first'}>
+              <Button
+                size="small"
+                icon={<PlusOutlined />}
+                disabled={!ownerId}
+                onClick={() => openContactForm(null)}
+              >
+                Add contact
+              </Button>
+            </Tooltip>
+          </EditToolbar>
           <List
             size="small"
             dataSource={data?.ownerContacts ?? []}
             locale={{ emptyText: 'No contacts' }}
-            renderItem={(c) => <ContactLine ct={c} />}
+            renderItem={(c) => (
+              <ContactLine
+                ct={c}
+                editing={contactsEditing}
+                onEdit={openContactForm}
+                onDelete={(target) => removeContact.mutate(target.id)}
+              />
+            )}
           />
 
           <CompanyDrawer
@@ -125,6 +170,12 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
             open={companyFormOpen}
             editing={editingCompany}
             onClose={() => setCompanyFormOpen(false)}
+          />
+          <ContactForm
+            open={contactFormOpen}
+            editing={editingContact}
+            defaults={contactDefaults}
+            onClose={() => setContactFormOpen(false)}
           />
         </>
       )}

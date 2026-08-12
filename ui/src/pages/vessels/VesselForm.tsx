@@ -7,10 +7,15 @@ import type { VesselRequest, VesselResponse } from '../../api/types';
 interface Props {
   open: boolean;
   editing?: VesselResponse | null;
+  /**
+   * Prefilled fields for a new vessel — e.g. the owner when adding from a company
+   * drawer. Ignored when editing. Keep the object referentially stable (useMemo).
+   */
+  defaults?: Partial<VesselRequest>;
   onClose: () => void;
 }
 
-export default function VesselForm({ open, editing, onClose }: Props) {
+export default function VesselForm({ open, editing, defaults, onClose }: Props) {
   const [form] = Form.useForm<VesselRequest>();
   const { create, update } = useVesselMutations();
   const { data: types } = useVesselTypes();
@@ -18,6 +23,7 @@ export default function VesselForm({ open, editing, onClose }: Props) {
 
   useEffect(() => {
     if (open) {
+      form.resetFields();
       if (editing) {
         form.setFieldsValue({
           name: editing.name,
@@ -33,11 +39,11 @@ export default function VesselForm({ open, editing, onClose }: Props) {
           ownerId: editing.ownerId,
           notes: editing.notes,
         });
-      } else {
-        form.resetFields();
+      } else if (defaults) {
+        form.setFieldsValue(defaults);
       }
     }
-  }, [open, editing, form]);
+  }, [open, editing, defaults, form]);
 
   const submit = (values: VesselRequest) => {
     const done = { onSuccess: onClose };

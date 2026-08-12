@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { vesselsApi } from './vessels';
+import { toVesselRequest, vesselsApi } from './vessels';
 import { companiesApi } from './companies';
 import { peopleApi } from './people';
 import { contactsApi } from './contacts';
@@ -13,6 +13,7 @@ import type {
   PersonRequest,
   VesselFilter,
   VesselRequest,
+  VesselResponse,
 } from './types';
 
 // Invalidate list/detail caches plus dashboard counts after any write.
@@ -46,17 +47,21 @@ export const useVessel = (id?: number) =>
 
 export function useVesselMutations() {
   const invalidate = useInvalidator();
+  // 'company' is included because the company drawer lists a company's fleet from
+  // ['company', id, 'vessels'] — writes made there (or any owner change) would
+  // otherwise leave that list stale.
+  const touched = ['vessels', 'vessel', 'company'] as const;
   const create = useMutation({
     mutationFn: (body: VesselRequest) => vesselsApi.create(body),
-    onSuccess: () => invalidate('vessels'),
+    onSuccess: () => invalidate(...touched),
   });
   const update = useMutation({
     mutationFn: (v: { id: number; body: VesselRequest }) => vesselsApi.update(v.id, v.body),
-    onSuccess: () => invalidate('vessels', 'vessel'),
+    onSuccess: () => invalidate(...touched),
   });
   const remove = useMutation({
     mutationFn: (id: number) => vesselsApi.remove(id),
-    onSuccess: () => invalidate('vessels'),
+    onSuccess: () => invalidate(...touched),
   });
   const confirm = useMutation({
     mutationFn: (v: { id: number; confirmed: boolean; body?: ConfirmRequest }) =>
@@ -67,7 +72,15 @@ export function useVesselMutations() {
     mutationFn: (v: { id: number; banned: boolean }) => vesselsApi.setBanned(v.id, v.banned),
     onSuccess: () => invalidate('vessels', 'vessel', 'company'),
   });
-  return { create, update, remove, confirm, ban };
+  // Link/reassign/unassign a vessel's owner without opening the full edit form.
+  // There is no owner-only endpoint, so the untouched fields ride along from the
+  // vessel we already hold. ownerId undefined = leave the vessel unassigned.
+  const setOwner = useMutation({
+    mutationFn: (v: { vessel: VesselResponse; ownerId?: number }) =>
+      vesselsApi.update(v.vessel.id, { ...toVesselRequest(v.vessel), ownerId: v.ownerId }),
+    onSuccess: () => invalidate(...touched),
+  });
+  return { create, update, remove, confirm, ban, setOwner };
 }
 
 /* ---------------- companies ---------------- */
@@ -118,22 +131,29 @@ export function useCompanyMutations() {
 }
 
 /* ---------------- people ---------------- */
-export const usePeople = (companyId?: number) =>
-  useQuery({ queryKey: ['people', companyId ?? null], queryFn: () => peopleApi.list(companyId) });
+export const usePeople = (companyId?: number, name?: string) =>
+  useQuery({
+    queryKey: ['people', companyId ?? null, name ?? null],
+    queryFn: () => peopleApi.list(companyId, name),
+  });
 
 export function usePersonMutations() {
   const invalidate = useInvalidator();
+  // Contact rows embed the person's name/greeting, and the company + vessel drawers
+  // render those rows from their own query keys — so a person edit has to invalidate
+  // more than 'people' or the drawer keeps showing the old name.
+  const touched = ['people', 'contacts', 'company', 'vessel'] as const;
   const create = useMutation({
     mutationFn: (body: PersonRequest) => peopleApi.create(body),
-    onSuccess: () => invalidate('people'),
+    onSuccess: () => invalidate(...touched),
   });
   const update = useMutation({
     mutationFn: (v: { id: number; body: PersonRequest }) => peopleApi.update(v.id, v.body),
-    onSuccess: () => invalidate('people'),
+    onSuccess: () => invalidate(...touched),
   });
   const remove = useMutation({
     mutationFn: (id: number) => peopleApi.remove(id),
-    onSuccess: () => invalidate('people'),
+    onSuccess: () => invalidate(...touched),
   });
   return { create, update, remove };
 }
@@ -144,36 +164,41 @@ export const useContacts = (filter: ContactFilter) =>
 
 export function useContactMutations() {
   const invalidate = useInvalidator();
+  // The company drawer reads contacts from ['company', id, 'contacts'] and the vessel
+  // drawer from ['vessel', id] — neither is matched by invalidating 'contacts' alone, so
+  // an edit made inside a drawer would leave the drawer showing the old value. 'companies'
+  // is included because adding/removing an email can flip the no-working-email label.
+  const touched = ['contacts', 'company', 'companies', 'vessel'] as const;
   const create = useMutation({
     mutationFn: (body: ContactRequest) => contactsApi.create(body),
-    onSuccess: () => invalidate('contacts'),
+    onSuccess: () => invalidate(...touched),
   });
   const update = useMutation({
     mutationFn: (v: { id: number; body: ContactRequest }) => contactsApi.update(v.id, v.body),
-    onSuccess: () => invalidate('contacts'),
+    onSuccess: () => invalidate(...touched),
   });
   const remove = useMutation({
     mutationFn: (id: number) => contactsApi.remove(id),
-    onSuccess: () => invalidate('contacts'),
+    onSuccess: () => invalidate(...touched),
   });
   const confirm = useMutation({
     mutationFn: (v: { id: number; confirmed: boolean; body?: ConfirmRequest }) =>
       contactsApi.confirm(v.id, v.confirmed, v.body),
-    onSuccess: () => invalidate('contacts'),
+    onSuccess: () => invalidate('contacts', 'company', 'vessel'),
   });
   const ban = useMutation({
     mutationFn: (v: { id: number; banned: boolean }) => contactsApi.setBanned(v.id, v.banned),
-    onSuccess: () => invalidate('contacts', 'company'),
+    onSuccess: () => invalidate('contacts', 'company', 'vessel'),
   });
   // Promoting demotes the company's previous main, so the whole company must be refetched.
   const setMain = useMutation({
     mutationFn: (v: { id: number; main: boolean }) => contactsApi.setMain(v.id, v.main),
-    onSuccess: () => invalidate('contacts', 'company'),
+    onSuccess: () => invalidate('contacts', 'company', 'vessel'),
   });
   // Flipping this can change the company's "no working email" label, so refresh companies too.
   const setWorking = useMutation({
     mutationFn: (v: { id: number; working: boolean }) => contactsApi.setWorking(v.id, v.working),
-    onSuccess: () => invalidate('contacts', 'company', 'companies'),
+    onSuccess: () => invalidate(...touched),
   });
   return { create, update, remove, confirm, ban, setMain, setWorking };
 }

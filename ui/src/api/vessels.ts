@@ -9,6 +9,25 @@ import type {
   VesselResponse,
 } from './types';
 
+/**
+ * A vessel's editable fields echoed back out of a response. PUT /vessels/{id} replaces
+ * the whole record, so changing one field (e.g. the owner) still has to resend the rest.
+ */
+export const toVesselRequest = (v: VesselResponse): VesselRequest => ({
+  name: v.name,
+  imoNumber: v.imoNumber,
+  deadweightTonnage: v.deadweightTonnage,
+  deadweightCargoCapacity: v.deadweightCargoCapacity,
+  grainCapacityM3: v.grainCapacityM3,
+  baleCapacityM3: v.baleCapacityM3,
+  maximumDraft: v.maximumDraft,
+  yearBuilt: v.yearBuilt,
+  vesselType: v.vesselType,
+  flag: v.flag,
+  ownerId: v.ownerId,
+  notes: v.notes,
+});
+
 export const vesselsApi = {
   search: (filter: VesselFilter) =>
     client

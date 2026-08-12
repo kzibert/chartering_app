@@ -11,15 +11,23 @@ const TITLE_OPTIONS = ['Mr.', 'Mrs.', 'Ms.', 'Miss', 'Capt.', 'Dr.', 'Eng.', 'Pr
 interface Props {
   open: boolean;
   editing?: PersonResponse | null;
+  /**
+   * Prefilled fields for a new person — e.g. the company when adding from a company
+   * drawer. Ignored when editing. Keep the object referentially stable (useMemo).
+   */
+  defaults?: Partial<PersonRequest>;
+  /** Called with the saved person after a *create*, so callers can select it. */
+  onCreated?: (person: PersonResponse) => void;
   onClose: () => void;
 }
 
-export default function PersonForm({ open, editing, onClose }: Props) {
+export default function PersonForm({ open, editing, defaults, onCreated, onClose }: Props) {
   const [form] = Form.useForm<PersonRequest>();
   const { create, update } = usePersonMutations();
 
   useEffect(() => {
     if (open) {
+      form.resetFields();
       if (editing) {
         form.setFieldsValue({
           fullName: editing.fullName,
@@ -28,16 +36,23 @@ export default function PersonForm({ open, editing, onClose }: Props) {
           companyId: editing.companyId,
           notes: editing.notes,
         });
-      } else {
-        form.resetFields();
+      } else if (defaults) {
+        form.setFieldsValue(defaults);
       }
     }
-  }, [open, editing, form]);
+  }, [open, editing, defaults, form]);
 
   const submit = (values: PersonRequest) => {
-    const done = { onSuccess: onClose };
-    if (editing) update.mutate({ id: editing.id, body: values }, done);
-    else create.mutate(values, done);
+    if (editing) {
+      update.mutate({ id: editing.id, body: values }, { onSuccess: onClose });
+    } else {
+      create.mutate(values, {
+        onSuccess: (person) => {
+          onCreated?.(person);
+          onClose();
+        },
+      });
+    }
   };
 
   return (

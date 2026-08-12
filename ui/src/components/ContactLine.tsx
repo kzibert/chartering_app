@@ -1,4 +1,5 @@
-import { List, Space, Tag } from 'antd';
+import { Button, List, Popconfirm, Space, Tag, Tooltip } from 'antd';
+import { DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import CopyableValue from './CopyableValue';
 import GreetingName from './GreetingName';
 import AddToListButton from './AddToListButton';
@@ -15,9 +16,22 @@ import type { ContactResponse } from '../api/types';
 export default function ContactLine({
   ct,
   showGreeting = true,
+  editing = false,
+  onEdit,
+  onDelete,
 }: {
   ct: ContactResponse;
   showGreeting?: boolean;
+  /**
+   * Gates every control that writes to the contact — main, not-working, edit, delete —
+   * so browsing a list stays read-only until the caller's Edit toggle is on. Add-to-list
+   * is deliberately not gated: it only builds the local email list.
+   */
+  editing?: boolean;
+  /** Supply to show an edit button. The caller owns the form, so one drawer renders one. */
+  onEdit?: (ct: ContactResponse) => void;
+  /** Supply to show a delete button (already behind a confirmation popup). */
+  onDelete?: (ct: ContactResponse) => void;
 }) {
   return (
     <List.Item>
@@ -30,9 +44,33 @@ export default function ContactLine({
         {ct.main && <Tag color="gold">main</Tag>}
         {!ct.working && <Tag color="red">not working</Tag>}
         {ct.confirmed && <Tag color="success">confirmed</Tag>}
-        <MainContactButton ct={ct} />
-        <WorkingToggleButton ct={ct} />
+        {editing && <MainContactButton ct={ct} />}
+        {editing && <WorkingToggleButton ct={ct} />}
         <AddToListButton ct={ct} />
+        {editing && onEdit && (
+          <Tooltip title="Edit contact">
+            <Button
+              type="text"
+              size="small"
+              aria-label="Edit contact"
+              icon={<EditOutlined />}
+              onClick={() => onEdit(ct)}
+            />
+          </Tooltip>
+        )}
+        {editing && onDelete && (
+          // No Tooltip here: nesting one inside Popconfirm makes both popups fight
+          // over the same trigger. The confirm title says what the button does.
+          <Popconfirm title="Delete this contact?" onConfirm={() => onDelete(ct)}>
+            <Button
+              type="text"
+              size="small"
+              danger
+              aria-label="Delete contact"
+              icon={<DeleteOutlined />}
+            />
+          </Popconfirm>
+        )}
       </Space>
     </List.Item>
   );

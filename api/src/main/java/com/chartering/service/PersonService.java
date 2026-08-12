@@ -8,7 +8,10 @@ import com.chartering.model.Company;
 import com.chartering.model.Person;
 import com.chartering.repository.CompanyRepository;
 import com.chartering.repository.PersonRepository;
+import com.chartering.specification.PersonSpecification;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,11 +26,13 @@ public class PersonService {
     private final DtoMapper mapper;
 
     @Transactional(readOnly = true)
-    public List<PersonResponse> list(Long companyId) {
-        List<Person> people = companyId != null
-                ? personRepository.findByCompanyId(companyId)
-                : personRepository.findAll();
-        return people.stream().map(mapper::toPersonResponse).toList();
+    public List<PersonResponse> list(Long companyId, String name) {
+        Specification<Person> spec = Specification.allOf(
+                PersonSpecification.companyIdEquals(companyId),
+                PersonSpecification.nameContains(name));
+        return personRepository.findAll(spec, Sort.by("fullName")).stream()
+                .map(mapper::toPersonResponse)
+                .toList();
     }
 
     @Transactional(readOnly = true)

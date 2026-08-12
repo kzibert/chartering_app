@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { Button, Card, Popconfirm, Space, Table, Typography } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { useEffect, useState } from 'react';
+import { Button, Card, Input, Popconfirm, Space, Table, Typography } from 'antd';
+import { PlusOutlined, SearchOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { usePeople, usePersonMutations } from '../../api/hooks';
 import CompanySelect from '../../components/CompanySelect';
@@ -10,9 +10,17 @@ import PersonForm from './PersonForm';
 import type { PersonResponse } from '../../api/types';
 
 export default function PeoplePage() {
-  // No Reset button here — clearing the select ("All companies") is the reset.
   const [companyId, setCompanyId] = usePersistedState<number | undefined>('people.companyId', undefined);
-  const { data, isLoading } = usePeople(companyId);
+  const [name, setName] = usePersistedState<string>('people.name', '');
+
+  // Filters as you type; the delay keeps a request per keystroke off the API.
+  const [nameQuery, setNameQuery] = useState(name);
+  useEffect(() => {
+    const t = setTimeout(() => setNameQuery(name), 300);
+    return () => clearTimeout(t);
+  }, [name]);
+
+  const { data, isLoading } = usePeople(companyId, nameQuery.trim() || undefined);
   const { remove } = usePersonMutations();
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<PersonResponse | null>(null);
@@ -51,10 +59,25 @@ export default function PeoplePage() {
     <>
       <Card size="small" style={{ marginBottom: 16 }}>
         <Space wrap>
-          <span>Filter by company:</span>
+          <span>Name:</span>
+          <Input
+            allowClear
+            style={{ width: 260 }}
+            prefix={<SearchOutlined />}
+            placeholder="Full name or greeting"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <span>Company:</span>
           <div style={{ width: 320 }}>
             <CompanySelect allowClear value={companyId} onChange={setCompanyId} placeholder="All companies" />
           </div>
+          <Button
+            disabled={!name && companyId == null}
+            onClick={() => { setName(''); setCompanyId(undefined); }}
+          >
+            Reset
+          </Button>
           <Button icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true); }}>New person</Button>
         </Space>
       </Card>

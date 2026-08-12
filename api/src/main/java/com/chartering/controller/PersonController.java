@@ -22,9 +22,13 @@ public class PersonController {
     private final PersonService personService;
 
     @GetMapping
-    @Operation(summary = "List people, optionally filtered by companyId")
-    public ResponseEntity<List<PersonResponse>> list(@RequestParam(required = false) Long companyId) {
-        return ResponseEntity.ok(personService.list(companyId));
+    @Operation(summary = "List people, optionally filtered by company and/or name",
+            description = "name is a case-insensitive substring match against the full name "
+                    + "or the greeting name. Filters combine (both must match).")
+    public ResponseEntity<List<PersonResponse>> list(
+            @RequestParam(required = false) Long companyId,
+            @RequestParam(required = false) String name) {
+        return ResponseEntity.ok(personService.list(companyId, name));
     }
 
     @GetMapping("/{id}")

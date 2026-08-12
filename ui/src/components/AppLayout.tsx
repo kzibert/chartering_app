@@ -60,7 +60,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       <Layout>
         <Header style={{ background: '#fff', paddingInline: 24 }}>
           <Typography.Title level={4} style={{ margin: '16px 0' }}>
-            Vessel Console — chartering
+            Maritella chartering application
           </Typography.Title>
         </Header>
         <Content style={{ margin: 24 }}>{children}</Content>
