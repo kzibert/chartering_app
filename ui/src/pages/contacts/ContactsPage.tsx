@@ -5,6 +5,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { useContacts, useContactMutations } from '../../api/hooks';
 import { useTableControls } from '../../components/useTableControls';
 import { usePersistedFilters } from '../../components/usePersistedState';
+import { CONFIRMED_OPTIONS } from '../../components/filterOptions';
 import ConfirmTag from '../../components/ConfirmTag';
 import CopyableValue from '../../components/CopyableValue';
 import AddToListButton from '../../components/AddToListButton';
@@ -103,8 +104,8 @@ export default function ContactsPage() {
             <Col xs={12} md={7}><Form.Item name="value" label="Value contains"><Input allowClear /></Form.Item></Col>
             <Col xs={12} md={5}><Form.Item name="companyId" label="Company ID"><Input allowClear /></Form.Item></Col>
             <Col xs={12} md={5}>
-              <Form.Item name="confirmed" label="Confirmed">
-                <Select allowClear options={[{ value: true, label: 'Confirmed' }, { value: false, label: 'Needs confirm' }]} />
+              <Form.Item name="confirmed" label="Confirmed" initialValue="">
+                <Select options={CONFIRMED_OPTIONS} />
               </Form.Item>
             </Col>
           </Row>

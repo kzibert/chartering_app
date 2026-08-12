@@ -5,6 +5,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { useCompanies, useRegions, usePorts, useTonnageCategories, useCompanyMutations } from '../../api/hooks';
 import { useTableControls } from '../../components/useTableControls';
 import { usePersistedFilters } from '../../components/usePersistedState';
+import { CONFIRMED_OPTIONS } from '../../components/filterOptions';
 import ConfirmTag from '../../components/ConfirmTag';
 import CompanyDrawer from './CompanyDrawer';
 import CompanyForm from './CompanyForm';
@@ -97,8 +98,8 @@ export default function CompaniesPage() {
               </Form.Item>
             </Col>
             <Col xs={12} md={4}>
-              <Form.Item name="confirmed" label="Confirmed">
-                <Select allowClear options={[{ value: true, label: 'Confirmed' }, { value: false, label: 'Needs confirm' }]} />
+              <Form.Item name="confirmed" label="Confirmed" initialValue="">
+                <Select options={CONFIRMED_OPTIONS} />
               </Form.Item>
             </Col>
           </Row>

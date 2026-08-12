@@ -5,6 +5,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { useVessels, useVesselTypes, useFlags } from '../../api/hooks';
 import { useTableControls } from '../../components/useTableControls';
 import { usePersistedFilters } from '../../components/usePersistedState';
+import { CONFIRMED_OPTIONS } from '../../components/filterOptions';
 import ConfirmTag from '../../components/ConfirmTag';
 import MultiCheckSelect from '../../components/MultiCheckSelect';
 import { useVesselMutations } from '../../api/hooks';
@@ -116,8 +117,8 @@ export default function VesselsPage() {
             <Col xs={12} md={6}><Form.Item name="imoNumber" label="IMO"><Input allowClear /></Form.Item></Col>
             <Col xs={12} md={6}><Form.Item name="ownerName" label="Owner name"><Input allowClear /></Form.Item></Col>
             <Col xs={12} md={6}>
-              <Form.Item name="confirmed" label="Confirmed">
-                <Select allowClear options={[{ value: true, label: 'Confirmed' }, { value: false, label: 'Needs confirm' }]} />
+              <Form.Item name="confirmed" label="Confirmed" initialValue="">
+                <Select options={CONFIRMED_OPTIONS} />
               </Form.Item>
             </Col>
           </Row>
