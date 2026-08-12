@@ -18,6 +18,22 @@ public interface ContactRepository
     List<Contact> findByCompanyIdOrderByMainDescIdAsc(Long companyId);
 
     /**
+     * Contacts of a whole page of people in one query — the people search embeds them,
+     * and fetching per row would be an N+1. Ordered so each person's list reads the same
+     * way as everywhere else: main first, then oldest.
+     */
+    @Query("""
+            select c from Contact c
+              left join fetch c.person
+              left join fetch c.company
+            where c.person.id in :personIds
+              and (:includeBanned = true or c.banned = false)
+            order by c.person.id, c.main desc, c.id
+            """)
+    List<Contact> findByPersonIds(@Param("personIds") Collection<Long> personIds,
+                                  @Param("includeBanned") boolean includeBanned);
+
+    /**
      * Distinct <em>working</em> email contacts belonging to the given companies (used to
      * bulk-collect the owner contacts of a filtered vessel set). person + company are
      * join-fetched so the mapper doesn't N+1. confirmedOnly=true restricts to confirmed

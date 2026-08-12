@@ -3,8 +3,10 @@ import { DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import CopyableValue from './CopyableValue';
 import GreetingName from './GreetingName';
 import AddToListButton from './AddToListButton';
+import BanButton from './BanButton';
 import MainContactButton from './MainContactButton';
 import WorkingToggleButton from './WorkingToggleButton';
+import { useContactMutations } from '../api/hooks';
 import type { ContactResponse } from '../api/types';
 
 /**
@@ -17,11 +19,14 @@ export default function ContactLine({
   ct,
   showGreeting = true,
   editing = false,
+  highlight,
   onEdit,
   onDelete,
 }: {
   ct: ContactResponse;
   showGreeting?: boolean;
+  /** Substring to mark in the value — the term this row was searched by. */
+  highlight?: string;
   /**
    * Gates every control that writes to the contact — main, not-working, edit, delete —
    * so browsing a list stays read-only until the caller's Edit toggle is on. Add-to-list
@@ -33,6 +38,7 @@ export default function ContactLine({
   /** Supply to show a delete button (already behind a confirmation popup). */
   onDelete?: (ct: ContactResponse) => void;
 }) {
+  const { ban } = useContactMutations();
   return (
     <List.Item>
       <Space wrap size={4}>
@@ -40,10 +46,11 @@ export default function ContactLine({
           <GreetingName title={ct.title} name={ct.greetingName} type="secondary" />
         )}
         <Tag color={ct.contactKind === 'email' ? 'blue' : 'default'}>{ct.contactKind}</Tag>
-        <CopyableValue value={ct.contactValue} />
+        <CopyableValue value={ct.contactValue} highlight={highlight} />
         {ct.main && <Tag color="gold">main</Tag>}
         {!ct.working && <Tag color="red">not working</Tag>}
         {ct.confirmed && <Tag color="success">confirmed</Tag>}
+        {ct.banned && <Tag color="red">banned</Tag>}
         {editing && <MainContactButton ct={ct} />}
         {editing && <WorkingToggleButton ct={ct} />}
         <AddToListButton ct={ct} />
@@ -57,6 +64,14 @@ export default function ContactLine({
               onClick={() => onEdit(ct)}
             />
           </Tooltip>
+        )}
+        {editing && (
+          <BanButton
+            banned={ct.banned}
+            loading={ban.isPending}
+            size="small"
+            onToggle={(b) => ban.mutate({ id: ct.id, banned: b })}
+          />
         )}
         {editing && onDelete && (
           // No Tooltip here: nesting one inside Popconfirm makes both popups fight

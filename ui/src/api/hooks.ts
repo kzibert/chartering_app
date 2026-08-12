@@ -8,8 +8,8 @@ import type {
   CompanyFilter,
   CompanyRequest,
   ConfirmRequest,
-  ContactFilter,
   ContactRequest,
+  PeopleFilter,
   PersonRequest,
   VesselFilter,
   VesselRequest,
@@ -137,6 +137,9 @@ export const usePeople = (companyId?: number, name?: string) =>
     queryFn: () => peopleApi.list(companyId, name),
   });
 
+export const usePeopleSearch = (filter: PeopleFilter) =>
+  useQuery({ queryKey: ['people', 'search', filter], queryFn: () => peopleApi.search(filter) });
+
 export const usePerson = (id?: number) =>
   useQuery({ queryKey: ['person', id], queryFn: () => peopleApi.get(id!), enabled: id != null });
 
@@ -172,8 +175,8 @@ export function usePersonMutations() {
 }
 
 /* ---------------- contacts ---------------- */
-export const useContacts = (filter: ContactFilter) =>
-  useQuery({ queryKey: ['contacts', filter], queryFn: () => contactsApi.search(filter) });
+// No flat contact list hook: contacts are reached through their person
+// (usePeopleSearch / usePersonContacts) since the Contacts tab was merged into People.
 
 export function useContactMutations() {
   const invalidate = useInvalidator();

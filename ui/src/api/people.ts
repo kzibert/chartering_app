@@ -1,7 +1,19 @@
 import { client, cleanParams } from './client';
-import type { PersonRequest, PersonResponse } from './types';
+import type {
+  PageResponse,
+  PeopleFilter,
+  PersonDetailResponse,
+  PersonRequest,
+  PersonResponse,
+} from './types';
 
 export const peopleApi = {
+  /** Paginated search with each person's contacts attached — powers the People page. */
+  search: (filter: PeopleFilter) =>
+    client
+      .get<PageResponse<PersonDetailResponse>>('/people/search', { params: cleanParams(filter) })
+      .then((r) => r.data),
+
   /** `name` matches the full name or the greeting name; filters combine. */
   list: (companyId?: number, name?: string) =>
     client

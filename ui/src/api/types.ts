@@ -99,6 +99,12 @@ export interface PersonResponse {
   legacy: boolean;
 }
 
+/** One row of the People page: the person plus their emails and phones. */
+export interface PersonDetailResponse {
+  person: PersonResponse;
+  contacts: ContactResponse[];
+}
+
 export interface PersonRequest {
   fullName: string;
   title?: string;
@@ -212,6 +218,17 @@ export interface CompanyFilter extends PageParams {
   legacy?: boolean;
   /** true = only companies whose every email is flagged not working */
   noWorkingEmail?: boolean;
+}
+
+/** People page search. The contact criteria must all be met by the same contact. */
+export interface PeopleFilter extends PageParams {
+  name?: string;
+  companyId?: number;
+  contactValue?: string;
+  contactKind?: string;
+  confirmed?: boolean;
+  includeBanned?: boolean;
+  legacy?: boolean;
 }
 
 export interface ContactFilter extends PageParams {

@@ -5,7 +5,6 @@ import {
   ContainerOutlined,
   BankOutlined,
   TeamOutlined,
-  MailOutlined,
   UnorderedListOutlined,
   SendOutlined,
 } from '@ant-design/icons';
@@ -14,7 +13,8 @@ import { useEmailList } from '../emailList/store';
 
 const { Sider, Header, Content } = Layout;
 
-const KEYS = ['/', '/vessels', '/companies', '/people', '/contacts', '/email-list', '/circulars'];
+// No '/contacts': contacts live inside People now, grouped under the person who owns them.
+const KEYS = ['/', '/vessels', '/companies', '/people', '/email-list', '/circulars'];
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
@@ -26,8 +26,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     { key: '/', icon: <DashboardOutlined />, label: 'Dashboard' },
     { key: '/vessels', icon: <ContainerOutlined />, label: 'Vessels' },
     { key: '/companies', icon: <BankOutlined />, label: 'Companies' },
-    { key: '/people', icon: <TeamOutlined />, label: 'People' },
-    { key: '/contacts', icon: <MailOutlined />, label: 'Contacts' },
+    { key: '/people', icon: <TeamOutlined />, label: 'People & contacts' },
     {
       key: '/email-list',
       icon: <UnorderedListOutlined />,

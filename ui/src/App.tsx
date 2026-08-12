@@ -4,7 +4,6 @@ import Dashboard from './pages/Dashboard';
 import VesselsPage from './pages/vessels/VesselsPage';
 import CompaniesPage from './pages/companies/CompaniesPage';
 import PeoplePage from './pages/people/PeoplePage';
-import ContactsPage from './pages/contacts/ContactsPage';
 import EmailListPage from './pages/emailList/EmailListPage';
 import CircularsPage from './pages/circulars/CircularsPage';
 
@@ -16,7 +15,8 @@ export default function App() {
         <Route path="/vessels" element={<VesselsPage />} />
         <Route path="/companies" element={<CompaniesPage />} />
         <Route path="/people" element={<PeoplePage />} />
-        <Route path="/contacts" element={<ContactsPage />} />
+        {/* Contacts merged into People; keep old links working. */}
+        <Route path="/contacts" element={<Navigate to="/people" replace />} />
         <Route path="/email-list" element={<EmailListPage />} />
         <Route path="/circulars" element={<CircularsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
