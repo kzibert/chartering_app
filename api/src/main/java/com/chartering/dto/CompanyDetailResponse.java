@@ -9,5 +9,5 @@ import java.util.List;
 public record CompanyDetailResponse(
         CompanyResponse company,
         List<ContactResponse> contacts,
-        List<VesselResponse> vessels) {
+        List<CompanyVesselResponse> vessels) {
 }

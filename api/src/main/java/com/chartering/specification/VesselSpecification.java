@@ -1,7 +1,10 @@
 package com.chartering.specification;
 
 import com.chartering.model.Vessel;
+import com.chartering.model.VesselCompanyLink;
 import jakarta.persistence.criteria.JoinType;
+import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.Subquery;
 import org.springframework.data.jpa.domain.Specification;
 
 import java.math.BigDecimal;
@@ -36,16 +39,35 @@ public final class VesselSpecification {
                 : root.get("flag").in(flags);
     }
 
-    public static Specification<Vessel> ownerIdEquals(Long ownerId) {
-        return (root, query, cb) -> ownerId == null ? null
-                : cb.equal(root.get("owner").get("id"), ownerId);
+    /**
+     * Vessels this company is attached to in <em>any</em> capacity — owner or broker.
+     * EXISTS rather than a join so a vessel is not duplicated when several roles match.
+     */
+    public static Specification<Vessel> companyIdEquals(Long companyId) {
+        return (root, query, cb) -> {
+            if (companyId == null) return null;
+            Subquery<Long> broker = query.subquery(Long.class);
+            Root<VesselCompanyLink> l = broker.from(VesselCompanyLink.class);
+            return cb.or(
+                    cb.equal(root.get("owner").get("id"), companyId),
+                    cb.exists(broker.select(l.get("id")).where(
+                            cb.equal(l.get("vessel").get("id"), root.get("id")),
+                            cb.equal(l.get("company").get("id"), companyId))));
+        };
     }
 
-    public static Specification<Vessel> ownerNameContains(String ownerName) {
+    /** Same, by company name substring. */
+    public static Specification<Vessel> companyNameContains(String companyName) {
         return (root, query, cb) -> {
-            if (ownerName == null || ownerName.isBlank()) return null;
-            return cb.like(cb.lower(root.join("owner", JoinType.LEFT).get("name")),
-                    "%" + ownerName.toLowerCase() + "%");
+            if (companyName == null || companyName.isBlank()) return null;
+            String pattern = "%" + companyName.toLowerCase() + "%";
+            Subquery<Long> broker = query.subquery(Long.class);
+            Root<VesselCompanyLink> l = broker.from(VesselCompanyLink.class);
+            return cb.or(
+                    cb.like(cb.lower(root.join("owner", JoinType.LEFT).get("name")), pattern),
+                    cb.exists(broker.select(l.get("id")).where(
+                            cb.equal(l.get("vessel").get("id"), root.get("id")),
+                            cb.like(cb.lower(l.get("company").get("name")), pattern))));
         };
     }
 

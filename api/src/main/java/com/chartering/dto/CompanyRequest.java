@@ -13,6 +13,7 @@ public class CompanyRequest {
     private boolean charterer;
     private boolean broker;
     private boolean agent;
+    private boolean solo;
     private String cityName;
     private String notes;
 }

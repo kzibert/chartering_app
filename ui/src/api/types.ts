@@ -32,10 +32,30 @@ export interface VesselResponse {
   legacy: boolean;
 }
 
+/** How a company relates to a vessel. One role per company per vessel. */
+export type VesselCompanyRole = 'owner' | 'exclusive_broker' | 'broker';
+
+export interface VesselCompanyLinkResponse {
+  companyId: number;
+  companyName: string;
+  cityName?: string;
+  role: VesselCompanyRole;
+  notes?: string;
+}
+
+/** A vessel a company is attached to, and in what capacity. */
+export interface CompanyVesselResponse {
+  vessel: VesselResponse;
+  role: VesselCompanyRole;
+}
+
 export interface VesselDetailResponse {
   vessel: VesselResponse;
+  /** the owner specifically — the company a circular would reach */
   owner?: CompanyResponse;
   ownerContacts: ContactResponse[];
+  /** every company on the vessel, owner and brokers alike */
+  links: VesselCompanyLinkResponse[];
 }
 
 export interface VesselRequest {
@@ -60,6 +80,8 @@ export interface CompanyResponse {
   charterer: boolean;
   broker: boolean;
   agent: boolean;
+  /** one-person business; set by hand, never inferred from the data */
+  solo: boolean;
   cityName?: string;
   notes?: string;
   confirmed: boolean;
@@ -75,7 +97,7 @@ export interface CompanyResponse {
 export interface CompanyDetailResponse {
   company: CompanyResponse;
   contacts: ContactResponse[];
-  vessels: VesselResponse[];
+  vessels: CompanyVesselResponse[];
 }
 
 export interface CompanyRequest {
@@ -84,6 +106,7 @@ export interface CompanyRequest {
   charterer: boolean;
   broker: boolean;
   agent: boolean;
+  solo: boolean;
   cityName?: string;
   notes?: string;
 }
@@ -194,8 +217,9 @@ export interface VesselFilter extends PageParams {
   maxYear?: number;
   vesselType?: string[];
   flag?: string[];
-  ownerId?: number;
-  ownerName?: string;
+  /** matches vessels this company is on in any role, owner or broker */
+  companyId?: number;
+  companyName?: string;
   confirmed?: boolean;
   includeBanned?: boolean;
   legacy?: boolean;

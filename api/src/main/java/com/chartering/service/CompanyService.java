@@ -6,6 +6,7 @@ import com.chartering.mapper.DtoMapper;
 import com.chartering.model.Company;
 import com.chartering.repository.CompanyRepository;
 import com.chartering.repository.ContactRepository;
+import com.chartering.repository.VesselCompanyLinkRepository;
 import com.chartering.repository.VesselRepository;
 import com.chartering.specification.CompanySpecification;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +20,7 @@ import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Stream;
 
 @Service
 @RequiredArgsConstructor
@@ -27,6 +29,7 @@ public class CompanyService {
     private final CompanyRepository companyRepository;
     private final ContactRepository contactRepository;
     private final VesselRepository vesselRepository;
+    private final VesselCompanyLinkRepository linkRepository;
     private final DtoMapper mapper;
 
     @Transactional(readOnly = true)
@@ -68,8 +71,7 @@ public class CompanyService {
                 .orElseThrow(() -> new ResourceNotFoundException("Company", id));
         List<ContactResponse> contacts = contactRepository.findByCompanyIdOrderByMainDescIdAsc(id).stream()
                 .map(mapper::toContactResponse).toList();
-        List<VesselResponse> vessels = vesselRepository.findByOwnerId(id).stream()
-                .map(mapper::toVesselResponse).toList();
+        List<CompanyVesselResponse> vessels = getVessels(id);
         // The contacts are already loaded here — derive the flag rather than re-query.
         List<ContactResponse> emails = contacts.stream()
                 .filter(ct -> "email".equals(ct.contactKind())).toList();
@@ -83,10 +85,21 @@ public class CompanyService {
         return contactRepository.findByCompanyIdOrderByMainDescIdAsc(id).stream().map(mapper::toContactResponse).toList();
     }
 
+    /**
+     * Every vessel this company is attached to, owned or brokered, each tagged with the
+     * capacity. Owned first — that is the relationship the desk cares about most — then
+     * the brokered ones. A company holds one role per vessel, so nothing appears twice.
+     */
     @Transactional(readOnly = true)
-    public List<VesselResponse> getVessels(Long id) {
+    public List<CompanyVesselResponse> getVessels(Long id) {
         requireExists(id);
-        return vesselRepository.findByOwnerId(id).stream().map(mapper::toVesselResponse).toList();
+        List<CompanyVesselResponse> owned = vesselRepository.findByOwnerId(id).stream()
+                .map(v -> new CompanyVesselResponse(mapper.toVesselResponse(v), VesselService.ROLE_OWNER))
+                .toList();
+        List<CompanyVesselResponse> brokered = linkRepository.findByCompanyId(id).stream()
+                .map(l -> new CompanyVesselResponse(mapper.toVesselResponse(l.getVessel()), l.getRole()))
+                .toList();
+        return Stream.concat(owned.stream(), brokered.stream()).toList();
     }
 
     @Transactional
@@ -141,6 +154,7 @@ public class CompanyService {
         c.setCharterer(req.isCharterer());
         c.setBroker(req.isBroker());
         c.setAgent(req.isAgent());
+        c.setSolo(req.isSolo());
         c.setCityName(req.getCityName());
         c.setNotes(req.getNotes());
     }

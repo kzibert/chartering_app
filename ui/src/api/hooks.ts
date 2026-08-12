@@ -11,6 +11,7 @@ import type {
   ContactRequest,
   PeopleFilter,
   PersonRequest,
+  VesselCompanyRole,
   VesselFilter,
   VesselRequest,
   VesselResponse,
@@ -72,6 +73,18 @@ export function useVesselMutations() {
     mutationFn: (v: { id: number; banned: boolean }) => vesselsApi.setBanned(v.id, v.banned),
     onSuccess: () => invalidate('vessels', 'vessel', 'company'),
   });
+  // Attach a company to a vessel as owner / exclusive broker / broker. Touches
+  // 'company' too: the change shows up in that company's Vessels tab as well.
+  const setLink = useMutation({
+    mutationFn: (v: { vesselId: number; companyId: number; role: VesselCompanyRole }) =>
+      vesselsApi.setLink(v.vesselId, v.companyId, v.role),
+    onSuccess: () => invalidate(...touched),
+  });
+  const removeLink = useMutation({
+    mutationFn: (v: { vesselId: number; companyId: number }) =>
+      vesselsApi.removeLink(v.vesselId, v.companyId),
+    onSuccess: () => invalidate(...touched),
+  });
   // Link/reassign/unassign a vessel's owner without opening the full edit form.
   // There is no owner-only endpoint, so the untouched fields ride along from the
   // vessel we already hold. ownerId undefined = leave the vessel unassigned.
@@ -80,7 +93,7 @@ export function useVesselMutations() {
       vesselsApi.update(v.vessel.id, { ...toVesselRequest(v.vessel), ownerId: v.ownerId }),
     onSuccess: () => invalidate(...touched),
   });
-  return { create, update, remove, confirm, ban, setOwner };
+  return { create, update, remove, confirm, ban, setOwner, setLink, removeLink };
 }
 
 /* ---------------- companies ---------------- */

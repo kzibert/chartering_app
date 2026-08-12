@@ -115,7 +115,7 @@ export default function VesselsPage() {
           <Row gutter={12}>
             <Col xs={12} md={6}><Form.Item name="name" label="Name"><Input allowClear /></Form.Item></Col>
             <Col xs={12} md={6}><Form.Item name="imoNumber" label="IMO"><Input allowClear /></Form.Item></Col>
-            <Col xs={12} md={6}><Form.Item name="ownerName" label="Owner name"><Input allowClear /></Form.Item></Col>
+            <Col xs={12} md={6}><Form.Item name="companyName" label="Company" tooltip="Matches the owner or any broker linked to the vessel"><Input allowClear placeholder="owner or broker" /></Form.Item></Col>
             <Col xs={12} md={6}>
               <Form.Item name="confirmed" label="Confirmed" initialValue="">
                 <Select options={CONFIRMED_OPTIONS} />

@@ -51,6 +51,11 @@ export default function CompaniesPage() {
               <Tag color="red">no working email</Tag>
             </Tooltip>
           )}
+          {c.solo && (
+            <Tooltip title="One person is the whole business">
+              <Tag color="geekblue">solo</Tag>
+            </Tooltip>
+          )}
           {!c.legacy && <Tag color="green">new</Tag>}
           {c.banned && <Tag color="red">banned</Tag>}
         </Space>

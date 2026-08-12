@@ -8,6 +8,7 @@ import {
   Space,
   Spin,
   Table,
+  Select,
   Tabs,
   Tag,
   Tooltip,
@@ -33,17 +34,19 @@ import {
 } from '../../api/hooks';
 import ConfirmTag from '../../components/ConfirmTag';
 import ContactLine from '../../components/ContactLine';
+import VesselRoleTag, { ROLE_OPTIONS } from '../../components/VesselRoleTag';
 import EditToolbar, { useEditMode } from '../../components/EditToolbar';
 import BanButton from '../../components/BanButton';
 import GreetingName from '../../components/GreetingName';
 import VesselDrawer from '../vessels/VesselDrawer';
 import VesselForm from '../vessels/VesselForm';
-import { LinkVesselModal, MoveVesselModal } from '../vessels/VesselOwnerModals';
+import { LinkVesselModal } from '../vessels/VesselOwnerModals';
 import ContactForm from '../contacts/ContactForm';
 import PersonForm from '../people/PersonForm';
 import { recordRecent } from '../../recent/store';
 import type {
   CompanyResponse,
+  CompanyVesselResponse,
   ContactRequest,
   ContactResponse,
   PersonResponse,
@@ -84,7 +87,6 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
   const [vesselFormOpen, setVesselFormOpen] = useState(false);
   const [editingVessel, setEditingVessel] = useState<VesselResponse | null>(null);
   const [linkVesselOpen, setLinkVesselOpen] = useState(false);
-  const [movingVessel, setMovingVessel] = useState<VesselResponse | null>(null);
   const [contactFormOpen, setContactFormOpen] = useState(false);
   const [editingContact, setEditingContact] = useState<ContactResponse | null>(null);
   const [contactDefaults, setContactDefaults] = useState<Partial<ContactRequest>>();
@@ -152,6 +154,7 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
             )}
             {c.banned && <Tag color="red">banned</Tag>}
             {c.cityName && <Tag>{c.cityName}</Tag>}
+            {c.solo && <Tag color="geekblue">solo entrepreneur</Tag>}
             {c.shipowner && <Tag color="blue">owner</Tag>}
             {c.charterer && <Tag color="green">charterer</Tag>}
             {c.broker && <Tag color="gold">broker</Tag>}
@@ -177,7 +180,6 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
                     onAddVessel={() => openVesselForm(null)}
                     onLinkVessel={() => setLinkVesselOpen(true)}
                     onEditVessel={openVesselForm}
-                    onMoveVessel={setMovingVessel}
                   />
                 ),
               },
@@ -225,7 +227,6 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
             companyName={c.name}
             onClose={() => setLinkVesselOpen(false)}
           />
-          <MoveVesselModal vessel={movingVessel} onClose={() => setMovingVessel(null)} />
           <ContactForm
             open={contactFormOpen}
             editing={editingContact}
@@ -250,48 +251,67 @@ function CompanyVesselsTab({
   onAddVessel,
   onLinkVessel,
   onEditVessel,
-  onMoveVessel,
 }: {
   id: number;
   onOpenVessel: (vesselId: number) => void;
   onAddVessel: () => void;
   onLinkVessel: () => void;
   onEditVessel: (v: VesselResponse) => void;
-  onMoveVessel: (v: VesselResponse) => void;
 }) {
   const { data, isLoading } = useCompanyVessels(id);
-  const { remove } = useVesselMutations();
+  const { remove, setLink, removeLink } = useVesselMutations();
   const [editMode, setEditMode] = useEditMode(id);
 
-  const columns: ColumnsType<VesselResponse> = [
+  const columns: ColumnsType<CompanyVesselResponse> = [
     {
       title: 'Name',
-      dataIndex: 'name',
-      render: (name: string, v) => (
-        <Typography.Link onClick={() => onOpenVessel(v.id)}>{name}</Typography.Link>
+      key: 'name',
+      render: (_, r) => (
+        <Typography.Link onClick={() => onOpenVessel(r.vessel.id)}>{r.vessel.name}</Typography.Link>
       ),
     },
-    { title: 'DWT', dataIndex: 'deadweightTonnage' },
-    { title: 'Year', dataIndex: 'yearBuilt' },
-    { title: 'Type', dataIndex: 'vesselType' },
+    {
+      title: 'Role',
+      key: 'role',
+      width: 150,
+      // In edit mode the tag becomes the control: changing it re-links the vessel.
+      render: (_, r) =>
+        editMode ? (
+          <Select
+            size="small"
+            style={{ width: 140 }}
+            value={r.role}
+            options={ROLE_OPTIONS}
+            onChange={(role) => setLink.mutate({ vesselId: r.vessel.id, companyId: id, role })}
+          />
+        ) : (
+          <VesselRoleTag role={r.role} />
+        ),
+    },
+    { title: 'DWT', key: 'dwt', render: (_, r) => r.vessel.deadweightTonnage },
+    { title: 'Year', key: 'year', render: (_, r) => r.vessel.yearBuilt },
+    { title: 'Type', key: 'type', render: (_, r) => r.vessel.vesselType },
   ];
   if (editMode) {
     columns.push({
       title: 'Actions',
       key: 'actions',
-      width: 210,
-      render: (_, v) => (
+      width: 200,
+      render: (_, r) => (
         <Space size={4}>
-          <Button size="small" onClick={() => onEditVessel(v)}>Edit</Button>
-          <Tooltip title="Reassign to another company, or leave unassigned">
-            <Button size="small" icon={<SwapOutlined />} onClick={() => onMoveVessel(v)}>
-              Move
-            </Button>
+          <Button size="small" onClick={() => onEditVessel(r.vessel)}>Edit</Button>
+          <Tooltip title="Detach this vessel from this company (the vessel itself is kept)">
+            <Popconfirm
+              title="Detach this vessel?"
+              onConfirm={() => removeLink.mutate({ vesselId: r.vessel.id, companyId: id })}
+            >
+              <Button size="small" icon={<SwapOutlined />}>Detach</Button>
+            </Popconfirm>
           </Tooltip>
           <Popconfirm
             title="Delete this vessel?"
             description="This removes the vessel from the database entirely."
-            onConfirm={() => remove.mutate(v.id)}
+            onConfirm={() => remove.mutate(r.vessel.id)}
           >
             <Button size="small" danger>Delete</Button>
           </Popconfirm>
@@ -312,8 +332,8 @@ function CompanyVesselsTab({
           </Button>
         </Tooltip>
       </EditToolbar>
-      <Table<VesselResponse>
-        rowKey="id"
+      <Table<CompanyVesselResponse>
+        rowKey={(r) => r.vessel.id}
         size="small"
         loading={isLoading}
         dataSource={data ?? []}

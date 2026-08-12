@@ -19,6 +19,7 @@ export default function CompanyForm({ open, editing, onClose }: Props) {
         form.setFieldsValue({
           name: editing.name,
           shipowner: editing.shipowner,
+          solo: editing.solo,
           charterer: editing.charterer,
           broker: editing.broker,
           agent: editing.agent,
@@ -61,6 +62,14 @@ export default function CompanyForm({ open, editing, onClose }: Props) {
             <Form.Item name="broker" valuePropName="checked" noStyle><Checkbox>Broker</Checkbox></Form.Item>
             <Form.Item name="agent" valuePropName="checked" noStyle><Checkbox>Agent</Checkbox></Form.Item>
           </Space>
+        </Form.Item>
+        <Form.Item
+          name="solo"
+          valuePropName="checked"
+          label="Solo entrepreneur"
+          tooltip="One person is the whole business. Set this yourself — it is never inferred from how many contacts are on file."
+        >
+          <Checkbox>One-person business</Checkbox>
         </Form.Item>
         <Form.Item name="notes" label="Notes">
           <Input.TextArea rows={2} />

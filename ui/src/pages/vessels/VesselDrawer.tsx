@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Card, Descriptions, Drawer, List, Space, Spin, Tag, Tooltip, Typography } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { Button, Descriptions, Drawer, List, Popconfirm, Select, Space, Spin, Tag, Tooltip, Typography } from 'antd';
+import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { useContactMutations, useVessel, useVesselMutations } from '../../api/hooks';
 import { recordRecent } from '../../recent/store';
 import ConfirmTag from '../../components/ConfirmTag';
 import ContactLine from '../../components/ContactLine';
 import EditToolbar, { useEditMode } from '../../components/EditToolbar';
+import VesselRoleTag, { ROLE_OPTIONS } from '../../components/VesselRoleTag';
+import AttachCompanyModal from './AttachCompanyModal';
 import BanButton from '../../components/BanButton';
 import CompanyDrawer from '../companies/CompanyDrawer';
 import CompanyForm from '../companies/CompanyForm';
@@ -30,6 +32,11 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
   // Owner contacts follow the same rules as the company drawer's Contacts tab:
   // read-only until Edit is on, which then reveals add/edit/delete and the
   // main / not-working toggles.
+  const { setLink, removeLink } = useVesselMutations();
+  const [linksEditing, setLinksEditing] = useEditMode(vesselId);
+  const [linkModalOpen, setLinkModalOpen] = useState(false);
+  const links = data?.links ?? [];
+
   const { remove: removeContact } = useContactMutations();
   const [contactsEditing, setContactsEditing] = useEditMode(vesselId);
   const [contactFormOpen, setContactFormOpen] = useState(false);
@@ -109,28 +116,48 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
           )}
 
           <Typography.Title level={5} style={{ marginTop: 20 }}>
-            Owner
+            Companies ({links.length})
           </Typography.Title>
-          {data?.owner ? (
-            <Card size="small">
-              <Space direction="vertical" size={4} style={{ width: '100%' }}>
-                <Space>
-                  <Typography.Link strong onClick={() => setCompanyId(data.owner!.id)}>
-                    {data.owner.name}
+          <EditToolbar editing={linksEditing} onToggle={setLinksEditing}>
+            <Button size="small" icon={<PlusOutlined />} onClick={() => setLinkModalOpen(true)}>
+              Attach company
+            </Button>
+          </EditToolbar>
+          <List
+            size="small"
+            dataSource={links}
+            locale={{ emptyText: 'No companies linked' }}
+            renderItem={(l) => (
+              <List.Item>
+                <Space wrap size={4}>
+                  <Typography.Link strong onClick={() => setCompanyId(l.companyId)}>
+                    {l.companyName}
                   </Typography.Link>
-                  {data.owner.cityName && <Tag>{data.owner.cityName}</Tag>}
+                  <VesselRoleTag role={l.role} />
+                  {l.cityName && <Tag>{l.cityName}</Tag>}
+                  {linksEditing && (
+                    <>
+                      <Select
+                        size="small"
+                        style={{ width: 150 }}
+                        value={l.role}
+                        options={ROLE_OPTIONS}
+                        onChange={(role) =>
+                          setLink.mutate({ vesselId: v.id, companyId: l.companyId, role })
+                        }
+                      />
+                      <Popconfirm
+                        title="Detach this company?"
+                        onConfirm={() => removeLink.mutate({ vesselId: v.id, companyId: l.companyId })}
+                      >
+                        <Button size="small" danger aria-label={`Detach ${l.companyName}`} icon={<DeleteOutlined />} />
+                      </Popconfirm>
+                    </>
+                  )}
                 </Space>
-                <Space wrap>
-                  {data.owner.shipowner && <Tag color="blue">owner</Tag>}
-                  {data.owner.charterer && <Tag color="green">charterer</Tag>}
-                  {data.owner.broker && <Tag color="gold">broker</Tag>}
-                  {data.owner.agent && <Tag color="purple">agent</Tag>}
-                </Space>
-              </Space>
-            </Card>
-          ) : (
-            <Typography.Text type="secondary">No owner linked.</Typography.Text>
-          )}
+              </List.Item>
+            )}
+          />
 
           <Typography.Title level={5} style={{ marginTop: 20 }}>
             Owner contacts ({data?.ownerContacts.length ?? 0})
@@ -161,6 +188,13 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
             )}
           />
 
+          <AttachCompanyModal
+            open={linkModalOpen}
+            vesselId={v.id}
+            vesselName={v.name}
+            existing={links}
+            onClose={() => setLinkModalOpen(false)}
+          />
           <CompanyDrawer
             companyId={companyId}
             onClose={() => setCompanyId(undefined)}

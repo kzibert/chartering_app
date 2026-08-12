@@ -35,6 +35,10 @@ public class Company {
     @Column(name = "is_agent", nullable = false)
     private boolean agent = false;
 
+    /** One person is the whole business. Set by hand only — never inferred from the data. */
+    @Column(name = "is_solo", nullable = false)
+    private boolean solo = false;
+
     @Column(name = "city_name")
     private String cityName;
 

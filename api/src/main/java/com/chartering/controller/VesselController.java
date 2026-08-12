@@ -45,8 +45,8 @@ public class VesselController {
             @RequestParam(required = false) Integer maxYear,
             @RequestParam(required = false) List<String> vesselType,
             @RequestParam(required = false) List<String> flag,
-            @RequestParam(required = false) Long ownerId,
-            @RequestParam(required = false) String ownerName,
+            @RequestParam(required = false) Long companyId,
+            @RequestParam(required = false) String companyName,
             @RequestParam(required = false) Boolean confirmed,
             @RequestParam(defaultValue = "false") boolean includeBanned,
             @RequestParam(required = false) Boolean legacy,
@@ -54,7 +54,7 @@ public class VesselController {
 
         VesselFilter filter = new VesselFilter(name, imoNumber, minDwt, maxDwt, minDwcc, maxDwcc,
                 minGrain, maxGrain, minBale, maxBale, minDraft, maxDraft, minYear, maxYear,
-                vesselType, flag, ownerId, ownerName, confirmed, includeBanned, legacy);
+                vesselType, flag, companyId, companyName, confirmed, includeBanned, legacy);
         return ResponseEntity.ok(vesselService.search(filter, pageable));
     }
 
@@ -83,8 +83,8 @@ public class VesselController {
             @RequestParam(required = false) Integer maxYear,
             @RequestParam(required = false) List<String> vesselType,
             @RequestParam(required = false) List<String> flag,
-            @RequestParam(required = false) Long ownerId,
-            @RequestParam(required = false) String ownerName,
+            @RequestParam(required = false) Long companyId,
+            @RequestParam(required = false) String companyName,
             @RequestParam(required = false) Boolean confirmed,
             @RequestParam(defaultValue = "false") boolean includeBanned,
             @RequestParam(required = false) Boolean legacy,
@@ -93,7 +93,7 @@ public class VesselController {
 
         VesselFilter filter = new VesselFilter(name, imoNumber, minDwt, maxDwt, minDwcc, maxDwcc,
                 minGrain, maxGrain, minBale, maxBale, minDraft, maxDraft, minYear, maxYear,
-                vesselType, flag, ownerId, ownerName, confirmed, includeBanned, legacy);
+                vesselType, flag, companyId, companyName, confirmed, includeBanned, legacy);
         return ResponseEntity.ok(mainOnly
                 ? vesselService.ownerMainEmailContacts(filter, confirmedOnly)
                 : vesselService.ownerEmailContacts(filter, confirmedOnly));
@@ -123,6 +123,33 @@ public class VesselController {
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         vesselService.delete(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/{id}/links")
+    @Operation(summary = "Companies attached to a vessel, with the capacity each acts in")
+    public ResponseEntity<List<VesselCompanyLinkResponse>> links(@PathVariable Long id) {
+        return ResponseEntity.ok(vesselService.links(id));
+    }
+
+    @PutMapping("/{id}/links/{companyId}")
+    @Operation(summary = "Attach a company to a vessel as owner, exclusive broker or broker",
+            description = "Replaces whatever role that company held on this vessel — a company "
+                    + "appears once per vessel. role=owner displaces the previous owner, and "
+                    + "role=exclusive_broker demotes the previous exclusive broker to broker. "
+                    + "Returns the vessel's full company list.")
+    public ResponseEntity<List<VesselCompanyLinkResponse>> setLink(
+            @PathVariable Long id,
+            @PathVariable Long companyId,
+            @RequestParam String role,
+            @RequestParam(required = false) String notes) {
+        return ResponseEntity.ok(vesselService.setLink(id, companyId, role, notes));
+    }
+
+    @DeleteMapping("/{id}/links/{companyId}")
+    @Operation(summary = "Detach a company from a vessel, whichever capacity it was in")
+    public ResponseEntity<List<VesselCompanyLinkResponse>> removeLink(
+            @PathVariable Long id, @PathVariable Long companyId) {
+        return ResponseEntity.ok(vesselService.removeLink(id, companyId));
     }
 
     @PatchMapping("/{id}/confirm")

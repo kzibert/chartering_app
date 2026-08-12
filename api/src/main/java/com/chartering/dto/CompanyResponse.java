@@ -12,6 +12,8 @@ public record CompanyResponse(
         boolean charterer,
         boolean broker,
         boolean agent,
+        /** one-person business; set by hand, never inferred */
+        boolean solo,
         String cityName,
         String notes,
         boolean confirmed,

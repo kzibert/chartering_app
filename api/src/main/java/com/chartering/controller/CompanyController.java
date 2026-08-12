@@ -62,8 +62,8 @@ public class CompanyController {
     }
 
     @GetMapping("/{id}/vessels")
-    @Operation(summary = "List vessels owned by a company")
-    public ResponseEntity<List<VesselResponse>> vessels(@PathVariable Long id) {
+    @Operation(summary = "List vessels a company owns or brokers, each tagged with its role")
+    public ResponseEntity<List<CompanyVesselResponse>> vessels(@PathVariable Long id) {
         return ResponseEntity.ok(companyService.getVessels(id));
     }
 

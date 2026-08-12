@@ -7,7 +7,7 @@ import type {
   ConfirmRequest,
   ContactResponse,
   PageResponse,
-  VesselResponse,
+  CompanyVesselResponse,
 } from './types';
 
 export const companiesApi = {
@@ -23,7 +23,7 @@ export const companiesApi = {
     client.get<ContactResponse[]>(`/companies/${id}/contacts`).then((r) => r.data),
 
   vessels: (id: number) =>
-    client.get<VesselResponse[]>(`/companies/${id}/vessels`).then((r) => r.data),
+    client.get<CompanyVesselResponse[]>(`/companies/${id}/vessels`).then((r) => r.data),
 
   create: (body: CompanyRequest) =>
     client.post<CompanyResponse>('/companies', body).then((r) => r.data),

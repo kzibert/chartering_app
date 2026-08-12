@@ -3,8 +3,8 @@ import { Alert, Modal, Select, Space, Typography } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import { vesselsApi } from '../../api/vessels';
 import { useVesselMutations } from '../../api/hooks';
-import CompanySelect from '../../components/CompanySelect';
-import type { VesselResponse } from '../../api/types';
+import { ROLE_LABEL, ROLE_OPTIONS } from '../../components/VesselRoleTag';
+import type { VesselCompanyRole, VesselResponse } from '../../api/types';
 
 const optionLabel = (v: VesselResponse) => {
   const bits = [v.imoNumber && `IMO ${v.imoNumber}`, v.yearBuilt, v.ownerName ?? 'no owner'].filter(
@@ -31,7 +31,8 @@ export function LinkVesselModal({
 }) {
   const [term, setTerm] = useState('');
   const [picked, setPicked] = useState<VesselResponse>();
-  const { setOwner } = useVesselMutations();
+  const [role, setRole] = useState<VesselCompanyRole>('owner');
+  const { setLink } = useVesselMutations();
 
   const { data, isFetching } = useQuery({
     queryKey: ['vessel-picker', term],
@@ -43,10 +44,12 @@ export function LinkVesselModal({
     if (open) {
       setTerm('');
       setPicked(undefined);
+      setRole('owner');
     }
   }, [open]);
 
-  // Vessels this company already owns are in the tab's list already.
+  // Vessels this company already owns are in the tab's list already. Ones it merely
+  // brokers are not filtered out here — re-attaching just changes the role.
   const candidates = (data?.content ?? []).filter((v) => v.ownerId !== companyId);
 
   return (
@@ -55,14 +58,17 @@ export function LinkVesselModal({
       title="Link an existing vessel"
       okText="Link"
       okButtonProps={{ disabled: !picked }}
-      confirmLoading={setOwner.isPending}
+      confirmLoading={setLink.isPending}
       onCancel={onClose}
-      onOk={() => picked && setOwner.mutate({ vessel: picked, ownerId: companyId }, { onSuccess: onClose })}
+      onOk={() =>
+        picked &&
+        setLink.mutate({ vesselId: picked.id, companyId, role }, { onSuccess: onClose })
+      }
       destroyOnClose
     >
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
         <Typography.Text type="secondary">
-          Search the fleet by name, then link it to <strong>{companyName}</strong>.
+          Search the fleet by name, then attach it to <strong>{companyName}</strong>.
         </Typography.Text>
         <Select
           showSearch
@@ -77,54 +83,15 @@ export function LinkVesselModal({
           onChange={(id: number) => setPicked(candidates.find((v) => v.id === id))}
           options={candidates.map((v) => ({ value: v.id, label: optionLabel(v) }))}
         />
-        {picked?.ownerId != null && (
+        <Select style={{ width: '100%' }} value={role} options={ROLE_OPTIONS} onChange={setRole} />
+        {role === 'owner' && picked?.ownerId != null && picked.ownerId !== companyId && (
           <Alert
             type="warning"
             showIcon
             message={`Currently owned by ${picked.ownerName ?? 'another company'}`}
-            description={`Linking moves it to ${companyName}. A vessel can only have one owner.`}
+            description={`Attaching as ${ROLE_LABEL.owner} moves it to ${companyName}. A vessel has one owner.`}
           />
         )}
-      </Space>
-    </Modal>
-  );
-}
-
-/** Reassign one vessel to a different company — or clear the owner entirely. */
-export function MoveVesselModal({
-  vessel,
-  onClose,
-}: {
-  vessel: VesselResponse | null;
-  onClose: () => void;
-}) {
-  const [ownerId, setOwnerId] = useState<number>();
-  const { setOwner } = useVesselMutations();
-
-  useEffect(() => {
-    if (vessel) setOwnerId(vessel.ownerId);
-  }, [vessel]);
-
-  return (
-    <Modal
-      open={vessel != null}
-      title={vessel ? `Move ${vessel.name}` : 'Move vessel'}
-      okText="Save"
-      confirmLoading={setOwner.isPending}
-      onCancel={onClose}
-      onOk={() => vessel && setOwner.mutate({ vessel, ownerId }, { onSuccess: onClose })}
-      destroyOnClose
-    >
-      <Space direction="vertical" size={12} style={{ width: '100%' }}>
-        <Typography.Text type="secondary">
-          Pick the owning company, or clear the field to leave the vessel unassigned.
-        </Typography.Text>
-        <CompanySelect
-          allowClear
-          value={ownerId}
-          onChange={setOwnerId}
-          placeholder="Search owner company…"
-        />
       </Space>
     </Modal>
   );

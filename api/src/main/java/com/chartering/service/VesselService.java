@@ -5,8 +5,10 @@ import com.chartering.exception.ResourceNotFoundException;
 import com.chartering.mapper.DtoMapper;
 import com.chartering.model.Company;
 import com.chartering.model.Vessel;
+import com.chartering.model.VesselCompanyLink;
 import com.chartering.repository.CompanyRepository;
 import com.chartering.repository.ContactRepository;
+import com.chartering.repository.VesselCompanyLinkRepository;
 import com.chartering.repository.VesselRepository;
 import com.chartering.specification.VesselSpecification;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -29,9 +32,14 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class VesselService {
 
+    public static final String ROLE_OWNER = "owner";
+    public static final String ROLE_EXCLUSIVE = "exclusive_broker";
+    public static final String ROLE_BROKER = "broker";
+
     private final VesselRepository vesselRepository;
     private final CompanyRepository companyRepository;
     private final ContactRepository contactRepository;
+    private final VesselCompanyLinkRepository linkRepository;
     private final DtoMapper mapper;
 
     @Transactional(readOnly = true)
@@ -94,8 +102,8 @@ public class VesselService {
                 VesselSpecification.yearRange(f.minYear(), f.maxYear()),
                 VesselSpecification.vesselTypeIn(f.vesselType()),
                 VesselSpecification.flagIn(f.flag()),
-                VesselSpecification.ownerIdEquals(f.ownerId()),
-                VesselSpecification.ownerNameContains(f.ownerName()),
+                VesselSpecification.companyIdEquals(f.companyId()),
+                VesselSpecification.companyNameContains(f.companyName()),
                 VesselSpecification.confirmedEquals(f.confirmed()),
                 VesselSpecification.excludeBanned(f.includeBanned()),
                 VesselSpecification.legacyEquals(f.legacy()));
@@ -116,7 +124,7 @@ public class VesselService {
                 !ownerEmails.isEmpty() && ownerEmails.stream().noneMatch(ContactResponse::working);
         CompanyResponse ownerDto = owner != null
                 ? mapper.toCompanyResponse(owner, ownerNoWorkingEmail) : null;
-        return new VesselDetailResponse(mapper.toVesselResponse(v), ownerDto, ownerContacts);
+        return new VesselDetailResponse(mapper.toVesselResponse(v), ownerDto, ownerContacts, links(id));
     }
 
     @Transactional
@@ -140,6 +148,86 @@ public class VesselService {
             throw new ResourceNotFoundException("Vessel", id);
         }
         vesselRepository.deleteById(id);
+    }
+
+    /** Owner (from vessels.owner_id) first, then the broker links. */
+    @Transactional(readOnly = true)
+    public List<VesselCompanyLinkResponse> links(Long vesselId) {
+        Vessel v = vesselRepository.findWithOwnerById(vesselId)
+                .orElseThrow(() -> new ResourceNotFoundException("Vessel", vesselId));
+
+        List<VesselCompanyLinkResponse> out = new ArrayList<>();
+        Company owner = v.getOwner();
+        if (owner != null) {
+            out.add(new VesselCompanyLinkResponse(
+                    owner.getId(), owner.getName(), owner.getCityName(), ROLE_OWNER, null));
+        }
+        linkRepository.findByVesselId(vesselId).forEach(l -> out.add(new VesselCompanyLinkResponse(
+                l.getCompany().getId(), l.getCompany().getName(), l.getCompany().getCityName(),
+                l.getRole(), l.getNotes())));
+        return out;
+    }
+
+    /**
+     * Attach a company to a vessel in one capacity, replacing whatever role it held before —
+     * a company appears once per vessel.
+     *
+     * 'owner' writes vessels.owner_id (and drops any broker row the company had, so the two
+     * stores can never both claim it); the broker roles write the link table and clear
+     * owner_id if this company was the owner. Promoting a new owner displaces the old one,
+     * which is what one-owner-per-vessel means.
+     */
+    @Transactional
+    public List<VesselCompanyLinkResponse> setLink(Long vesselId, Long companyId, String role, String notes) {
+        if (!ROLE_OWNER.equals(role) && !ROLE_EXCLUSIVE.equals(role) && !ROLE_BROKER.equals(role)) {
+            throw new IllegalArgumentException(
+                    "role must be one of: " + ROLE_OWNER + ", " + ROLE_EXCLUSIVE + ", " + ROLE_BROKER);
+        }
+        Vessel v = vesselRepository.findById(vesselId)
+                .orElseThrow(() -> new ResourceNotFoundException("Vessel", vesselId));
+        Company c = companyRepository.findById(companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Company", companyId));
+
+        linkRepository.deleteByVesselIdAndCompanyId(vesselId, companyId);
+        linkRepository.flush();
+
+        if (ROLE_OWNER.equals(role)) {
+            v.setOwner(c);
+            vesselRepository.save(v);
+        } else {
+            if (v.getOwner() != null && v.getOwner().getId().equals(companyId)) {
+                v.setOwner(null);
+                vesselRepository.save(v);
+            }
+            // Only one exclusive broker per vessel; demote the incumbent rather than
+            // failing on the unique index.
+            if (ROLE_EXCLUSIVE.equals(role)) {
+                linkRepository.findByVesselId(vesselId).stream()
+                        .filter(l -> ROLE_EXCLUSIVE.equals(l.getRole()))
+                        .forEach(l -> l.setRole(ROLE_BROKER));
+                linkRepository.flush();
+            }
+            VesselCompanyLink link = new VesselCompanyLink();
+            link.setVessel(v);
+            link.setCompany(c);
+            link.setRole(role);
+            link.setNotes(notes);
+            linkRepository.save(link);
+        }
+        return links(vesselId);
+    }
+
+    /** Detach a company from a vessel, whichever capacity it was in. */
+    @Transactional
+    public List<VesselCompanyLinkResponse> removeLink(Long vesselId, Long companyId) {
+        Vessel v = vesselRepository.findById(vesselId)
+                .orElseThrow(() -> new ResourceNotFoundException("Vessel", vesselId));
+        if (v.getOwner() != null && v.getOwner().getId().equals(companyId)) {
+            v.setOwner(null);
+            vesselRepository.save(v);
+        }
+        linkRepository.deleteByVesselIdAndCompanyId(vesselId, companyId);
+        return links(vesselId);
     }
 
     @Transactional
@@ -192,7 +280,7 @@ public class VesselService {
             BigDecimal minDraft, BigDecimal maxDraft,
             Integer minYear, Integer maxYear,
             List<String> vesselType, List<String> flag,
-            Long ownerId, String ownerName, Boolean confirmed,
+            Long companyId, String companyName, Boolean confirmed,
             boolean includeBanned, Boolean legacy) {
     }
 }

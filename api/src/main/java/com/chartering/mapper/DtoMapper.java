@@ -38,7 +38,7 @@ public class DtoMapper {
     public CompanyResponse toCompanyResponse(Company c, boolean noWorkingEmail) {
         return new CompanyResponse(
                 c.getId(), c.getName(),
-                c.isShipowner(), c.isCharterer(), c.isBroker(), c.isAgent(),
+                c.isShipowner(), c.isCharterer(), c.isBroker(), c.isAgent(), c.isSolo(),
                 c.getCityName(), c.getNotes(),
                 c.isConfirmed(), c.getConfirmedAt(), c.getConfirmedBy(), c.getConfirmNotes(),
                 c.isBanned(), c.isLegacy(), noWorkingEmail);

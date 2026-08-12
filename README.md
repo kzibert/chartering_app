@@ -43,6 +43,7 @@ db/
   email_templates.sql    # idempotent patch: circular templates + footers (baked into the seed)
   main_contact_flag.sql  # idempotent patch: per-company main email/phone (baked into the seed)
   not_working_contact_flag.sql # idempotent patch: dead email/phone flag (baked into the seed)
+  vessel_company_links.sql # idempotent patch: vessel<->company broker roles + solo flag
   chartering.dump        # same data in pg_restore (-Fc) format, for manual restore
   schema.sql             # DDL reference (the dump already contains the schema)
 db-export/               # portable full snapshot for reproducing the DB elsewhere

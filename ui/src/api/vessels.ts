@@ -4,6 +4,8 @@ import type {
   ContactResponse,
   PageResponse,
   VesselDetailResponse,
+  VesselCompanyLinkResponse,
+  VesselCompanyRole,
   VesselFilter,
   VesselRequest,
   VesselResponse,
@@ -57,6 +59,20 @@ export const vesselsApi = {
     client.put<VesselResponse>(`/vessels/${id}`, body).then((r) => r.data),
 
   remove: (id: number) => client.delete<void>(`/vessels/${id}`).then((r) => r.data),
+
+  links: (id: number) =>
+    client.get<VesselCompanyLinkResponse[]>(`/vessels/${id}/links`).then((r) => r.data),
+
+  /** Attach a company in one capacity, replacing whatever role it held on this vessel. */
+  setLink: (id: number, companyId: number, role: VesselCompanyRole) =>
+    client
+      .put<VesselCompanyLinkResponse[]>(`/vessels/${id}/links/${companyId}`, {}, { params: { role } })
+      .then((r) => r.data),
+
+  removeLink: (id: number, companyId: number) =>
+    client
+      .delete<VesselCompanyLinkResponse[]>(`/vessels/${id}/links/${companyId}`)
+      .then((r) => r.data),
 
   confirm: (id: number, confirmed: boolean, body?: ConfirmRequest) =>
     client
