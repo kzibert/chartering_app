@@ -9,8 +9,10 @@ import VesselDrawer from './vessels/VesselDrawer';
 import VesselForm from './vessels/VesselForm';
 import CompanyDrawer from './companies/CompanyDrawer';
 import CompanyForm from './companies/CompanyForm';
+import PersonDrawer from './people/PersonDrawer';
+import PersonForm from './people/PersonForm';
 import { clearRecent, useRecent, type RecentEntry, type RecentKind } from '../recent/store';
-import type { CompanyResponse, VesselResponse } from '../api/types';
+import type { CompanyResponse, PersonResponse, VesselResponse } from '../api/types';
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -40,16 +42,13 @@ export default function Dashboard() {
   const [editingVessel, setEditingVessel] = useState<VesselResponse | null>(null);
   const [companyFormOpen, setCompanyFormOpen] = useState(false);
   const [editingCompany, setEditingCompany] = useState<CompanyResponse | null>(null);
+  const [personId, setPersonId] = useState<number>();
+  const [personFormOpen, setPersonFormOpen] = useState(false);
+  const [editingPerson, setEditingPerson] = useState<PersonResponse | null>(null);
 
   const openCompany = (id: number, tab: 'vessels' | 'people' | 'contacts' = 'vessels') => {
     setCompanyTab(tab);
     setCompanyId(id);
-  };
-
-  // A person has no drawer of its own — their details live in their company's People tab.
-  const openPerson = (e: RecentEntry) => {
-    if (e.companyId != null) openCompany(e.companyId, 'people');
-    else navigate('/people');
   };
 
   return (
@@ -103,7 +102,7 @@ export default function Dashboard() {
             entries={recentPeople}
             emptyText="No people opened yet"
             onOpenPage={() => navigate('/people')}
-            onOpen={openPerson}
+            onOpen={(e) => setPersonId(e.id)}
           />
         </Col>
       </Row>
@@ -121,6 +120,13 @@ export default function Dashboard() {
         onEdit={(c) => { setEditingCompany(c); setCompanyFormOpen(true); }}
       />
       <CompanyForm open={companyFormOpen} editing={editingCompany} onClose={() => setCompanyFormOpen(false)} />
+      <PersonDrawer
+        personId={personId}
+        onClose={() => setPersonId(undefined)}
+        onEdit={(p) => { setEditingPerson(p); setPersonFormOpen(true); }}
+        onOpenCompany={(id) => openCompany(id, 'people')}
+      />
+      <PersonForm open={personFormOpen} editing={editingPerson} onClose={() => setPersonFormOpen(false)} />
     </>
   );
 }

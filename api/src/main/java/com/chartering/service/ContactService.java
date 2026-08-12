@@ -30,12 +30,14 @@ public class ContactService {
 
     @Transactional(readOnly = true)
     public PageResponse<ContactResponse> search(String kind, String value, Long companyId,
-                                                Boolean confirmed, boolean includeBanned,
+                                                Long personId, Boolean confirmed,
+                                                boolean includeBanned,
                                                 Boolean legacy, Pageable pageable) {
         Specification<Contact> spec = Specification.allOf(
                 ContactSpecification.kindEquals(kind),
                 ContactSpecification.valueContains(value),
                 ContactSpecification.companyIdEquals(companyId),
+                ContactSpecification.personIdEquals(personId),
                 ContactSpecification.confirmedEquals(confirmed),
                 ContactSpecification.excludeBanned(includeBanned),
                 ContactSpecification.legacyEquals(legacy));

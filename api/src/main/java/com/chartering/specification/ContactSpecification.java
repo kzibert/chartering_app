@@ -23,6 +23,11 @@ public final class ContactSpecification {
                 : cb.equal(root.get("company").get("id"), companyId);
     }
 
+    public static Specification<Contact> personIdEquals(Long personId) {
+        return (root, query, cb) -> personId == null ? null
+                : cb.equal(root.get("person").get("id"), personId);
+    }
+
     public static Specification<Contact> confirmedEquals(Boolean confirmed) {
         return (root, query, cb) -> confirmed == null ? null
                 : cb.equal(root.get("confirmed"), confirmed);

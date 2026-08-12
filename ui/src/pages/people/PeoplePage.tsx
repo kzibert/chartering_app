@@ -7,7 +7,10 @@ import CompanySelect from '../../components/CompanySelect';
 import { usePersistedState } from '../../components/usePersistedState';
 import GreetingName from '../../components/GreetingName';
 import PersonForm from './PersonForm';
-import type { PersonResponse } from '../../api/types';
+import PersonDrawer from './PersonDrawer';
+import CompanyDrawer from '../companies/CompanyDrawer';
+import CompanyForm from '../companies/CompanyForm';
+import type { CompanyResponse, PersonResponse } from '../../api/types';
 
 export default function PeoplePage() {
   const [companyId, setCompanyId] = usePersistedState<number | undefined>('people.companyId', undefined);
@@ -24,9 +27,19 @@ export default function PeoplePage() {
   const { remove } = usePersonMutations();
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<PersonResponse | null>(null);
+  const [selectedId, setSelectedId] = useState<number>();
+  const [companyDrawerId, setCompanyDrawerId] = useState<number>();
+  const [companyFormOpen, setCompanyFormOpen] = useState(false);
+  const [editingCompany, setEditingCompany] = useState<CompanyResponse | null>(null);
 
   const columns: ColumnsType<PersonResponse> = [
-    { title: 'Full name', dataIndex: 'fullName' },
+    {
+      title: 'Full name',
+      dataIndex: 'fullName',
+      render: (fullName: string, p) => (
+        <Typography.Link onClick={() => setSelectedId(p.id)}>{fullName}</Typography.Link>
+      ),
+    },
     {
       title: 'Greeting',
       key: 'greeting',
@@ -92,6 +105,19 @@ export default function PeoplePage() {
       />
 
       <PersonForm open={formOpen} editing={editing} onClose={() => setFormOpen(false)} />
+      <PersonDrawer
+        personId={selectedId}
+        onClose={() => setSelectedId(undefined)}
+        onEdit={(p) => { setEditing(p); setFormOpen(true); }}
+        onOpenCompany={setCompanyDrawerId}
+      />
+      <CompanyDrawer
+        companyId={companyDrawerId}
+        initialTab="people"
+        onClose={() => setCompanyDrawerId(undefined)}
+        onEdit={(c) => { setEditingCompany(c); setCompanyFormOpen(true); }}
+      />
+      <CompanyForm open={companyFormOpen} editing={editingCompany} onClose={() => setCompanyFormOpen(false)} />
     </>
   );
 }

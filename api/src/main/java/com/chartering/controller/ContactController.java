@@ -26,13 +26,15 @@ public class ContactController {
             @RequestParam(required = false) String kind,
             @RequestParam(required = false) String value,
             @RequestParam(required = false) Long companyId,
+            @RequestParam(required = false) Long personId,
             @RequestParam(required = false) Boolean confirmed,
             @RequestParam(defaultValue = "false") boolean includeBanned,
             @RequestParam(required = false) Boolean legacy,
             // Explicit default sort: without one the row order is physical, so toggling
             // main/confirm on a row makes it jump to the end of the list.
             @PageableDefault(size = 20, sort = "id") Pageable pageable) {
-        return ResponseEntity.ok(contactService.search(kind, value, companyId, confirmed, includeBanned, legacy, pageable));
+        return ResponseEntity.ok(contactService.search(
+                kind, value, companyId, personId, confirmed, includeBanned, legacy, pageable));
     }
 
     @GetMapping("/{id}")

@@ -218,6 +218,7 @@ export interface ContactFilter extends PageParams {
   kind?: string;
   value?: string;
   companyId?: number;
+  personId?: number;
   confirmed?: boolean;
   includeBanned?: boolean;
   legacy?: boolean;

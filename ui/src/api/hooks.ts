@@ -137,12 +137,25 @@ export const usePeople = (companyId?: number, name?: string) =>
     queryFn: () => peopleApi.list(companyId, name),
   });
 
+export const usePerson = (id?: number) =>
+  useQuery({ queryKey: ['person', id], queryFn: () => peopleApi.get(id!), enabled: id != null });
+
+/** A person's own emails/phones — powers the person drawer. */
+export const usePersonContacts = (personId?: number) =>
+  useQuery({
+    // Keyed under 'contacts' so the contact mutations' invalidation reaches it.
+    queryKey: ['contacts', 'of-person', personId],
+    // One person never has enough contacts to page; size keeps it to a single request.
+    queryFn: () => contactsApi.search({ personId, size: 200 }),
+    enabled: personId != null,
+  });
+
 export function usePersonMutations() {
   const invalidate = useInvalidator();
   // Contact rows embed the person's name/greeting, and the company + vessel drawers
   // render those rows from their own query keys — so a person edit has to invalidate
   // more than 'people' or the drawer keeps showing the old name.
-  const touched = ['people', 'contacts', 'company', 'vessel'] as const;
+  const touched = ['people', 'person', 'contacts', 'company', 'vessel'] as const;
   const create = useMutation({
     mutationFn: (body: PersonRequest) => peopleApi.create(body),
     onSuccess: () => invalidate(...touched),
