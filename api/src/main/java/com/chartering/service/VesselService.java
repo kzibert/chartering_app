@@ -92,12 +92,22 @@ public class VesselService {
         return Specification.allOf(
                 VesselSpecification.nameContains(f.name()),
                 VesselSpecification.imoEquals(f.imoNumber()),
-                VesselSpecification.numberRange("deadweightTonnage", f.minDwt(), f.maxDwt()),
-                VesselSpecification.numberRange("deadweightCargoCapacity", f.minDwcc(), f.maxDwcc()),
-                VesselSpecification.numberRange("grainCapacityM3", f.minGrain(), f.maxGrain()),
-                VesselSpecification.numberRange("baleCapacityM3", f.minBale(), f.maxBale()),
-                VesselSpecification.numberRange("maximumDraft", f.minDraft(), f.maxDraft()),
-                VesselSpecification.yearRange(f.minYear(), f.maxYear()),
+                // DWT and DWCC are alternative statements of the same thing and are rarely
+                // both on file — 2353 vessels have a DWT and no DWCC, 285 the reverse — so
+                // filling both boxes has to mean "either", not "both". Same for grain/bale.
+                // The two pairs stay AND'd with each other and with everything else.
+                //
+                // anyOf ignores a null member, so filling only one box of a pair leaves just
+                // that restriction: one figure entered means vessels known to satisfy it,
+                // not vessels merely not known to breach it.
+                Specification.anyOf(
+                        VesselSpecification.recordedRange("deadweightTonnage", f.minDwt(), f.maxDwt()),
+                        VesselSpecification.recordedRange("deadweightCargoCapacity", f.minDwcc(), f.maxDwcc())),
+                Specification.anyOf(
+                        VesselSpecification.recordedRange("grainCapacityM3", f.minGrain(), f.maxGrain()),
+                        VesselSpecification.recordedRange("baleCapacityM3", f.minBale(), f.maxBale())),
+                VesselSpecification.recordedRange("maximumDraft", null, f.maxDraft()),
+                VesselSpecification.yearFrom(f.yearFrom()),
                 VesselSpecification.vesselTypeIn(f.vesselType()),
                 VesselSpecification.flagIn(f.flag()),
                 VesselSpecification.companyIdEquals(f.companyId()),
@@ -275,8 +285,10 @@ public class VesselService {
             BigDecimal minDwcc, BigDecimal maxDwcc,
             BigDecimal minGrain, BigDecimal maxGrain,
             BigDecimal minBale, BigDecimal maxBale,
-            BigDecimal minDraft, BigDecimal maxDraft,
-            Integer minYear, Integer maxYear,
+            /** Only a maximum: the question is always "will it fit", never "is it deep enough". */
+            BigDecimal maxDraft,
+            /** Oldest acceptable build year; matches that year and younger. */
+            Integer yearFrom,
             List<String> vesselType, List<String> flag,
             Long companyId, String companyName, Boolean confirmed,
             boolean includeBanned, Boolean legacy) {

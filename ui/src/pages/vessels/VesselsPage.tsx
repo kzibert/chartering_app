@@ -15,9 +15,20 @@ import VesselDrawer from './VesselDrawer';
 import VesselForm from './VesselForm';
 import type { VesselFilter, VesselResponse } from '../../api/types';
 
+// DWT/DWCC and grain/bale are alternative statements of the same measurement and are
+// rarely both recorded, so each pair is matched with OR rather than AND.
+const DEADWEIGHT_HINT =
+  'DWT and DWCC are matched with OR: fill either or both, and a vessel matching one of ' +
+  'the ranges is returned. Vessels with no figure on file for a range you filled are not.';
+const CAPACITY_HINT =
+  'Grain and bale are matched with OR: fill either or both, and a vessel matching one of ' +
+  'the ranges is returned. Vessels with no figure on file for a range you filled are not.';
+
 export default function VesselsPage() {
   const [form] = Form.useForm();
-  const [filters, setFilters] = usePersistedFilters<Partial<VesselFilter>>('vessels', form);
+  // Key bumped to .v2 when minDraft/minYear/maxYear were dropped: a search saved under the
+  // old key would keep sending removed parameters that no longer have boxes on screen.
+  const [filters, setFilters] = usePersistedFilters<Partial<VesselFilter>>('vessels.v2', form);
   const tc = useTableControls({ size: 20 }, 'vessels');
   const { data: types } = useVesselTypes();
   const { data: flags } = useFlags();
@@ -97,21 +108,29 @@ export default function VesselsPage() {
               </Form.Item>
             </Col>
           </Row>
+          {/* The tooltips carry the OR rule: with eight bare number boxes in a row there is
+              otherwise nothing on screen saying which of them combine and how. */}
           <Row gutter={12}>
-            <Col xs={12} md={3}><Form.Item name="minDwt" label="DWT min"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={12} md={3}><Form.Item name="maxDwt" label="DWT max"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={12} md={3}><Form.Item name="minDwcc" label="DWCC min"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={12} md={3}><Form.Item name="maxDwcc" label="DWCC max"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={12} md={3}><Form.Item name="minGrain" label="Grain min"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={12} md={3}><Form.Item name="maxGrain" label="Grain max"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={12} md={3}><Form.Item name="minBale" label="Bale min"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={12} md={3}><Form.Item name="maxBale" label="Bale max"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={12} md={3}><Form.Item name="minDwt" label="DWT min" tooltip={DEADWEIGHT_HINT}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={12} md={3}><Form.Item name="maxDwt" label="DWT max" tooltip={DEADWEIGHT_HINT}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={12} md={3}><Form.Item name="minDwcc" label="DWCC min" tooltip={DEADWEIGHT_HINT}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={12} md={3}><Form.Item name="maxDwcc" label="DWCC max" tooltip={DEADWEIGHT_HINT}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={12} md={3}><Form.Item name="minGrain" label="Grain min" tooltip={CAPACITY_HINT}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={12} md={3}><Form.Item name="maxGrain" label="Grain max" tooltip={CAPACITY_HINT}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={12} md={3}><Form.Item name="minBale" label="Bale min" tooltip={CAPACITY_HINT}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={12} md={3}><Form.Item name="maxBale" label="Bale max" tooltip={CAPACITY_HINT}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
           </Row>
           <Row gutter={12}>
-            <Col xs={12} md={3}><Form.Item name="minDraft" label="Draft min"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={12} md={3}><Form.Item name="maxDraft" label="Draft max"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={12} md={3}><Form.Item name="minYear" label="Year min"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={12} md={3}><Form.Item name="maxYear" label="Year max"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={12} md={3}>
+              <Form.Item name="maxDraft" label="Max draft" tooltip="Deepest draft you can accept. Vessels with no draft on file are not returned.">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col xs={12} md={3}>
+              <Form.Item name="yearFrom" label="Built from" tooltip="Oldest build year you will accept — shows that year and younger. Vessels with no year on file are not returned.">
+                <InputNumber style={{ width: '100%' }} placeholder="e.g. 2005" />
+              </Form.Item>
+            </Col>
             <Col xs={12} md={6}>
               <Form.Item name="vesselType" label="Type">
                 <MultiCheckSelect options={types ?? []} placeholder="Any type" />

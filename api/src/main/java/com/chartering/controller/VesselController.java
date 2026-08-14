@@ -27,7 +27,12 @@ public class VesselController {
 
     @GetMapping
     @Operation(summary = "Search vessels",
-            description = "All filters optional; numeric filters are min/max ranges. "
+            description = "All filters optional. DWT and DWCC are OR'd with each other, and so "
+                    + "are grain and bale, because the two figures in each pair are rarely both "
+                    + "on file — filling both boxes means \"either\". The pairs are AND'd with "
+                    + "each other and with the rest. A size filter only matches vessels where "
+                    + "that figure is recorded (0 means unknown, not zero tonnes). maxDraft has "
+                    + "no minimum counterpart; yearFrom matches that build year and younger. "
                     + "vesselType and flag accept repeated values (?vesselType=A&vesselType=B).")
     public ResponseEntity<PageResponse<VesselResponse>> search(
             @RequestParam(required = false) String name,
@@ -40,10 +45,8 @@ public class VesselController {
             @RequestParam(required = false) BigDecimal maxGrain,
             @RequestParam(required = false) BigDecimal minBale,
             @RequestParam(required = false) BigDecimal maxBale,
-            @RequestParam(required = false) BigDecimal minDraft,
             @RequestParam(required = false) BigDecimal maxDraft,
-            @RequestParam(required = false) Integer minYear,
-            @RequestParam(required = false) Integer maxYear,
+            @RequestParam(required = false) Integer yearFrom,
             @RequestParam(required = false) List<String> vesselType,
             @RequestParam(required = false) List<String> flag,
             @RequestParam(required = false) Long companyId,
@@ -54,7 +57,7 @@ public class VesselController {
             @PageableDefault(size = 20, sort = "name") Pageable pageable) {
 
         VesselFilter filter = new VesselFilter(name, imoNumber, minDwt, maxDwt, minDwcc, maxDwcc,
-                minGrain, maxGrain, minBale, maxBale, minDraft, maxDraft, minYear, maxYear,
+                minGrain, maxGrain, minBale, maxBale, maxDraft, yearFrom,
                 vesselType, flag, companyId, companyName, confirmed, includeBanned, legacy);
         return ResponseEntity.ok(vesselService.search(filter, pageable));
     }
@@ -78,10 +81,8 @@ public class VesselController {
             @RequestParam(required = false) BigDecimal maxGrain,
             @RequestParam(required = false) BigDecimal minBale,
             @RequestParam(required = false) BigDecimal maxBale,
-            @RequestParam(required = false) BigDecimal minDraft,
             @RequestParam(required = false) BigDecimal maxDraft,
-            @RequestParam(required = false) Integer minYear,
-            @RequestParam(required = false) Integer maxYear,
+            @RequestParam(required = false) Integer yearFrom,
             @RequestParam(required = false) List<String> vesselType,
             @RequestParam(required = false) List<String> flag,
             @RequestParam(required = false) Long companyId,
@@ -94,7 +95,7 @@ public class VesselController {
             @RequestParam(required = false) List<Long> vesselId) {
 
         VesselFilter filter = new VesselFilter(name, imoNumber, minDwt, maxDwt, minDwcc, maxDwcc,
-                minGrain, maxGrain, minBale, maxBale, minDraft, maxDraft, minYear, maxYear,
+                minGrain, maxGrain, minBale, maxBale, maxDraft, yearFrom,
                 vesselType, flag, companyId, companyName, confirmed, includeBanned, legacy);
         return ResponseEntity.ok(vesselService.ownerEmailContacts(filter, vesselId, confirmedOnly));
     }

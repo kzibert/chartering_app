@@ -243,6 +243,11 @@ export interface PageParams {
 export interface VesselFilter extends PageParams {
   name?: string;
   imoNumber?: string;
+  /**
+   * DWT and DWCC are OR'd with each other, as are grain and bale — the two figures in
+   * each pair are rarely both on file, so filling both boxes means "either". A range only
+   * matches vessels where that figure is recorded; 0 in the data means unknown.
+   */
   minDwt?: number;
   maxDwt?: number;
   minDwcc?: number;
@@ -251,10 +256,10 @@ export interface VesselFilter extends PageParams {
   maxGrain?: number;
   minBale?: number;
   maxBale?: number;
-  minDraft?: number;
+  /** No minimum: the question is "will it fit", never "is it deep enough". */
   maxDraft?: number;
-  minYear?: number;
-  maxYear?: number;
+  /** Oldest acceptable build year — matches that year and younger. */
+  yearFrom?: number;
   vesselType?: string[];
   flag?: string[];
   /** matches vessels this company is on in any role, owner or broker */
