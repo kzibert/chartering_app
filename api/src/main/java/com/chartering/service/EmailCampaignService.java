@@ -74,6 +74,8 @@ public class EmailCampaignService {
     private final EmailFooterService footers;
     private final HtmlSanitizer sanitizer;
     private final ContactRepository contacts;
+    private final CirculationHistoryService history;
+    private final CirculationListService circulationLists;
 
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "email-campaign");
@@ -91,7 +93,9 @@ public class EmailCampaignService {
                                 CampaignLogService campaignLog,
                                 EmailFooterService footers,
                                 HtmlSanitizer sanitizer,
-                                ContactRepository contacts) {
+                                ContactRepository contacts,
+                                CirculationHistoryService history,
+                                CirculationListService circulationLists) {
         this.mailSender = mailSender;
         this.props = props;
         this.templates = templates;
@@ -99,6 +103,8 @@ public class EmailCampaignService {
         this.footers = footers;
         this.sanitizer = sanitizer;
         this.contacts = contacts;
+        this.history = history;
+        this.circulationLists = circulationLists;
     }
 
     /**
@@ -130,13 +136,15 @@ public class EmailCampaignService {
                     "A campaign is already running. Wait for it to finish or cancel it first.");
         }
 
-        List<CampaignRecipientRequest> deduped = dedupe(req.getRecipients());
-        int duplicates = req.getRecipients().size() - deduped.size();
+        Split byDuplicate = dedupe(req.getRecipients());
+        List<CampaignRecipientRequest> deduped = byDuplicate.kept();
+        int duplicates = byDuplicate.dropped().size();
 
-        // Last line of defence: an email list is a client-side snapshot, so an address
-        // flagged not-working after it was collected would otherwise still be mailed.
-        List<CampaignRecipientRequest> recipients = dropNotWorking(deduped);
-        int dead = deduped.size() - recipients.size();
+        // Last line of defence: a list is a snapshot taken when the addresses were
+        // collected, so one flagged not-working since would otherwise still be mailed.
+        Split byWorking = dropNotWorking(deduped);
+        List<CampaignRecipientRequest> recipients = byWorking.kept();
+        int dead = byWorking.dropped().size();
 
         if (recipients.isEmpty()) {
             throw new IllegalArgumentException(dead > 0
@@ -152,6 +160,7 @@ public class EmailCampaignService {
         // Resolve the footer before anything is sent, so a bad footerId is a 404 up front
         // rather than a campaign that dies on its first message.
         String composedHtml = composeBody(req);
+        String footerName = req.getFooterId() == null ? null : footers.get(req.getFooterId()).name();
 
         // Fail here rather than at message 1 of 200: a bad password should not leave a
         // half-sent campaign and a log full of identical auth errors behind it.
@@ -169,11 +178,39 @@ public class EmailCampaignService {
         if (dead > 0) {
             campaignLog.append("NOTE   %d address(es) skipped: flagged as not working".formatted(dead));
         }
+
+        // The permanent record, opened before the first message so a run that dies halfway
+        // still leaves a history entry naming everyone it had already reached. A failure to
+        // record must not stop the send — the text log is still written either way.
+        CirculationHistoryService.StartedRun run;
+        try {
+            run = history.begin(req.getSubject(), composedHtml, req.getFooterId(), footerName,
+                    req.getListId(), listName(req.getListId()),
+                    recipients, byDuplicate.dropped(), byWorking.dropped());
+        } catch (RuntimeException e) {
+            run = CirculationHistoryService.StartedRun.none();
+            campaignLog.append("NOTE   history could not be opened for this run: " + rootMessage(e));
+            log.warn("Could not open the circulation history record", e);
+        }
+
         log.info("Campaign started: {} recipient(s), subject '{}' ({})",
                 recipients.size(), req.getSubject(), carriedOver);
 
-        worker.submit(() -> execute(req.getSubject(), composedHtml, recipients, duplicates));
+        CirculationHistoryService.StartedRun record = run;
+        worker.submit(() -> execute(req.getSubject(), composedHtml, recipients, duplicates, record));
         return status();
+    }
+
+    /** History stores the list by name, so deleting the list later cannot rewrite the run. */
+    private String listName(Long listId) {
+        if (listId == null) {
+            return null;
+        }
+        try {
+            return circulationLists.get(listId).name();
+        } catch (RuntimeException e) {
+            return null; // a list deleted between compose and send is not worth failing over
+        }
     }
 
     public CampaignStatusResponse status() {
@@ -242,7 +279,8 @@ public class EmailCampaignService {
     // ---------------------------------------------------------------- the run
 
     private void execute(String subject, String composedHtml,
-                         List<CampaignRecipientRequest> recipients, int duplicates) {
+                         List<CampaignRecipientRequest> recipients, int duplicates,
+                         CirculationHistoryService.StartedRun record) {
         int sent = 0;
         int failed = 0;
         int skipped = duplicates;
@@ -271,11 +309,13 @@ public class EmailCampaignService {
                 CampaignRecipientRequest r = recipients.get(i);
                 state = state.progress(r.getEmail(), sent, failed, skipped);
 
+                Attempted outcome = new Attempted();
                 try {
-                    sendWithRetries(r, subject, composedHtml);
+                    sendWithRetries(r, subject, composedHtml, outcome);
                     sent++;
                     consecutiveFailures = 0;
                     campaignLog.append("SENT   %-40s %s".formatted(r.getEmail(), describe(r)));
+                    recordSent(record, i, outcome.attempts);
                 } catch (MailAuthenticationException e) {
                     // Credentials rejected mid-run: every remaining message would fail the same
                     // way, and repeated auth failures are themselves a lockout trigger.
@@ -284,12 +324,14 @@ public class EmailCampaignService {
                     finalMessage = "SMTP authentication failed — campaign aborted. Check MAIL_USERNAME / MAIL_PASSWORD.";
                     state = state.withError(rootMessage(e));
                     campaignLog.append("ABORT  authentication rejected: " + rootMessage(e));
+                    recordFailed(record, i, outcome.attempts, rootMessage(e));
                     break;
                 } catch (Exception e) {
                     failed++;
                     consecutiveFailures++;
                     state = state.withError(rootMessage(e));
                     campaignLog.append("FAILED %-40s %s".formatted(r.getEmail(), rootMessage(e)));
+                    recordFailed(record, i, outcome.attempts, rootMessage(e));
 
                     if (consecutiveFailures >= props.getAbortAfterConsecutiveFailures()) {
                         finalState = "ABORTED";
@@ -316,17 +358,49 @@ public class EmailCampaignService {
         } finally {
             campaignLog.endRun(finalState, sent, failed, skipped);
             state = state.finished(finalState, sent, failed, skipped, finalMessage);
+            // Closed inside the finally so an unexpected throw still leaves the run with an
+            // outcome instead of a history entry stuck on RUNNING for ever.
+            if (record.recording()) {
+                try {
+                    history.finish(record.runId(), finalState, sent, failed, skipped,
+                            finalMessage, state.lastError());
+                } catch (RuntimeException e) {
+                    log.warn("Could not close circulation run {}", record.runId(), e);
+                }
+            }
             running.set(false);
             cancelRequested.set(false);
             log.info("Campaign finished: {} — sent={} failed={} skipped={}", finalState, sent, failed, skipped);
         }
     }
 
-    private void sendWithRetries(CampaignRecipientRequest r, String subject, String composedHtml) {
+    /** Recording history must never take a send down with it — a lost row is not a lost email. */
+    private void recordSent(CirculationHistoryService.StartedRun record, int index, int attempts) {
+        if (!record.recording() || index >= record.recipientIds().size()) return;
+        try {
+            history.recordSent(record.recipientIds().get(index), attempts);
+        } catch (RuntimeException e) {
+            log.warn("Could not record a sent recipient in circulation history", e);
+        }
+    }
+
+    private void recordFailed(CirculationHistoryService.StartedRun record, int index,
+                              int attempts, String error) {
+        if (!record.recording() || index >= record.recipientIds().size()) return;
+        try {
+            history.recordFailed(record.recipientIds().get(index), attempts, error);
+        } catch (RuntimeException e) {
+            log.warn("Could not record a failed recipient in circulation history", e);
+        }
+    }
+
+    private void sendWithRetries(CampaignRecipientRequest r, String subject, String composedHtml,
+                                 Attempted outcome) {
         int attempt = 0;
         long backoff = props.getRetryBackoffMs();
         while (true) {
             try {
+                outcome.attempts++;
                 deliver(r, subject, composedHtml);
                 return;
             } catch (MailAuthenticationException e) {
@@ -384,31 +458,49 @@ public class EmailCampaignService {
 
     // ---------------------------------------------------------------- helpers
 
-    /** Keep the first occurrence of each address, case-insensitively. */
     /**
      * Drop recipients whose address is flagged not working. Matched on the address itself
-     * rather than contactId, so a hand-typed or edited row in the email list is caught too.
+     * rather than contactId, so a hand-typed or edited row in a list is caught too.
+     *
+     * <p>The dropped ones are handed back rather than discarded: history records who was
+     * skipped and why, which is the question you ask when a circular has to be re-sent.
      */
-    private List<CampaignRecipientRequest> dropNotWorking(List<CampaignRecipientRequest> input) {
+    private Split dropNotWorking(List<CampaignRecipientRequest> input) {
         Set<String> dead = contacts.findNotWorkingEmailValues();
-        if (dead.isEmpty()) return input;
-        return input.stream()
-                .filter(r -> !dead.contains(r.getEmail().trim().toLowerCase(Locale.ROOT)))
-                .toList();
+        if (dead.isEmpty()) return new Split(input, List.of());
+        List<CampaignRecipientRequest> kept = new ArrayList<>();
+        List<CampaignRecipientRequest> dropped = new ArrayList<>();
+        for (CampaignRecipientRequest r : input) {
+            (dead.contains(r.getEmail().trim().toLowerCase(Locale.ROOT)) ? dropped : kept).add(r);
+        }
+        return new Split(kept, dropped);
     }
 
-    private List<CampaignRecipientRequest> dedupe(List<CampaignRecipientRequest> input) {
+    /** Keep the first occurrence of each address, case-insensitively. */
+    private Split dedupe(List<CampaignRecipientRequest> input) {
         Set<String> seen = new LinkedHashSet<>();
-        List<CampaignRecipientRequest> out = new ArrayList<>();
+        List<CampaignRecipientRequest> kept = new ArrayList<>();
+        List<CampaignRecipientRequest> dropped = new ArrayList<>();
         for (CampaignRecipientRequest r : input) {
             if (r == null || r.getEmail() == null || r.getEmail().isBlank()) {
                 continue;
             }
-            if (seen.add(r.getEmail().trim().toLowerCase(Locale.ROOT))) {
-                out.add(r);
-            }
+            (seen.add(r.getEmail().trim().toLowerCase(Locale.ROOT)) ? kept : dropped).add(r);
         }
-        return out;
+        return new Split(kept, dropped);
+    }
+
+    /** Recipients that survived a filter, and the ones it removed. */
+    private record Split(List<CampaignRecipientRequest> kept, List<CampaignRecipientRequest> dropped) {
+    }
+
+    /**
+     * Mutable attempt counter for one address. Retries happen inside sendWithRetries, so
+     * the count is only visible to the caller if it is carried out by reference — and
+     * "this one needed three tries" is exactly what makes a history row worth reading.
+     */
+    private static final class Attempted {
+        private int attempts = 0;
     }
 
     /**

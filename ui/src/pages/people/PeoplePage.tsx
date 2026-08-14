@@ -24,6 +24,8 @@ import { usePersistedFilters } from '../../components/usePersistedState';
 import { CONFIRMED_OPTIONS } from '../../components/filterOptions';
 import CompanySelect from '../../components/CompanySelect';
 import ContactLine from '../../components/ContactLine';
+import AddToListActions from '../../components/AddToListActions';
+import { collectApi } from '../../api/circulations';
 import EditToolbar, { useEditMode } from '../../components/EditToolbar';
 import GreetingName from '../../components/GreetingName';
 import PersonForm from './PersonForm';
@@ -65,6 +67,8 @@ export default function PeoplePage() {
   const [editingContact, setEditingContact] = useState<ContactResponse | null>(null);
   const [contactDefaults, setContactDefaults] = useState<Partial<ContactRequest>>();
   const [expanded, setExpanded] = useState<number[]>([]);
+  // Ticked rows for the bulk add, kept across pages (see preserveSelectedRowKeys below).
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
   // Edit mode is page-wide here: the rows are a list of contacts, so flipping it per row
   // would mean clicking Edit again for every person you touch.
@@ -193,6 +197,13 @@ export default function PeoplePage() {
             <Button icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true); }}>
               New person
             </Button>
+            <AddToListActions
+              entity="people"
+              selectedIds={selectedIds}
+              totalMatching={query.data?.totalElements ?? 0}
+              collect={(ids, confirmedOnly) => collectApi.fromPeople(filters, ids, confirmedOnly)}
+              onCleared={() => setSelectedIds([])}
+            />
             <EditToolbar editing={editMode} onToggle={setEditMode} />
             <Form.Item name="legacy" noStyle initialValue="">
               <Select
@@ -219,6 +230,13 @@ export default function PeoplePage() {
         dataSource={rows}
         pagination={tc.pagination(query.data?.totalElements ?? 0)}
         onChange={tc.onChange}
+        rowSelection={{
+          selectedRowKeys: selectedIds,
+          // Ticks on other pages are no longer in dataSource; without this, paging away
+          // silently drops them from the selection.
+          preserveSelectedRowKeys: true,
+          onChange: (keys) => setSelectedIds(keys as number[]),
+        }}
         expandable={{
           expandedRowKeys: expanded,
           onExpandedRowsChange: (keys) => setExpanded(keys as number[]),

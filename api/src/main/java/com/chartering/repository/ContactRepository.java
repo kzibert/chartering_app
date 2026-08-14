@@ -39,8 +39,8 @@ public interface ContactRepository
      * join-fetched so the mapper doesn't N+1. confirmedOnly=true restricts to confirmed
      * emails. Addresses flagged not-working never appear.
      * <p>
-     * Ordered main-first within each company, so callers wanting a single address per
-     * company can simply take the first row of each group.
+     * Ordered circ-first then main-first within each company, which is the order the
+     * selection rule reads each group in.
      */
     @Query("""
             select c from Contact c
@@ -51,7 +51,7 @@ public interface ContactRepository
               and c.working = true
               and (:confirmedOnly = false or c.confirmed = true)
               and (:includeBanned = true or c.banned = false)
-            order by comp.id, c.main desc, c.id
+            order by comp.id, c.circ desc, c.main desc, c.id
             """)
     List<Contact> findEmailContactsByCompanyIds(
             @Param("companyIds") Collection<Long> companyIds,
@@ -76,6 +76,27 @@ public interface ContactRepository
             having sum(case when c.working then 1 else 0 end) = 0
             """)
     List<Long> findCompanyIdsWithoutWorkingEmail(@Param("companyIds") Collection<Long> companyIds);
+
+    /**
+     * Working email contacts of the given <em>people</em>, for the People tab's bulk add.
+     * Companion to {@link #findEmailContactsByCompanyIds}; ordered circ-first then main-first
+     * so the selection rule can read each person's group in precedence order.
+     */
+    @Query("""
+            select c from Contact c
+              join fetch c.person p
+              left join fetch c.company
+            where c.contactKind = 'email'
+              and p.id in :personIds
+              and c.working = true
+              and (:confirmedOnly = false or c.confirmed = true)
+              and (:includeBanned = true or c.banned = false)
+            order by p.id, c.circ desc, c.main desc, c.id
+            """)
+    List<Contact> findEmailContactsByPersonIds(
+            @Param("personIds") Collection<Long> personIds,
+            @Param("confirmedOnly") boolean confirmedOnly,
+            @Param("includeBanned") boolean includeBanned);
 
     /** Lower-cased dead email addresses — the send-time blocklist for campaigns. */
     @Query("select lower(c.contactValue) from Contact c where c.contactKind = 'email' and c.working = false")

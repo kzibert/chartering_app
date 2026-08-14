@@ -4,6 +4,7 @@ import com.chartering.dto.*;
 import com.chartering.exception.ResourceNotFoundException;
 import com.chartering.mapper.DtoMapper;
 import com.chartering.model.Company;
+import com.chartering.model.Contact;
 import com.chartering.repository.CompanyRepository;
 import com.chartering.repository.ContactRepository;
 import com.chartering.repository.VesselCompanyLinkRepository;
@@ -30,29 +31,41 @@ public class CompanyService {
     private final ContactRepository contactRepository;
     private final VesselRepository vesselRepository;
     private final VesselCompanyLinkRepository linkRepository;
+    private final RecipientSelectionService recipientSelection;
     private final DtoMapper mapper;
 
     @Transactional(readOnly = true)
     public PageResponse<CompanyResponse> search(CompanyFilter f, Pageable pageable) {
-        Specification<Company> spec = Specification.allOf(
-                CompanySpecification.nameContains(f.name()),
-                CompanySpecification.cityContains(f.city()),
-                CompanySpecification.hasPersonNamed(f.personName()),
-                CompanySpecification.roleIsTrue("shipowner", f.shipowner()),
-                CompanySpecification.roleIsTrue("charterer", f.charterer()),
-                CompanySpecification.roleIsTrue("broker", f.broker()),
-                CompanySpecification.roleIsTrue("agent", f.agent()),
-                CompanySpecification.confirmedEquals(f.confirmed()),
-                CompanySpecification.hasRegionId(f.regionId()),
-                CompanySpecification.hasPortId(f.portId()),
-                CompanySpecification.hasTonnageCategoryId(f.tonnageCategoryId()),
-                CompanySpecification.excludeBanned(f.includeBanned()),
-                CompanySpecification.noWorkingEmail(f.noWorkingEmail()),
-                CompanySpecification.legacyEquals(f.legacy()));
-        Page<Company> page = companyRepository.findAll(spec, pageable);
+        Page<Company> page = companyRepository.findAll(buildSpec(f), pageable);
         // One extra query for the whole page rather than one per row.
         Set<Long> dead = deadEmailCompanyIds(page.getContent().stream().map(Company::getId).toList());
         return PageResponse.from(page.map(c -> mapper.toCompanyResponse(c, dead.contains(c.getId()))));
+    }
+
+    /**
+     * The addresses to circulate to for a set of companies — the Companies tab's bulk add.
+     *
+     * <p>Which addresses those are is decided by {@link RecipientSelectionService}: circ-
+     * flagged ones if the group has any, else the main one, else all working ones. The rule
+     * runs per person, so a company with five flagged people contributes five addresses,
+     * and its own switchboard address is one more group on top.
+     *
+     * @param companyIds    specific companies (the checkbox selection); when empty the whole
+     *                      filtered set is used instead, which is the "add all matching" case
+     * @param confirmedOnly restrict to confirmed addresses
+     */
+    @Transactional(readOnly = true)
+    public List<ContactResponse> emailContacts(CompanyFilter f, List<Long> companyIds,
+                                               boolean confirmedOnly) {
+        List<Long> ids = companyIds == null || companyIds.isEmpty()
+                ? companyRepository.findAll(buildSpec(f)).stream().map(Company::getId).toList()
+                : companyIds;
+        if (ids.isEmpty()) return List.of();
+        List<Contact> emails = contactRepository.findEmailContactsByCompanyIds(
+                ids, confirmedOnly, f.includeBanned());
+        return recipientSelection.select(emails).stream()
+                .map(mapper::toContactResponse)
+                .toList();
     }
 
     /** Of these companies, the ones whose every email address is flagged not working. */
@@ -140,6 +153,25 @@ public class CompanyService {
         c.setConfirmedBy(confirmed && req != null ? req.getConfirmedBy() : null);
         c.setConfirmNotes(confirmed && req != null ? req.getConfirmNotes() : null);
         return mapper.toCompanyResponse(companyRepository.save(c), hasNoWorkingEmail(c.getId()));
+    }
+
+    /** Shared by the paged search and the bulk collect, so both see the same result set. */
+    private Specification<Company> buildSpec(CompanyFilter f) {
+        return Specification.allOf(
+                CompanySpecification.nameContains(f.name()),
+                CompanySpecification.cityContains(f.city()),
+                CompanySpecification.hasPersonNamed(f.personName()),
+                CompanySpecification.roleIsTrue("shipowner", f.shipowner()),
+                CompanySpecification.roleIsTrue("charterer", f.charterer()),
+                CompanySpecification.roleIsTrue("broker", f.broker()),
+                CompanySpecification.roleIsTrue("agent", f.agent()),
+                CompanySpecification.confirmedEquals(f.confirmed()),
+                CompanySpecification.hasRegionId(f.regionId()),
+                CompanySpecification.hasPortId(f.portId()),
+                CompanySpecification.hasTonnageCategoryId(f.tonnageCategoryId()),
+                CompanySpecification.excludeBanned(f.includeBanned()),
+                CompanySpecification.noWorkingEmail(f.noWorkingEmail()),
+                CompanySpecification.legacyEquals(f.legacy()));
     }
 
     private void requireExists(Long id) {

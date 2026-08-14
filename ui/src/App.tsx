@@ -4,7 +4,7 @@ import Dashboard from './pages/Dashboard';
 import VesselsPage from './pages/vessels/VesselsPage';
 import CompaniesPage from './pages/companies/CompaniesPage';
 import PeoplePage from './pages/people/PeoplePage';
-import EmailListPage from './pages/emailList/EmailListPage';
+import CirculationListsPage from './pages/circulationLists/CirculationListsPage';
 import CircularsPage from './pages/circulars/CircularsPage';
 
 export default function App() {
@@ -17,7 +17,9 @@ export default function App() {
         <Route path="/people" element={<PeoplePage />} />
         {/* Contacts merged into People; keep old links working. */}
         <Route path="/contacts" element={<Navigate to="/people" replace />} />
-        <Route path="/email-list" element={<EmailListPage />} />
+        <Route path="/circulation-lists" element={<CirculationListsPage />} />
+        {/* The single client-side email list became named, DB-backed lists. */}
+        <Route path="/email-list" element={<Navigate to="/circulation-lists" replace />} />
         <Route path="/circulars" element={<CircularsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

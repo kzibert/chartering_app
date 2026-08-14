@@ -38,6 +38,12 @@ export const contactsApi = {
       .patch<ContactResponse>(`/contacts/${id}/main`, {}, { params: { main } })
       .then((r) => r.data),
 
+  /** Flag an email for use in circulations. Additive — nothing else is demoted. */
+  setCirc: (id: number, circ: boolean) =>
+    client
+      .patch<ContactResponse>(`/contacts/${id}/circ`, null, { params: { circ } })
+      .then((r) => r.data),
+
   setWorking: (id: number, working: boolean) =>
     client
       .patch<ContactResponse>(`/contacts/${id}/working`, {}, { params: { working } })

@@ -119,6 +119,23 @@ public class ContactService {
         return mapper.toContactResponse(contactRepository.save(ct));
     }
 
+    /**
+     * Flag an address for use in circulations, or clear it. Unlike {@link #setMain} nothing
+     * is demoted: any number of addresses per company or person may carry the flag, because
+     * "who gets the circular" can legitimately be three people at one desk.
+     */
+    @Transactional
+    public ContactResponse setCirc(Long id, boolean circ) {
+        Contact ct = find(id);
+        if (circ && !"email".equalsIgnoreCase(ct.getContactKind())) {
+            throw new IllegalArgumentException(
+                    "Only email contacts can be flagged for circulations — contact " + id
+                            + " is a " + ct.getContactKind() + ".");
+        }
+        ct.setCirc(circ);
+        return mapper.toContactResponse(contactRepository.save(ct));
+    }
+
     private Contact find(Long id) {
         return contactRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Contact", id));

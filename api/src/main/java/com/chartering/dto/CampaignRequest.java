@@ -30,6 +30,13 @@ public class CampaignRequest {
      */
     private Long footerId;
 
+    /**
+     * Which circulation list these recipients came from, recorded in history so a run can
+     * be traced back to the list that produced it. Purely descriptive — the recipients
+     * below are what actually gets mailed, so an edited list cannot rewrite a past run.
+     */
+    private Long listId;
+
     @NotEmpty(message = "at least one recipient is required")
     @Valid
     private List<CampaignRecipientRequest> recipients;

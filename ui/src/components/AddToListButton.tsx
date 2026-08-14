@@ -1,18 +1,19 @@
 import { App, Button, Tooltip } from 'antd';
 import { PlusOutlined, CheckCircleTwoTone } from '@ant-design/icons';
-import { useEmailList, contactToEntry } from '../emailList/store';
+import { useCurrentList, contactToEntry } from '../circulations/store';
 import type { ContactResponse } from '../api/types';
 
 /**
- * Toggle an email contact in/out of the client-side email list. Renders nothing for
+ * Toggle an email contact in/out of the current circulation list. Renders nothing for
  * non-email contacts (phones), so it can be dropped into any contact row safely.
  */
 export default function AddToListButton({ ct }: { ct: ContactResponse }) {
-  const { has, add, remove } = useEmailList();
+  const { has, entryFor, add, removeEntry, listId } = useCurrentList();
   const { message } = App.useApp();
 
   if (ct.contactKind !== 'email') return null;
-  const inList = has(ct.id);
+  const inList = has(ct);
+  const pending = add.isPending || removeEntry.isPending;
 
   // A dead address can still be removed from the list, just never added to it — the
   // campaign would drop it at send time anyway, so offering the add is only misleading.
@@ -25,19 +26,25 @@ export default function AddToListButton({ ct }: { ct: ContactResponse }) {
   }
 
   return (
-    <Tooltip title={inList ? 'In email list — click to remove' : 'Add email to list'}>
+    <Tooltip title={inList ? 'In the current list — click to remove' : 'Add to the current list'}>
       <Button
         type="text"
         size="small"
-        aria-label={inList ? 'Remove email from list' : 'Add email to list'}
+        loading={pending}
+        disabled={listId == null}
+        aria-label={inList ? 'Remove from the current list' : 'Add to the current list'}
         icon={inList ? <CheckCircleTwoTone twoToneColor="#52c41a" /> : <PlusOutlined />}
         onClick={() => {
           if (inList) {
-            remove(ct.id);
-            message.info(`Removed ${ct.contactValue}`);
+            const entry = entryFor(ct);
+            if (!entry) return;
+            removeEntry.mutate(entry.id, {
+              onSuccess: () => message.info(`Removed ${ct.contactValue}`),
+            });
           } else {
-            add(contactToEntry(ct));
-            message.success(`Added ${ct.contactValue}`);
+            add.mutate([contactToEntry(ct)], {
+              onSuccess: () => message.success(`Added ${ct.contactValue}`),
+            });
           }
         }}
       />

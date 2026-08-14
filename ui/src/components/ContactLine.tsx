@@ -5,6 +5,7 @@ import GreetingName from './GreetingName';
 import AddToListButton from './AddToListButton';
 import BanButton from './BanButton';
 import MainContactButton from './MainContactButton';
+import CircToggleButton from './CircToggleButton';
 import WorkingToggleButton from './WorkingToggleButton';
 import { useContactMutations } from '../api/hooks';
 import type { ContactResponse } from '../api/types';
@@ -48,10 +49,16 @@ export default function ContactLine({
         <Tag color={ct.contactKind === 'email' ? 'blue' : 'default'}>{ct.contactKind}</Tag>
         <CopyableValue value={ct.contactValue} highlight={highlight} />
         {ct.main && <Tag color="gold">main</Tag>}
+        {ct.circ && (
+          <Tooltip title="Used for circulations — collected instead of this person's other addresses">
+            <Tag color="blue">circ</Tag>
+          </Tooltip>
+        )}
         {!ct.working && <Tag color="red">not working</Tag>}
         {ct.confirmed && <Tag color="success">confirmed</Tag>}
         {ct.banned && <Tag color="red">banned</Tag>}
         {editing && <MainContactButton ct={ct} />}
+        {editing && <CircToggleButton ct={ct} />}
         {editing && <WorkingToggleButton ct={ct} />}
         <AddToListButton ct={ct} />
         {editing && onEdit && (

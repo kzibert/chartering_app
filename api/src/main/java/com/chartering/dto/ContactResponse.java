@@ -23,5 +23,7 @@ public record ContactResponse(
         boolean banned,
         boolean legacy,
         boolean main,
-        boolean working) {
+        boolean working,
+        /** flagged for use in circulations — see RecipientSelectionService for the rule */
+        boolean circ) {
 }

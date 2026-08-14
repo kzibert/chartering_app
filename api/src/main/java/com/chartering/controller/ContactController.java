@@ -96,6 +96,18 @@ public class ContactController {
         return ResponseEntity.ok(contactService.setWorking(id, working));
     }
 
+    @PatchMapping("/{id}/circ")
+    @Operation(summary = "Flag an email for use in circulations (or clear with ?circ=false)",
+            description = "Any number of addresses per company or person may carry this flag — "
+                    + "unlike main, nothing is demoted. Bulk collection then applies: circ "
+                    + "addresses if the person has any, else their main address, else all their "
+                    + "working addresses. Email contacts only.")
+    public ResponseEntity<ContactResponse> circ(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "true") boolean circ) {
+        return ResponseEntity.ok(contactService.setCirc(id, circ));
+    }
+
     @PatchMapping("/{id}/ban")
     @Operation(summary = "Ban a contact as Russian-rooted (or unban with ?banned=false)")
     public ResponseEntity<ContactResponse> ban(

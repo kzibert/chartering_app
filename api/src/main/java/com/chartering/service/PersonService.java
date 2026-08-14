@@ -8,6 +8,7 @@ import com.chartering.dto.PersonResponse;
 import com.chartering.exception.ResourceNotFoundException;
 import com.chartering.mapper.DtoMapper;
 import com.chartering.model.Company;
+import com.chartering.model.Contact;
 import com.chartering.model.Person;
 import com.chartering.repository.CompanyRepository;
 import com.chartering.repository.ContactRepository;
@@ -33,6 +34,7 @@ public class PersonService {
     private final PersonRepository personRepository;
     private final CompanyRepository companyRepository;
     private final ContactRepository contactRepository;
+    private final RecipientSelectionService recipientSelection;
     private final DtoMapper mapper;
 
     @Transactional(readOnly = true)
@@ -55,13 +57,7 @@ public class PersonService {
      */
     @Transactional(readOnly = true)
     public PageResponse<PersonDetailResponse> search(PeopleFilter f, Pageable pageable) {
-        Specification<Person> spec = Specification.allOf(
-                PersonSpecification.companyIdEquals(f.companyId()),
-                PersonSpecification.nameContains(f.name()),
-                PersonSpecification.hasContactMatching(
-                        f.contactValue(), f.contactKind(), f.confirmed(), f.includeBanned(), f.legacy()));
-
-        Page<Person> page = personRepository.findAll(spec, pageable);
+        Page<Person> page = personRepository.findAll(buildSpec(f), pageable);
         List<Long> ids = page.getContent().stream().map(Person::getId).toList();
         // Skip the round trip on an empty page rather than issuing "in ()".
         Map<Long, List<ContactResponse>> byPerson = ids.isEmpty() ? Map.of()
@@ -72,6 +68,30 @@ public class PersonService {
         return PageResponse.from(page.map(p -> new PersonDetailResponse(
                 mapper.toPersonResponse(p),
                 byPerson.getOrDefault(p.getId(), List.of()))));
+    }
+
+    /**
+     * The addresses to circulate to for a set of people — the People tab's bulk add.
+     *
+     * <p>Which addresses those are is decided by {@link RecipientSelectionService}: circ-
+     * flagged ones if the person has any, else their main one, else all their working ones.
+     *
+     * @param personIds     specific people (the checkbox selection); when empty the whole
+     *                      filtered set is used instead, which is the "add all matching" case
+     * @param confirmedOnly restrict to confirmed addresses
+     */
+    @Transactional(readOnly = true)
+    public List<ContactResponse> emailContacts(PeopleFilter f, List<Long> personIds,
+                                               boolean confirmedOnly) {
+        List<Long> ids = personIds == null || personIds.isEmpty()
+                ? personRepository.findAll(buildSpec(f)).stream().map(Person::getId).toList()
+                : personIds;
+        if (ids.isEmpty()) return List.of();
+        List<Contact> emails = contactRepository.findEmailContactsByPersonIds(
+                ids, confirmedOnly, f.includeBanned());
+        return recipientSelection.select(emails).stream()
+                .map(mapper::toContactResponse)
+                .toList();
     }
 
     @Transactional(readOnly = true)
@@ -118,6 +138,15 @@ public class PersonService {
         if (companyId == null) return null;
         return companyRepository.findById(companyId)
                 .orElseThrow(() -> new ResourceNotFoundException("Company", companyId));
+    }
+
+    /** Shared by the paged search and the bulk collect, so both see the same result set. */
+    private Specification<Person> buildSpec(PeopleFilter f) {
+        return Specification.allOf(
+                PersonSpecification.companyIdEquals(f.companyId()),
+                PersonSpecification.nameContains(f.name()),
+                PersonSpecification.hasContactMatching(
+                        f.contactValue(), f.contactKind(), f.confirmed(), f.includeBanned(), f.legacy()));
     }
 
     /** Filter holder so the controller stays readable with many optional params. */

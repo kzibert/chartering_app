@@ -7,6 +7,8 @@ import { useTableControls } from '../../components/useTableControls';
 import { usePersistedFilters } from '../../components/usePersistedState';
 import { CONFIRMED_OPTIONS } from '../../components/filterOptions';
 import ConfirmTag from '../../components/ConfirmTag';
+import AddToListActions from '../../components/AddToListActions';
+import { collectApi } from '../../api/circulations';
 import CompanyDrawer from './CompanyDrawer';
 import CompanyForm from './CompanyForm';
 import type { CompanyFilter, CompanyResponse } from '../../api/types';
@@ -23,6 +25,8 @@ export default function CompaniesPage() {
   const [selectedId, setSelectedId] = useState<number>();
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<CompanyResponse | null>(null);
+  // Ticked rows for the bulk add, kept across pages (see preserveSelectedRowKeys below).
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
   const query = useCompanies({ ...filters, page: tc.state.page, size: tc.state.size, sort: tc.state.sort });
   const deadOnly = filters.noWorkingEmail === true;
@@ -139,6 +143,13 @@ export default function CompaniesPage() {
             <Button type="primary" htmlType="submit" icon={<SearchOutlined />}>Search</Button>
             <Button onClick={() => { form.resetFields(); applyFilters({}); }}>Reset</Button>
             <Button icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true); }}>New company</Button>
+            <AddToListActions
+              entity="companies"
+              selectedIds={selectedIds}
+              totalMatching={query.data?.totalElements ?? 0}
+              collect={(ids, confirmedOnly) => collectApi.fromCompanies(filters, ids, confirmedOnly)}
+              onCleared={() => setSelectedIds([])}
+            />
             <Tooltip title="Companies that have email addresses but every one is flagged not working">
               <Button
                 icon={<WarningOutlined />}
@@ -187,6 +198,13 @@ export default function CompaniesPage() {
         dataSource={query.data?.content ?? []}
         pagination={tc.pagination(query.data?.totalElements ?? 0)}
         onChange={tc.onChange}
+        rowSelection={{
+          selectedRowKeys: selectedIds,
+          // Ticks on other pages are no longer in dataSource; without this, paging away
+          // silently drops them from the selection.
+          preserveSelectedRowKeys: true,
+          onChange: (keys) => setSelectedIds(keys as number[]),
+        }}
         onRow={(c) => ({ onClick: () => setSelectedId(c.id), style: { cursor: 'pointer' } })}
       />
 

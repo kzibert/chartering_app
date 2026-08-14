@@ -39,18 +39,9 @@ export const vesselsApi = {
   get: (id: number) =>
     client.get<VesselDetailResponse>(`/vessels/${id}`).then((r) => r.data),
 
-  // Email contacts of the owner companies of every vessel matching the filter.
-  // mainOnly collapses each owner to one address: its main email, else its first.
-  ownerEmailContacts: (
-    filter: Partial<VesselFilter>,
-    confirmedOnly: boolean,
-    mainOnly = false,
-  ) =>
-    client
-      .get<ContactResponse[]>('/vessels/contacts', {
-        params: cleanParams({ ...filter, confirmedOnly, mainOnly }),
-      })
-      .then((r) => r.data),
+  // Owner-company addresses to circulate to live in api/circulations.ts alongside the
+  // company and people equivalents — they share the circ/main selection rule, so keeping
+  // the three together is what stops them drifting apart.
 
   create: (body: VesselRequest) =>
     client.post<VesselResponse>('/vessels', body).then((r) => r.data),

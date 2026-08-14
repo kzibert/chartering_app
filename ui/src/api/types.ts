@@ -157,6 +157,12 @@ export interface ContactResponse {
   main: boolean;
   /** false = dead/bounced; excluded from bulk collection and from campaign sends */
   working: boolean;
+  /**
+   * Flagged for use in circulations. Any number per company/person, unlike `main`.
+   * Bulk collection takes circ addresses when a person has any, else their main one,
+   * else all their working ones.
+   */
+  circ: boolean;
 }
 
 export interface ContactRequest {
@@ -177,13 +183,17 @@ export interface LookupResponse {
   name: string;
 }
 
+/* ---------------- circulation lists ---------------- */
+
 /**
- * One row in the (client-side only) email list used for mass-mail prep.
- * Keyed by contactId; carries the person/company context + referencing ids so the
- * exported sheet is self-describing.
+ * One address on a circulation list. The mail-merge fields are a snapshot taken when the
+ * address was collected and are editable per list, so tuning a greeting for one circular
+ * never writes back to the person's record.
  */
-export interface EmailListEntry {
-  contactId: number;
+export interface CirculationListEntry {
+  id: number;
+  /** the contact it came from, or absent for a hand-typed row / deleted contact */
+  contactId?: number;
   email: string;
   personId?: number;
   personName?: string;
@@ -191,6 +201,36 @@ export interface EmailListEntry {
   title?: string;
   companyId?: number;
   companyName?: string;
+}
+
+export interface CirculationList {
+  id: number;
+  /** absent on the draft — the unnamed "current list" every tab collects into */
+  name?: string;
+  draft: boolean;
+  notes?: string;
+  entryCount: number;
+  /** populated only by the single-list endpoints; the picker gets counts alone */
+  entries?: CirculationListEntry[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** Body for adding addresses to a list. Only the address is required. */
+export interface CirculationListEntryRequest {
+  email: string;
+  contactId?: number;
+  personId?: number;
+  personName?: string;
+  greetingName?: string;
+  title?: string;
+  companyId?: number;
+  companyName?: string;
+}
+
+export interface CirculationListRequest {
+  name: string;
+  notes?: string;
 }
 
 // Query param shapes for list endpoints.
@@ -291,6 +331,8 @@ export interface CampaignRequest {
   recipients: CampaignRecipient[];
   /** Omitted/null means send with no footer — it does not fall back to the default. */
   footerId?: number | null;
+  /** Recorded in history so a run can be traced back to the list it came from. */
+  listId?: number | null;
 }
 
 export interface CampaignStatus {
@@ -324,6 +366,69 @@ export interface CampaignConfig {
   maxDelayMs: number;
   maxRecipientsPerCampaign: number;
   unsubscribeConfigured: boolean;
+}
+
+/* ---------------- circulation history ---------------- */
+
+/** How one address fared in a run. Skipped ones were never mailed. */
+export type CirculationRecipientStatus =
+  | 'SENT'
+  | 'FAILED'
+  | 'PENDING'
+  | 'SKIPPED_DUPLICATE'
+  | 'SKIPPED_NOT_WORKING';
+
+/** One line of the History dropdown. */
+export interface CirculationRun {
+  id: number;
+  subject: string;
+  listName?: string;
+  footerName?: string;
+  state: CampaignState;
+  total: number;
+  sent: number;
+  failed: number;
+  skipped: number;
+  startedAt: string;
+  finishedAt?: string;
+  message?: string;
+}
+
+export interface CirculationRunRecipient {
+  id: number;
+  email: string;
+  contactId?: number;
+  personId?: number;
+  personName?: string;
+  greetingName?: string;
+  title?: string;
+  companyId?: number;
+  companyName?: string;
+  status: CirculationRecipientStatus;
+  attempts: number;
+  error?: string;
+  sentAt?: string;
+}
+
+export interface CirculationRunDetail {
+  run: CirculationRun;
+  /** the circular before the merge — still carrying its {{placeholders}} */
+  composedHtml: string;
+  fromAddress?: string;
+  fromName?: string;
+  replyTo?: string;
+  lastError?: string;
+  recipients: CirculationRunRecipient[];
+}
+
+/** Exactly what one recipient received, replayed from the run's stored merge. */
+export interface CirculationMessage {
+  email: string;
+  personName?: string;
+  subject: string;
+  html: string;
+  /** the plain-text alternative that actually went out alongside the HTML */
+  text: string;
 }
 
 /* ---------------- circular templates & footers ---------------- */

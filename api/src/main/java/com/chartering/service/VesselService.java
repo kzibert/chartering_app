@@ -4,6 +4,7 @@ import com.chartering.dto.*;
 import com.chartering.exception.ResourceNotFoundException;
 import com.chartering.mapper.DtoMapper;
 import com.chartering.model.Company;
+import com.chartering.model.Contact;
 import com.chartering.model.Vessel;
 import com.chartering.model.VesselCompanyLink;
 import com.chartering.repository.CompanyRepository;
@@ -40,6 +41,7 @@ public class VesselService {
     private final CompanyRepository companyRepository;
     private final ContactRepository contactRepository;
     private final VesselCompanyLinkRepository linkRepository;
+    private final RecipientSelectionService recipientSelection;
     private final DtoMapper mapper;
 
     @Transactional(readOnly = true)
@@ -49,41 +51,37 @@ public class VesselService {
     }
 
     /**
-     * Email contacts of the owner companies of every vessel matching {@code f}.
-     * confirmedOnly=true keeps only confirmed emails. Distinct by contact; an owner with
-     * no contacts (or vessels with no owner) simply contributes nothing.
+     * The owner-company addresses to circulate to, for a set of vessels.
+     *
+     * <p>Which addresses those are is decided by {@link RecipientSelectionService}: circ-
+     * flagged ones if the owner has any, else the main one, else all working ones — applied
+     * per person, so one flagged contact does not silence their colleagues.
+     *
+     * @param vesselIds     specific vessels (the checkbox selection); when empty the whole
+     *                      filtered set is used instead, which is the "add all matching" case
+     * @param confirmedOnly restrict to confirmed addresses
      */
     @Transactional(readOnly = true)
-    public List<ContactResponse> ownerEmailContacts(VesselFilter f, boolean confirmedOnly) {
-        Set<Long> ownerIds = ownerIds(f);
+    public List<ContactResponse> ownerEmailContacts(VesselFilter f, List<Long> vesselIds,
+                                                    boolean confirmedOnly) {
+        Set<Long> ownerIds = ownerIds(f, vesselIds);
         if (ownerIds.isEmpty()) return List.of();
-        return contactRepository.findEmailContactsByCompanyIds(ownerIds, confirmedOnly, f.includeBanned()).stream()
+        List<Contact> emails = contactRepository.findEmailContactsByCompanyIds(
+                ownerIds, confirmedOnly, f.includeBanned());
+        return recipientSelection.select(emails).stream()
                 .map(mapper::toContactResponse)
                 .toList();
     }
 
     /**
-     * One email per owner company: the one flagged main, else that company's first.
-     * The repository orders main-first within each company, so keeping the first row
-     * of each group applies exactly that rule.
+     * Owner companies of the vessels in scope. An explicit id list wins over the filter:
+     * ticking three rows means those three, whatever the search box still holds.
      */
-    @Transactional(readOnly = true)
-    public List<ContactResponse> ownerMainEmailContacts(VesselFilter f, boolean confirmedOnly) {
-        Set<Long> ownerIds = ownerIds(f);
-        if (ownerIds.isEmpty()) return List.of();
-        return contactRepository.findEmailContactsByCompanyIds(ownerIds, confirmedOnly, f.includeBanned()).stream()
-                .collect(Collectors.toMap(
-                        c -> c.getCompany().getId(),
-                        c -> c,
-                        (first, later) -> first,
-                        LinkedHashMap::new))
-                .values().stream()
-                .map(mapper::toContactResponse)
-                .toList();
-    }
-
-    private Set<Long> ownerIds(VesselFilter f) {
-        return vesselRepository.findAll(buildSpec(f)).stream()
+    private Set<Long> ownerIds(VesselFilter f, List<Long> vesselIds) {
+        List<Vessel> vessels = vesselIds == null || vesselIds.isEmpty()
+                ? vesselRepository.findAll(buildSpec(f))
+                : vesselRepository.findAllById(vesselIds);
+        return vessels.stream()
                 .map(Vessel::getOwner)
                 .filter(Objects::nonNull)
                 .map(Company::getId)

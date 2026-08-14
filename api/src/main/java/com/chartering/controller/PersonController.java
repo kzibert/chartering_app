@@ -1,5 +1,6 @@
 package com.chartering.controller;
 
+import com.chartering.dto.ContactResponse;
 import com.chartering.dto.PageResponse;
 import com.chartering.dto.PersonDetailResponse;
 import com.chartering.dto.PersonRequest;
@@ -7,6 +8,7 @@ import com.chartering.dto.PersonResponse;
 import com.chartering.service.PersonService;
 import com.chartering.service.PersonService.PeopleFilter;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -57,6 +59,31 @@ public class PersonController {
         PeopleFilter filter = new PeopleFilter(
                 name, companyId, contactValue, contactKind, confirmed, includeBanned, legacy);
         return ResponseEntity.ok(personService.search(filter, pageable));
+    }
+
+    @GetMapping("/contacts")
+    @Operation(summary = "Addresses to circulate to, for a set of people",
+            description = "Same filters as the people search (pagination ignored — operates on "
+                    + "the whole filtered set), or pass personId to use an explicit selection "
+                    + "instead, which then wins over the filter. Which of a person's addresses "
+                    + "come back is decided by the circ/main flags: circ-flagged ones if they "
+                    + "have any, else their main one, else all their working ones. Powers the "
+                    + "People-tab bulk add.")
+    public ResponseEntity<List<ContactResponse>> emailContacts(
+            @RequestParam(required = false) String name,
+            @RequestParam(required = false) Long companyId,
+            @RequestParam(required = false) String contactValue,
+            @RequestParam(required = false) String contactKind,
+            @RequestParam(required = false) Boolean confirmed,
+            @RequestParam(defaultValue = "false") boolean includeBanned,
+            @RequestParam(required = false) Boolean legacy,
+            @RequestParam(defaultValue = "false") boolean confirmedOnly,
+            @Parameter(description = "Explicit person selection; overrides the filter when present")
+            @RequestParam(required = false) List<Long> personId) {
+
+        PeopleFilter filter = new PeopleFilter(
+                name, companyId, contactValue, contactKind, confirmed, includeBanned, legacy);
+        return ResponseEntity.ok(personService.emailContacts(filter, personId, confirmedOnly));
     }
 
     @GetMapping("/{id}")

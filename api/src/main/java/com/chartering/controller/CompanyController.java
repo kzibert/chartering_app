@@ -4,6 +4,7 @@ import com.chartering.dto.*;
 import com.chartering.service.CompanyService;
 import com.chartering.service.CompanyService.CompanyFilter;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -47,6 +48,39 @@ public class CompanyController {
         CompanyFilter filter = new CompanyFilter(name, city, personName, shipowner, charterer, broker, agent,
                 confirmed, regionId, portId, tonnageCategoryId, includeBanned, legacy, noWorkingEmail);
         return ResponseEntity.ok(companyService.search(filter, pageable));
+    }
+
+    @GetMapping("/contacts")
+    @Operation(summary = "Addresses to circulate to, for a set of companies",
+            description = "Same filters as the company search (pagination ignored — operates on "
+                    + "the whole filtered set), or pass companyId to use an explicit selection "
+                    + "instead, which then wins over the filter. Which of a company's addresses "
+                    + "come back is decided by the circ/main flags: circ-flagged ones if the "
+                    + "person has any, else their main one, else all their working ones — applied "
+                    + "per person, so a company with five flagged people yields five addresses. "
+                    + "Powers the Companies-tab bulk add.")
+    public ResponseEntity<List<ContactResponse>> emailContacts(
+            @RequestParam(required = false) String name,
+            @RequestParam(required = false) String city,
+            @RequestParam(required = false) String personName,
+            @RequestParam(required = false) Boolean shipowner,
+            @RequestParam(required = false) Boolean charterer,
+            @RequestParam(required = false) Boolean broker,
+            @RequestParam(required = false) Boolean agent,
+            @RequestParam(required = false) Boolean confirmed,
+            @RequestParam(required = false) Long regionId,
+            @RequestParam(required = false) Long portId,
+            @RequestParam(required = false) Long tonnageCategoryId,
+            @RequestParam(defaultValue = "false") boolean includeBanned,
+            @RequestParam(required = false) Boolean legacy,
+            @RequestParam(required = false) Boolean noWorkingEmail,
+            @RequestParam(defaultValue = "false") boolean confirmedOnly,
+            @Parameter(description = "Explicit company selection; overrides the filter when present")
+            @RequestParam(required = false) List<Long> companyId) {
+
+        CompanyFilter filter = new CompanyFilter(name, city, personName, shipowner, charterer, broker,
+                agent, confirmed, regionId, portId, tonnageCategoryId, includeBanned, legacy, noWorkingEmail);
+        return ResponseEntity.ok(companyService.emailContacts(filter, companyId, confirmedOnly));
     }
 
     @GetMapping("/{id}")

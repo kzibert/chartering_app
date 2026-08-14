@@ -29,14 +29,23 @@ import {
   SaveOutlined,
   DeleteOutlined,
   SettingOutlined,
+  HistoryOutlined,
+  UnorderedListOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { campaignsApi } from '../../api/campaigns';
+import { circulationsApi } from '../../api/circulations';
 import { emailFootersApi, emailTemplatesApi } from '../../api/emailLibrary';
-import { useEmailList } from '../../emailList/store';
+import { useCurrentList, useSavedLists } from '../../circulations/store';
 import RichTextEditor from '../../components/RichTextEditor';
 import FooterManagerModal from './FooterManagerModal';
-import type { CampaignRecipient, CampaignState, EmailListEntry } from '../../api/types';
+import HistoryModal from './HistoryModal';
+import type {
+  CampaignRecipient,
+  CampaignState,
+  CirculationListEntry,
+  CirculationRun,
+} from '../../api/types';
 
 const DRAFT_KEY = 'chartering.circularDraft.v1';
 
@@ -54,7 +63,7 @@ const STATE_COLOUR: Record<CampaignState, string> = {
   ABORTED: 'error',
 };
 
-function toRecipient(e: EmailListEntry): CampaignRecipient {
+function toRecipient(e: CirculationListEntry): CampaignRecipient {
   return {
     email: e.email,
     contactId: e.contactId,
@@ -101,7 +110,9 @@ function humanDuration(seconds: number): string {
 }
 
 export default function CircularsPage() {
-  const { entries } = useEmailList();
+  const currentList = useCurrentList();
+  const entries = currentList.entries;
+  const savedLists = useSavedLists();
   const { message } = App.useApp();
   const qc = useQueryClient();
 
@@ -114,6 +125,7 @@ export default function CircularsPage() {
   const [footerId, setFooterId] = useState<number | null>(null);
   const [footerPicked, setFooterPicked] = useState(false);
   const [footersOpen, setFootersOpen] = useState(false);
+  const [historyRunId, setHistoryRunId] = useState<number>();
 
   // Restore the draft so a reload mid-compose doesn't lose the circular.
   useEffect(() => {
@@ -175,6 +187,16 @@ export default function CircularsPage() {
 
   const logQ = useQuery({ queryKey: ['campaign', 'log'], queryFn: campaignsApi.log });
 
+  // The permanent record. Refetched when a run finishes, since that is when a new entry
+  // appears — polling it while idle would be a request per tab per interval for nothing.
+  const historyQ = useQuery({
+    queryKey: ['circulations', 'history'],
+    queryFn: () => circulationsApi.history({ size: 50 }),
+  });
+  useEffect(() => {
+    if (!running) qc.invalidateQueries({ queryKey: ['circulations', 'history'] });
+  }, [running, qc]);
+
   const cfg = configQ.data;
   const recipients = useMemo(() => entries.map(toRecipient), [entries]);
 
@@ -220,6 +242,15 @@ export default function CircularsPage() {
     setBody(t.bodyHtml);
   };
 
+  const promptSaveList = () => {
+    const name = window.prompt('Name this circulation list:', '');
+    if (!name?.trim()) return;
+    currentList.saveAs.mutate(
+      { name: name.trim() },
+      { onSuccess: (l) => message.success(`Saved "${l.name}" (${l.entryCount} addresses)`) },
+    );
+  };
+
   const promptSaveTemplate = () => {
     const current = templatesQ.data?.find((t) => t.id === templateId);
     const name = window.prompt(
@@ -233,11 +264,19 @@ export default function CircularsPage() {
   };
 
   const startMut = useMutation({
-    mutationFn: () => campaignsApi.start({ subject, htmlBody: body, recipients, footerId }),
+    mutationFn: () =>
+      campaignsApi.start({
+        subject,
+        htmlBody: body,
+        recipients,
+        footerId,
+        listId: currentList.listId,
+      }),
     onSuccess: () => {
       message.success('Campaign started');
       qc.invalidateQueries({ queryKey: ['campaign', 'status'] });
       qc.invalidateQueries({ queryKey: ['campaign', 'log'] });
+      qc.invalidateQueries({ queryKey: ['circulations', 'history'] });
     },
   });
 
@@ -286,13 +325,57 @@ export default function CircularsPage() {
       <Card
         title="Compose circular"
         extra={
-          cfg && (
-            <Space size="small" wrap>
-              <Tag>{cfg.smtpHost}:{cfg.smtpPort}</Tag>
-              <Tag color="blue">1 email every {delayRange} (random)</Tag>
-              <Tag>max {cfg.maxRecipientsPerCampaign} per run</Tag>
-            </Space>
-          )
+          <Space size="small" wrap>
+            {cfg && (
+              <>
+                <Tag>{cfg.smtpHost}:{cfg.smtpPort}</Tag>
+                <Tag color="blue">1 email every {delayRange} (random)</Tag>
+                <Tag>max {cfg.maxRecipientsPerCampaign} per run</Tag>
+              </>
+            )}
+            <Select<number>
+              style={{ minWidth: 300 }}
+              placeholder={
+                historyQ.data?.content.length
+                  ? `History (${historyQ.data.totalElements} circulation${historyQ.data.totalElements === 1 ? '' : 's'})`
+                  : 'History — nothing sent yet'
+              }
+              // Reset after opening: the dropdown is a launcher, not a selection, and a
+              // stuck value would make reopening the same run impossible.
+              value={null as unknown as number}
+              loading={historyQ.isLoading}
+              disabled={!historyQ.data?.content.length}
+              suffixIcon={<HistoryOutlined />}
+              onChange={(id) => setHistoryRunId(id)}
+              options={(historyQ.data?.content ?? []).map((h) => ({
+                value: h.id,
+                label: h.subject,
+                run: h,
+              }))}
+              // Two lines per row: what was sent and when, then how it went. The dropdown
+              // is how a past circular gets found again, so it has to be scannable.
+              optionRender={(opt) => {
+                const h = (opt.data as { run: CirculationRun }).run;
+                return (
+                  <Space direction="vertical" size={0}>
+                    <Typography.Text ellipsis style={{ maxWidth: 380 }}>
+                      {h.subject}
+                    </Typography.Text>
+                    <Space size={4}>
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        {h.startedAt.replace('T', ' ').slice(0, 16)}
+                      </Typography.Text>
+                      <Tag color={STATE_COLOUR[h.state]} style={{ marginInlineEnd: 0 }}>
+                        {h.sent}/{h.total} sent
+                      </Tag>
+                      {h.failed > 0 && <Tag color="error">{h.failed} failed</Tag>}
+                      {h.listName && <Tag>{h.listName}</Tag>}
+                    </Space>
+                  </Space>
+                );
+              }}
+            />
+          </Space>
         }
       >
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
@@ -303,10 +386,52 @@ export default function CircularsPage() {
               </Descriptions.Item>
               {cfg.replyTo && <Descriptions.Item label="Reply-To">{cfg.replyTo}</Descriptions.Item>}
               <Descriptions.Item label="Recipients">
-                {recipients.length} from the email list
+                {recipients.length} on the current list
               </Descriptions.Item>
             </Descriptions>
           )}
+
+          {/* Sending always uses the current list; loading a saved one replaces it, which
+              keeps "what will be sent" a single answer rather than a hidden selection. */}
+          <Row gutter={[8, 8]} align="middle">
+            <Col>
+              <Space wrap>
+                <UnorderedListOutlined />
+                <Typography.Text type="secondary">Load a saved list:</Typography.Text>
+                <Select<number>
+                  style={{ minWidth: 260 }}
+                  placeholder={
+                    savedLists.data?.length ? 'Replace the current list with…' : 'No saved lists yet'
+                  }
+                  value={null as unknown as number}
+                  loading={savedLists.isLoading}
+                  disabled={composeDisabled || !savedLists.data?.length}
+                  onChange={(id) =>
+                    currentList.load.mutate(id, {
+                      onSuccess: (l) =>
+                        message.success(
+                          `Current list replaced with ${savedLists.data?.find((x) => x.id === id)?.name} (${l.entryCount} addresses)`,
+                        ),
+                    })
+                  }
+                  options={(savedLists.data ?? []).map((l) => ({
+                    value: l.id,
+                    label: `${l.name} (${l.entryCount})`,
+                  }))}
+                />
+                <Tooltip title="Save the current list under a name so it can be reused">
+                  <Button
+                    icon={<SaveOutlined />}
+                    disabled={composeDisabled || recipients.length === 0}
+                    loading={currentList.saveAs.isPending}
+                    onClick={promptSaveList}
+                  >
+                    Save list as…
+                  </Button>
+                </Tooltip>
+              </Space>
+            </Col>
+          </Row>
 
           <Row gutter={[8, 8]} align="middle">
             <Col flex="auto">
@@ -440,7 +565,7 @@ export default function CircularsPage() {
             />
           )}
           {recipients.length === 0 && (
-            <Empty description="No recipients. Build the list on the Email list tab first." />
+            <Empty description="No recipients. Build the current list on the Circulation lists tab, or add contacts from the Companies, Vessels or People tabs." />
           )}
         </Space>
       </Card>
@@ -583,6 +708,7 @@ export default function CircularsPage() {
       </Modal>
 
       <FooterManagerModal open={footersOpen} onClose={() => setFootersOpen(false)} />
+      <HistoryModal runId={historyRunId} onClose={() => setHistoryRunId(undefined)} />
     </Space>
   );
 }

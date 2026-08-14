@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { App, Button, Card, Checkbox, Col, Form, Input, InputNumber, Row, Select, Space, Table, Tag, Tooltip } from 'antd';
-import { PlusOutlined, SearchOutlined, MailOutlined, StarOutlined } from '@ant-design/icons';
+import { Button, Card, Checkbox, Col, Form, Input, InputNumber, Row, Select, Space, Table, Tag } from 'antd';
+import { PlusOutlined, SearchOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useVessels, useVesselTypes, useFlags } from '../../api/hooks';
 import { useTableControls } from '../../components/useTableControls';
@@ -9,8 +9,8 @@ import { CONFIRMED_OPTIONS } from '../../components/filterOptions';
 import ConfirmTag from '../../components/ConfirmTag';
 import MultiCheckSelect from '../../components/MultiCheckSelect';
 import { useVesselMutations } from '../../api/hooks';
-import { vesselsApi } from '../../api/vessels';
-import { useEmailList, contactToEntry } from '../../emailList/store';
+import { collectApi } from '../../api/circulations';
+import AddToListActions from '../../components/AddToListActions';
 import VesselDrawer from './VesselDrawer';
 import VesselForm from './VesselForm';
 import type { VesselFilter, VesselResponse } from '../../api/types';
@@ -22,38 +22,13 @@ export default function VesselsPage() {
   const { data: types } = useVesselTypes();
   const { data: flags } = useFlags();
   const { confirm } = useVesselMutations();
-  const { entries, addMany } = useEmailList();
-  const { message } = App.useApp();
 
   const [selectedId, setSelectedId] = useState<number>();
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<VesselResponse | null>(null);
-  const [bulkLoading, setBulkLoading] = useState<'all' | 'confirmed' | 'main' | null>(null);
-
-  // Pull the owner-company emails for the whole filtered vessel set into the email list.
-  // mainOnly keeps one address per owner: its main email, or its first when none is flagged.
-  const addOwnerEmails = async (confirmedOnly: boolean, mainOnly = false) => {
-    setBulkLoading(mainOnly ? 'main' : confirmedOnly ? 'confirmed' : 'all');
-    try {
-      const contacts = await vesselsApi.ownerEmailContacts(filters, confirmedOnly, mainOnly);
-      if (contacts.length === 0) {
-        message.info('No matching email contacts for the filtered vessels');
-        return;
-      }
-      const seen = new Set(entries.map((e) => e.contactId));
-      const added = contacts.filter((c) => !seen.has(c.id)).length;
-      addMany(contacts.map(contactToEntry));
-      const dup = contacts.length - added;
-      message.success(
-        `Added ${added} email${added === 1 ? '' : 's'} to the list` +
-          (dup ? ` (${dup} already there)` : ''),
-      );
-    } catch {
-      /* the axios interceptor surfaces the error */
-    } finally {
-      setBulkLoading(null);
-    }
-  };
+  // Ticked rows for the bulk add. Kept across pages so a selection spanning two pages of
+  // results survives paging — the ids are what the API is given, not the visible rows.
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
   const query = useVessels({
     ...filters,
@@ -152,36 +127,15 @@ export default function VesselsPage() {
             <Button type="primary" htmlType="submit" icon={<SearchOutlined />}>Search</Button>
             <Button onClick={() => { form.resetFields(); applyFilters({}); }}>Reset</Button>
             <Button icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true); }}>New vessel</Button>
-            <Tooltip title="Add every email of the owner companies of all vessels matching the current filters to the Email list">
-              <Button
-                icon={<MailOutlined />}
-                loading={bulkLoading === 'all'}
-                disabled={bulkLoading !== null}
-                onClick={() => addOwnerEmails(false)}
-              >
-                Add all emails to list
-              </Button>
-            </Tooltip>
-            <Tooltip title="Same, but only confirmed emails">
-              <Button
-                icon={<MailOutlined />}
-                loading={bulkLoading === 'confirmed'}
-                disabled={bulkLoading !== null}
-                onClick={() => addOwnerEmails(true)}
-              >
-                Add confirmed emails to list
-              </Button>
-            </Tooltip>
-            <Tooltip title="One email per owner company: the one marked main, or its first email if none is marked">
-              <Button
-                icon={<StarOutlined />}
-                loading={bulkLoading === 'main'}
-                disabled={bulkLoading !== null}
-                onClick={() => addOwnerEmails(false, true)}
-              >
-                Add main emails to list
-              </Button>
-            </Tooltip>
+            <AddToListActions
+              entity="vessels"
+              selectedIds={selectedIds}
+              totalMatching={query.data?.totalElements ?? 0}
+              collect={(ids, confirmedOnly) =>
+                collectApi.fromVessels(filters, ids, confirmedOnly)
+              }
+              onCleared={() => setSelectedIds([])}
+            />
             <Form.Item name="legacy" noStyle initialValue="">
               <Select
                 style={{ width: 180 }}
@@ -208,6 +162,13 @@ export default function VesselsPage() {
         pagination={tc.pagination(query.data?.totalElements ?? 0)}
         onChange={tc.onChange}
         scroll={{ x: 1300 }}
+        rowSelection={{
+          selectedRowKeys: selectedIds,
+          // preserveSelectedRowKeys keeps ticks from other pages, which are no longer in
+          // dataSource — without it, paging away silently drops half the selection.
+          preserveSelectedRowKeys: true,
+          onChange: (keys) => setSelectedIds(keys as number[]),
+        }}
         onRow={(v) => ({ onClick: () => setSelectedId(v.id), style: { cursor: 'pointer' } })}
       />
 

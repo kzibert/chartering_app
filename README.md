@@ -44,6 +44,7 @@ db/
   main_contact_flag.sql  # idempotent patch: per-company main email/phone (baked into the seed)
   not_working_contact_flag.sql # idempotent patch: dead email/phone flag (baked into the seed)
   vessel_company_links.sql # idempotent patch: vessel<->company broker roles + solo flag
+  circulations.sql       # idempotent patch: circ flag, circulation lists, circulation history
   chartering.dump        # same data in pg_restore (-Fc) format, for manual restore
   schema.sql             # DDL reference (the dump already contains the schema)
 db-export/               # portable full snapshot for reproducing the DB elsewhere
@@ -58,7 +59,7 @@ logs/                    # campaign send log, bind-mounted from the api containe
 ## Circulars (bulk email)
 
 The **Circulars** tab composes one circular and sends it **individually to every address on
-the Email list tab** — a separate message per recipient, never CC or BCC.
+the current circulation list** — a separate message per recipient, never CC or BCC.
 
 Set the credentials in `.env` (copy from `.env.example`) and restart the api:
 
@@ -119,6 +120,67 @@ Schema comes from `db/email_templates.sql` (idempotent, same house pattern as
 `db/banned_flags.sql`) and is baked into the seed dump, so a fresh `docker compose up` has
 both tables and one starter footer already.
 
+### Circulation lists
+
+Recipients live in **circulation lists**, stored in Postgres (`db/circulations.sql`). There is
+one unnamed **current list** — what the Circulars tab sends to, and what every other tab adds
+into by default — plus any number of **saved lists** prepared in advance.
+
+- **Circulation lists** tab: switch between the current list and the saved ones, edit any row's
+  address or mail-merge fields inline, *Save as list* to keep a copy of the current one, and
+  *Load into current* to bring a saved list back for sending. Editing a row edits the list, never
+  the contact record — a list is a prepared document.
+- Addresses are deduped per list, case-insensitively — the same rule the sender applies, so the
+  count on screen is the number of messages that will go out.
+- From **Companies**, **Vessels** and **People** you can tick rows and *Add N selected*, or
+  *Add all N matching* to take the whole filtered set (not just the visible page). Both open a
+  dialog that previews the resulting address count, lets you pick the target list (or create one),
+  and offers a confirmed-contacts-only filter.
+
+Endpoints: CRUD on `/api/v1/circulation-lists` (`/current` for the draft, `/{id}/copy` for save-as,
+`/{id}/load/{sourceId}` to replace contents, `/{id}/entries` for the rows), plus the collection
+endpoints `GET /companies/contacts`, `GET /people/contacts` and `GET /vessels/contacts`.
+
+### Which addresses get collected
+
+Bulk-collecting every address a company has on file is how a circular reaches the same desk four
+times; taking only one is how it misses the person who actually charters. Two per-contact flags
+decide it, and the rule runs **per person** — with a company's person-less addresses forming one
+more group of their own:
+
+| The group has… | …and collection takes |
+|---|---|
+| one or more addresses flagged **circ** | all of its circ addresses |
+| no circ, but a **main** address | that one address |
+| neither | every working address |
+
+So flagging one person's address never silences their colleagues. **circ** is set with the paper-plane
+button on a contact row (edit mode) and, unlike the main-contact star, is not a radio choice: any
+number of a person's addresses may carry it, because "who gets the circular" and "one address to
+reach them on" are different questions. Addresses flagged not-working are never collected under
+any flag, and are dropped again at send time.
+
+### Circulation history
+
+Every run is recorded permanently and reachable from the **History** dropdown on the Circulars tab.
+Opening one shows when it ran, the identity it went out under, the list and footer it used, and
+every address it touched — including those skipped as duplicates or as dead, and those a cancelled
+run never reached. Clicking a recipient reproduces **the exact message that person received**, both
+the HTML and the plain-text alternative.
+
+That reproduction is not a stored copy per recipient. The composed circular is written **once** per
+run, and each recipient row stores only the mail-merge fields it was rendered with; since the merge
+is a pure function of the two, replaying it reproduces the message byte for byte. A 300-address run
+therefore costs one copy of the body rather than three hundred, which is what makes keeping the
+history indefinitely reasonable. Template, footer and list are recorded by **name**, so deleting a
+footer later cannot rewrite what history says was sent.
+
+A run left `RUNNING` by an API restart is closed as `ABORTED` at next startup, with its unreached
+recipients still marked `PENDING` — "never reached" is the fact you need when re-sending.
+
+Endpoints: `GET /api/v1/circulations` (paged, newest first), `GET /circulations/{id}`,
+`GET /circulations/{id}/recipients/{recipientId}/message`, `DELETE /circulations/{id}`.
+
 ### The campaign log
 
 `logs/campaign-current.log` (bind-mounted from the container) records every recipient with
@@ -126,6 +188,9 @@ its outcome. A run that finished cleanly is **overwritten** by the next one; a r
 failed, aborted, or was cancelled is **rotated** to `campaign-current-<timestamp>.log` first,
 since that's exactly the record you need to see who already received the circular. The
 outcome is recovered from the log's own end marker, so the rule survives an API restart.
+
+It is a convenience view of the run in progress, not the record of it — the durable audit trail is
+the circulation history above, which survives rotation, restarts and the next run.
 
 Endpoints: `POST /api/v1/campaigns` (202, sends in the background), `GET /campaigns/current`,
 `POST /campaigns/current/cancel`, `GET /campaigns/current/log`, `POST /campaigns/test?to=…`,

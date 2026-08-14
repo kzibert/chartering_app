@@ -71,4 +71,15 @@ public class Contact {
      */
     @Column(name = "is_working", nullable = false)
     private boolean working = true;
+
+    /**
+     * "Use this address when circulating." Unlike {@link #main} there may be any number per
+     * company or person — a desk with three chartering addresses wants all three mailed,
+     * which is a different question from "one address to reach them on".
+     *
+     * <p>Flagging one narrows collection for its group only; see
+     * {@code RecipientSelectionService} for the circ &gt; main &gt; all precedence.
+     */
+    @Column(name = "is_circ", nullable = false)
+    private boolean circ = false;
 }

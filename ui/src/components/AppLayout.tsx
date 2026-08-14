@@ -9,17 +9,17 @@ import {
   SendOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useEmailList } from '../emailList/store';
+import { useCurrentList } from '../circulations/store';
 
 const { Sider, Header, Content } = Layout;
 
 // No '/contacts': contacts live inside People now, grouped under the person who owns them.
-const KEYS = ['/', '/vessels', '/companies', '/people', '/email-list', '/circulars'];
+const KEYS = ['/', '/vessels', '/companies', '/people', '/circulation-lists', '/circulars'];
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { entries } = useEmailList();
+  const { entries } = useCurrentList();
   const selected = KEYS.includes(location.pathname) ? location.pathname : '/';
 
   const items = [
@@ -28,11 +28,13 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     { key: '/companies', icon: <BankOutlined />, label: 'Companies' },
     { key: '/people', icon: <TeamOutlined />, label: 'People & contacts' },
     {
-      key: '/email-list',
+      key: '/circulation-lists',
       icon: <UnorderedListOutlined />,
+      // The badge counts the current list specifically — that is what the Circulars tab
+      // will send to, so it is the number worth carrying in the nav.
       label: (
         <span>
-          Email list
+          Circulation lists
           {entries.length > 0 && (
             <Badge count={entries.length} size="small" style={{ marginInlineStart: 8 }} />
           )}

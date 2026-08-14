@@ -224,10 +224,15 @@ export function useContactMutations() {
     mutationFn: (v: { id: number; main: boolean }) => contactsApi.setMain(v.id, v.main),
     onSuccess: () => invalidate('contacts', 'company', 'vessel'),
   });
+  // Nothing is demoted, so only the contact's own views need refreshing.
+  const setCirc = useMutation({
+    mutationFn: (v: { id: number; circ: boolean }) => contactsApi.setCirc(v.id, v.circ),
+    onSuccess: () => invalidate('contacts', 'company', 'vessel'),
+  });
   // Flipping this can change the company's "no working email" label, so refresh companies too.
   const setWorking = useMutation({
     mutationFn: (v: { id: number; working: boolean }) => contactsApi.setWorking(v.id, v.working),
     onSuccess: () => invalidate(...touched),
   });
-  return { create, update, remove, confirm, ban, setMain, setWorking };
+  return { create, update, remove, confirm, ban, setMain, setCirc, setWorking };
 }

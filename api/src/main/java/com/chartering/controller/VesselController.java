@@ -4,6 +4,7 @@ import com.chartering.dto.*;
 import com.chartering.service.VesselService;
 import com.chartering.service.VesselService.VesselFilter;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -59,13 +60,13 @@ public class VesselController {
     }
 
     @GetMapping("/contacts")
-    @Operation(summary = "Owner-company email contacts for all vessels matching the filter",
+    @Operation(summary = "Owner-company addresses to circulate to, for a set of vessels",
             description = "Same filters as the vessel search (pagination ignored — operates on the "
-                    + "whole filtered set). Returns the email contacts of the owner companies of "
-                    + "every matching vessel; confirmedOnly=true restricts to confirmed emails. "
-                    + "mainOnly=true collapses each owner to a single address — the one flagged as "
-                    + "the company's main email, or its first email when none is flagged. "
-                    + "Powers the Vessels-tab bulk add-to-email-list actions.")
+                    + "whole filtered set), or pass vesselId to use an explicit selection instead, "
+                    + "which then wins over the filter. Which of an owner's addresses come back is "
+                    + "decided by the circ/main flags: circ-flagged ones if the person has any, "
+                    + "else their main one, else all their working ones. confirmedOnly=true "
+                    + "restricts to confirmed addresses. Powers the Vessels-tab bulk add.")
     public ResponseEntity<List<ContactResponse>> ownerEmailContacts(
             @RequestParam(required = false) String name,
             @RequestParam(required = false) String imoNumber,
@@ -89,14 +90,13 @@ public class VesselController {
             @RequestParam(defaultValue = "false") boolean includeBanned,
             @RequestParam(required = false) Boolean legacy,
             @RequestParam(defaultValue = "false") boolean confirmedOnly,
-            @RequestParam(defaultValue = "false") boolean mainOnly) {
+            @Parameter(description = "Explicit vessel selection; overrides the filter when present")
+            @RequestParam(required = false) List<Long> vesselId) {
 
         VesselFilter filter = new VesselFilter(name, imoNumber, minDwt, maxDwt, minDwcc, maxDwcc,
                 minGrain, maxGrain, minBale, maxBale, minDraft, maxDraft, minYear, maxYear,
                 vesselType, flag, companyId, companyName, confirmed, includeBanned, legacy);
-        return ResponseEntity.ok(mainOnly
-                ? vesselService.ownerMainEmailContacts(filter, confirmedOnly)
-                : vesselService.ownerEmailContacts(filter, confirmedOnly));
+        return ResponseEntity.ok(vesselService.ownerEmailContacts(filter, vesselId, confirmedOnly));
     }
 
     @GetMapping("/{id}")
