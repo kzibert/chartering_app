@@ -24,7 +24,13 @@ Then open:
 - API + Swagger: http://localhost:8081/swagger-ui/index.html
 - OpenAPI JSON: http://localhost:8081/v3/api-docs
 
-First boot: Postgres runs `db/seed/chartering.sql` (full `pg_dump`: schema, ~4.5k vessels / 3k companies / 3.5k people / 7.5k contacts, views, indexes, `pg_trgm`). This only happens when the data volume is empty.
+First boot: Postgres runs `db/seed/chartering.sql` (full `pg_dump`: schema, ~4.5k vessels / 3k companies / 3.6k people / 7.5k contacts, views, indexes, `pg_trgm`). This only happens when the data volume is empty.
+
+Every `db/*.sql` patch is baked into that dump, so a fresh volume already validates against the
+API — none of them needs applying by hand. The seed deliberately carries **no activity data**:
+circulation history and the `app_settings` overrides are excluded, so a new environment starts
+with a clean send history and the settings its own `.env` specifies. `db-export/` is the
+opposite — a complete snapshot including both, for moving an existing database elsewhere.
 
 ```bash
 docker compose down        # stop, keep data
@@ -43,9 +49,9 @@ db/
   email_templates.sql    # idempotent patch: circular templates + footers (baked into the seed)
   main_contact_flag.sql  # idempotent patch: per-company main email/phone (baked into the seed)
   not_working_contact_flag.sql # idempotent patch: dead email/phone flag (baked into the seed)
-  vessel_company_links.sql # idempotent patch: vessel<->company broker roles + solo flag
-  circulations.sql       # idempotent patch: circ flag, circulation lists, circulation history
-  app_settings.sql       # idempotent patch: runtime settings edited from the Settings tab
+  vessel_company_links.sql # idempotent patch: vessel<->company broker roles + solo flag (baked in)
+  circulations.sql       # idempotent patch: circ flag, circulation lists, circulation history (baked in)
+  app_settings.sql       # idempotent patch: runtime settings edited from the Settings tab (baked in)
   chartering.dump        # same data in pg_restore (-Fc) format, for manual restore
   schema.sql             # DDL reference (the dump already contains the schema)
 db-export/               # portable full snapshot for reproducing the DB elsewhere
@@ -82,14 +88,14 @@ enabled under Mail Settings → Mail Accounts.
 | Rule | Setting |
 |---|---|
 | One message per recipient, no CC/BCC | always on |
-| Gap between messages drawn at random from a range (default 3–10s), never a fixed interval | `MAIL_MIN_DELAY_MS`, `MAIL_MAX_DELAY_MS` |
+| Gap between messages drawn at random from a range (default 3–10s), never a fixed interval | Settings tab (defaults `MAIL_MIN_DELAY_MS`, `MAIL_MAX_DELAY_MS`) |
 | Duplicate addresses dropped (case-insensitive) | always on |
-| Per-campaign ceiling, checked before the first send | `MAIL_MAX_RECIPIENTS` |
+| Per-campaign ceiling, checked before the first send | Settings tab (default `MAIL_MAX_RECIPIENTS`) |
 | Transient (4xx) failures retried with doubling backoff; permanent (5xx) never retried | `MAIL_MAX_RETRIES`, `MAIL_RETRY_BACKOFF_MS` |
 | Consecutive failures abort the run, so a throttle doesn't escalate into a block | `MAIL_ABORT_AFTER_FAILURES` |
 | Auth rejection aborts immediately instead of retrying a bad password 200 times | always on |
 | SMTP reachability checked before the first message | always on |
-| `List-Unsubscribe` header, real `From` display name, `Reply-To` | `MAIL_UNSUBSCRIBE`, `MAIL_FROM_NAME`, `MAIL_REPLY_TO` |
+| `List-Unsubscribe` header, real `From` display name, `Reply-To` | `MAIL_UNSUBSCRIBE`, `MAIL_REPLY_TO`; From is on the Settings tab |
 | `multipart/alternative` with a generated plain-text part | always on |
 | Per-recipient mail merge, so no two messages are byte-identical | `{{greeting}}`, `{{name}}`, `{{title}}`, `{{company}}`, `{{email}}` |
 
