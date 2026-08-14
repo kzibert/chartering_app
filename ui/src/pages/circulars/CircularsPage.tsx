@@ -240,15 +240,6 @@ export default function CircularsPage() {
     setBody(t.bodyHtml);
   };
 
-  const promptSaveList = () => {
-    const name = window.prompt('Name this circulation list:', '');
-    if (!name?.trim()) return;
-    currentList.saveAs.mutate(
-      { name: name.trim() },
-      { onSuccess: (l) => message.success(`Saved "${l.name}" (${l.entryCount} addresses)`) },
-    );
-  };
-
   const promptSaveTemplate = () => {
     const current = templatesQ.data?.find((t) => t.id === templateId);
     const name = window.prompt(
@@ -389,24 +380,9 @@ export default function CircularsPage() {
             </Descriptions>
           )}
 
-          {/* Sending always uses the current list, and building it — loading a saved list
-              into it, adding, subtracting — belongs on the Circulation lists tab. Only the
-              snapshot lives here, because "save who I am about to send to" is a thing you
-              want at the moment of sending. */}
-          <Row gutter={[8, 8]} align="middle">
-            <Col>
-              <Tooltip title="Save the current list under a name so it can be reused">
-                <Button
-                  icon={<SaveOutlined />}
-                  disabled={composeDisabled || recipients.length === 0}
-                  loading={currentList.saveAs.isPending}
-                  onClick={promptSaveList}
-                >
-                  Save list as…
-                </Button>
-              </Tooltip>
-            </Col>
-          </Row>
+          {/* Everything to do with the recipient list — building it, saving it, loading a
+              saved one — lives on the Circulation lists tab. This tab reads the current
+              list and sends it, so there is exactly one place that decides who gets mailed. */}
 
           <Row gutter={[8, 8]} align="middle">
             <Col flex="auto">
