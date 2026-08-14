@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Alert,
+  App,
   Button,
   Descriptions,
   Empty,
@@ -13,10 +14,11 @@ import {
   Tooltip,
   Typography,
 } from 'antd';
-import { EyeOutlined } from '@ant-design/icons';
-import { useQuery } from '@tanstack/react-query';
+import { EyeOutlined, PlusOutlined } from '@ant-design/icons';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnsType } from 'antd/es/table';
-import { circulationsApi } from '../../api/circulations';
+import { circulationsApi, circulationListsApi } from '../../api/circulations';
+import { useCurrentList, listKeys } from '../../circulations/store';
 import type { CirculationRecipientStatus, CirculationRunRecipient } from '../../api/types';
 
 /** Sent, failed and "never reached" have to be distinguishable at a glance. */
@@ -55,13 +57,27 @@ export default function HistoryModal({
   runId: number | undefined;
   onClose: () => void;
 }) {
+  const { message } = App.useApp();
+  const qc = useQueryClient();
+  const current = useCurrentList();
   const [messageFor, setMessageFor] = useState<CirculationRunRecipient | null>(null);
+  const [pickedIds, setPickedIds] = useState<number[]>([]);
+  // Rows left after the Outcome column's filter. Null until the table reports one, which
+  // is what makes "all" mean "all of them" on an unfiltered table.
+  const [filtered, setFiltered] = useState<CirculationRunRecipient[] | null>(null);
 
   const detailQ = useQuery({
     queryKey: ['circulation', runId],
     queryFn: () => circulationsApi.get(runId!),
     enabled: runId != null,
   });
+
+  // A different run is a different set of rows; carrying ticks or a filter across would
+  // act on people the user never saw.
+  useEffect(() => {
+    setPickedIds([]);
+    setFiltered(null);
+  }, [runId]);
 
   const messageQ = useQuery({
     queryKey: ['circulation', runId, 'message', messageFor?.id],
@@ -71,6 +87,40 @@ export default function HistoryModal({
 
   const detail = detailQ.data;
   const run = detail?.run;
+  const rows = detail?.recipients ?? [];
+  const shown = filtered ?? rows;
+
+  /**
+   * What "copy to the current list" acts on: the ticked rows, or everything the Outcome
+   * filter currently leaves on screen. Filtering to *failed* and copying is the natural
+   * way to build a chase list, so "all" has to mean what is visible, not the whole run.
+   */
+  const picked = pickedIds.length ? rows.filter((r) => pickedIds.includes(r.id)) : shown;
+  const scopeLabel = pickedIds.length ? `${pickedIds.length} selected` : `all ${shown.length}`;
+
+  const copyToCurrent = useMutation({
+    mutationFn: () =>
+      circulationListsApi.addEntries(
+        current.listId!,
+        picked.map((r) => ({
+          email: r.email,
+          contactId: r.contactId,
+          personId: r.personId,
+          personName: r.personName,
+          greetingName: r.greetingName,
+          title: r.title,
+          companyId: r.companyId,
+          companyName: r.companyName,
+        })),
+      ),
+    onSuccess: (r) => {
+      message.success(
+        `Added ${r.added} address${r.added === 1 ? '' : 'es'} to the current list` +
+          (r.skipped ? ` (${r.skipped} already there)` : ''),
+      );
+      qc.invalidateQueries({ queryKey: listKeys.all });
+    },
+  });
 
   const columns: ColumnsType<CirculationRunRecipient> = [
     { title: 'Email', dataIndex: 'email', width: 260 },
@@ -185,16 +235,46 @@ export default function HistoryModal({
               items={[
                 {
                   key: 'recipients',
-                  label: `Recipients (${detail.recipients.length})`,
+                  label: `Recipients (${rows.length})`,
                   children: (
-                    <Table<CirculationRunRecipient>
-                      rowKey="id"
-                      size="small"
-                      columns={columns}
-                      dataSource={detail.recipients}
-                      pagination={{ pageSize: 25, showSizeChanger: false }}
-                      scroll={{ x: true }}
-                    />
+                    <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                      <Tooltip
+                        title={
+                          'Copy these people onto the current circulation list, ready to send to ' +
+                          'again. History is not changed. Filter by outcome first to chase only ' +
+                          'the ones that failed or were never reached.'
+                        }
+                      >
+                        <Button
+                          type="primary"
+                          ghost
+                          icon={<PlusOutlined />}
+                          loading={copyToCurrent.isPending}
+                          disabled={picked.length === 0 || current.listId == null}
+                          onClick={() => copyToCurrent.mutate()}
+                        >
+                          Add {scopeLabel} to current list
+                        </Button>
+                      </Tooltip>
+                      <Table<CirculationRunRecipient>
+                        rowKey="id"
+                        size="small"
+                        columns={columns}
+                        dataSource={rows}
+                        pagination={{ pageSize: 25, showSizeChanger: false }}
+                        scroll={{ x: true }}
+                        rowSelection={{
+                          selectedRowKeys: pickedIds,
+                          // Ticks on other pages leave dataSource; without this, paging
+                          // away would silently shrink the selection.
+                          preserveSelectedRowKeys: true,
+                          onChange: (keys) => setPickedIds(keys as number[]),
+                        }}
+                        // currentDataSource is the post-filter rows, which is what the
+                        // unticked "all" case copies.
+                        onChange={(_p, _f, _s, extra) => setFiltered(extra.currentDataSource)}
+                      />
+                    </Space>
                   ),
                 },
                 {

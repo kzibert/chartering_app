@@ -179,6 +179,11 @@ every address it touched — including those skipped as duplicates or as dead, a
 run never reached. Clicking a recipient reproduces **the exact message that person received**, both
 the HTML and the plain-text alternative.
 
+The recipients table has checkboxes and an **Add … to current list** button, so a past
+circulation can seed the next one. It acts on the ticked rows, or on whatever the Outcome filter
+leaves on screen when nothing is ticked — so filtering to *failed* or *not reached* and adding
+them all is how you build a chase list. Copying never alters the history entry.
+
 That reproduction is not a stored copy per recipient. The composed circular is written **once** per
 run, and each recipient row stores only the mail-merge fields it was rendered with; since the merge
 is a pure function of the two, replaying it reproduces the message byte for byte. A 300-address run
