@@ -56,6 +56,18 @@ export const circulationListsApi = {
   removeEntry: (id: number, entryId: number) =>
     client.delete<void>(`/circulation-lists/${id}/entries/${entryId}`).then((r) => r.data),
 
+  /**
+   * Subtract addresses from a list. Matched by address, not entry id, so it works across
+   * lists — "take everyone on this saved list off the current one".
+   */
+  removeEntriesByEmail: (id: number, emails: string[]) =>
+    client
+      .post<{ removed: number; notOnList: number }>(
+        `/circulation-lists/${id}/entries/remove`,
+        emails,
+      )
+      .then((r) => r.data),
+
   clear: (id: number) =>
     client.delete<CirculationList>(`/circulation-lists/${id}/entries`).then((r) => r.data),
 };

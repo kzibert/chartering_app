@@ -15,6 +15,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -103,6 +104,26 @@ public class CirculationListController {
             @Valid @RequestBody List<CirculationListEntryRequest> entries) {
         int added = listService.addEntries(id, entries);
         return ResponseEntity.ok(Map.of("added", added, "skipped", entries.size() - added));
+    }
+
+    @PostMapping("/{id}/entries/remove")
+    @Operation(summary = "Remove addresses from a list, matched by address",
+            description = "Used to subtract one list from another — \"take everyone on this "
+                    + "saved list off the current one\". Matching on the address rather than on "
+                    + "ids means it still works when the same mailbox was collected through two "
+                    + "different contacts. Returns {removed, notOnList}. A POST rather than a "
+                    + "DELETE because it carries a body, like /copy and /load.")
+    public ResponseEntity<Map<String, Integer>> removeEntries(
+            @PathVariable Long id, @RequestBody List<String> emails) {
+        int removed = listService.removeEntriesByEmail(id, emails);
+        // Counted distinctly: asking twice for the same address is one address, and
+        // "notOnList" is meant to read as "these weren't there", not as a failure count.
+        int requested = (int) emails.stream()
+                .filter(e -> e != null && !e.isBlank())
+                .map(e -> e.trim().toLowerCase(Locale.ROOT))
+                .distinct()
+                .count();
+        return ResponseEntity.ok(Map.of("removed", removed, "notOnList", requested - removed));
     }
 
     @PutMapping("/{id}/entries/{entryId}")

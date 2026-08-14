@@ -127,9 +127,15 @@ one unnamed **current list** — what the Circulars tab sends to, and what every
 into by default — plus any number of **saved lists** prepared in advance.
 
 - **Circulation lists** tab: switch between the current list and the saved ones, edit any row's
-  address or mail-merge fields inline, *Save as list* to keep a copy of the current one, and
-  *Load into current* to bring a saved list back for sending. Editing a row edits the list, never
-  the contact record — a list is a prepared document.
+  address or mail-merge fields inline, and *Save as list* to keep a copy of the current one.
+  Editing a row edits the list, never the contact record — a list is a prepared document.
+- A saved list has row checkboxes and three actions against the current list. Each acts on the
+  ticked rows, or on the whole list when nothing is ticked, so one button covers "all" and "only
+  these"; none of them changes the saved list itself:
+  - **Add … to current** — union, deduped by address.
+  - **Remove … from current** — subtract. This is how you exclude a list you have already
+    circulated to: build the current list broadly, then subtract "Sent in March".
+  - **Replace current** — discard the current list and load this one, ready to send.
 - Addresses are deduped per list, case-insensitively — the same rule the sender applies, so the
   count on screen is the number of messages that will go out.
 - From **Companies**, **Vessels** and **People** you can tick rows and *Add N selected*, or
@@ -138,8 +144,13 @@ into by default — plus any number of **saved lists** prepared in advance.
   and offers a confirmed-contacts-only filter.
 
 Endpoints: CRUD on `/api/v1/circulation-lists` (`/current` for the draft, `/{id}/copy` for save-as,
-`/{id}/load/{sourceId}` to replace contents, `/{id}/entries` for the rows), plus the collection
-endpoints `GET /companies/contacts`, `GET /people/contacts` and `GET /vessels/contacts`.
+`/{id}/load/{sourceId}` to replace contents, `/{id}/entries` for the rows,
+`POST /{id}/entries/remove` to subtract a set of addresses), plus the collection endpoints
+`GET /companies/contacts`, `GET /people/contacts` and `GET /vessels/contacts`.
+
+Subtraction matches on the **address**, not on ids — the same key dedupe and the sender use — so
+it still works when the same mailbox was collected through two different contacts, or typed by
+hand on one side.
 
 ### Which addresses get collected
 

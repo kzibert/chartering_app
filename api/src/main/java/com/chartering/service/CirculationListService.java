@@ -18,7 +18,9 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Circulation lists: the named sets prepared in advance, plus the single unnamed draft the
@@ -190,6 +192,34 @@ public class CirculationListService {
         e.setTitle(req.getTitle());
         e.setCompanyName(req.getCompanyName());
         return toDetail(lists.save(l));
+    }
+
+    /**
+     * Remove addresses from a list, matched by address rather than by entry id.
+     *
+     * <p>Address is the right key here: it is what dedupe and the sender both work on, so
+     * "take this list's people off the current one" still holds when the same mailbox was
+     * collected through two different contacts, or typed in by hand on one side.
+     *
+     * @return how many rows were actually removed — the rest were not on the list
+     */
+    @Transactional
+    public int removeEntriesByEmail(Long listId, List<String> emails) {
+        CirculationList l = find(listId);
+        Set<String> targets = emails.stream()
+                .map(CirculationListService::normalise)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (targets.isEmpty()) {
+            return 0;
+        }
+        int before = l.getEntries().size();
+        l.getEntries().removeIf(e -> targets.contains(normalise(e.getEmail())));
+        int removed = before - l.getEntries().size();
+        if (removed > 0) {
+            lists.save(l);
+        }
+        return removed;
     }
 
     @Transactional

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   App,
   Button,
@@ -21,6 +21,7 @@ import {
   EditOutlined,
   ImportOutlined,
   PlusOutlined,
+  MinusOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import * as XLSX from 'xlsx';
@@ -56,12 +57,25 @@ export default function CirculationListsPage() {
   const [selected, setSelected] = useState<string | number>(CURRENT);
   const [nameModal, setNameModal] = useState<{ mode: 'saveAs' | 'rename' | 'new' } | null>(null);
   const [draftName, setDraftName] = useState('');
+  const [pickedIds, setPickedIds] = useState<number[]>([]);
 
   const viewingCurrent = selected === CURRENT;
   const savedQuery = useCirculationList(viewingCurrent ? undefined : (selected as number));
   const list = viewingCurrent ? current.list : savedQuery.data;
   const entries = list?.entries ?? [];
   const listId = list?.id;
+
+  // Ticks belong to the list on screen; carrying them to the next list would mean acting
+  // on rows the user can no longer see.
+  useEffect(() => setPickedIds([]), [selected]);
+
+  /**
+   * What the current-list actions operate on: the ticked rows, or the whole list when
+   * nothing is ticked. That is what makes one button cover "add all" and "add only these"
+   * without a second control to explain.
+   */
+  const picked = pickedIds.length ? entries.filter((e) => pickedIds.includes(e.id)) : entries;
+  const scopeLabel = pickedIds.length ? `${pickedIds.length} selected` : `all ${entries.length}`;
 
   // Row edits work the same whichever list is on screen, so they go straight at the list
   // being viewed rather than through the current-list hook. Invalidating the whole prefix
@@ -81,6 +95,42 @@ export default function CirculationListsPage() {
 
   const updateField = (row: CirculationListEntry, field: EditableField, value: string) =>
     updateEntry.mutate({ entryId: row.id, body: { ...row, [field]: value.trim() } });
+
+  // ---- moving addresses between a saved list and the current one --------------------
+  // Both act on `picked`, and both leave the saved list untouched: it is the reusable
+  // source, and the current list is the scratch surface that gets sent.
+
+  const addToCurrent = useMutation({
+    mutationFn: () =>
+      circulationListsApi.addEntries(
+        current.listId!,
+        // The entry's own id belongs to the source list, so it is dropped; everything
+        // else is copied across, mail-merge edits included.
+        picked.map(({ id: _id, ...fields }) => fields),
+      ),
+    onSuccess: (r) => {
+      message.success(
+        `Added ${r.added} address${r.added === 1 ? '' : 'es'} to the current list` +
+          (r.skipped ? ` (${r.skipped} already there)` : ''),
+      );
+      invalidateLists();
+    },
+  });
+
+  const removeFromCurrent = useMutation({
+    mutationFn: () =>
+      circulationListsApi.removeEntriesByEmail(
+        current.listId!,
+        picked.map((e) => e.email),
+      ),
+    onSuccess: (r) => {
+      message.success(
+        `Removed ${r.removed} address${r.removed === 1 ? '' : 'es'} from the current list` +
+          (r.notOnList ? ` (${r.notOnList} were not on it)` : ''),
+      );
+      invalidateLists();
+    },
+  });
 
   const editableCell =
     (field: EditableField) => (value: string | undefined, row: CirculationListEntry) => (
@@ -246,14 +296,40 @@ export default function CirculationListsPage() {
               </Tooltip>
             ) : (
               <>
-                <Tooltip title="Replace the current list with this one, ready to send">
+                <Tooltip
+                  title={`Add ${scopeLabel} of this list's addresses to the current list. This list is not changed.`}
+                >
+                  <Button
+                    type="primary"
+                    ghost
+                    icon={<PlusOutlined />}
+                    loading={addToCurrent.isPending}
+                    disabled={empty}
+                    onClick={() => addToCurrent.mutate()}
+                  >
+                    Add {scopeLabel} to current
+                  </Button>
+                </Tooltip>
+                <Tooltip
+                  title={`Take ${scopeLabel} of this list's addresses off the current list — for excluding people you have already circulated to. This list is not changed.`}
+                >
+                  <Button
+                    icon={<MinusOutlined />}
+                    loading={removeFromCurrent.isPending}
+                    disabled={empty}
+                    onClick={() => removeFromCurrent.mutate()}
+                  >
+                    Remove {scopeLabel} from current
+                  </Button>
+                </Tooltip>
+                <Tooltip title="Discard the current list and replace it with this one, ready to send">
                   <Button
                     icon={<ImportOutlined />}
                     loading={current.load.isPending}
                     disabled={empty}
                     onClick={loadIntoCurrent}
                   >
-                    Load into current
+                    Replace current
                   </Button>
                 </Tooltip>
                 <Button icon={<EditOutlined />} onClick={() => openNameModal('rename')}>
@@ -315,6 +391,17 @@ export default function CirculationListsPage() {
             dataSource={entries}
             pagination={entries.length > 50 ? { pageSize: 50, showSizeChanger: false } : false}
             scroll={{ x: true }}
+            // Only on a saved list: the ticks exist to scope the add/remove buttons above,
+            // and the current list has no such buttons to scope.
+            rowSelection={
+              viewingCurrent
+                ? undefined
+                : {
+                    selectedRowKeys: pickedIds,
+                    preserveSelectedRowKeys: true,
+                    onChange: (keys) => setPickedIds(keys as number[]),
+                  }
+            }
           />
         )}
       </Card>
