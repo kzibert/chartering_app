@@ -45,25 +45,53 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       ),
     },
     { key: '/circulars', icon: <SendOutlined />, label: 'Circulars' },
-    // Last, and after a divider: settings are not a place you work, they are where you go
-    // when something about how the work behaves needs changing.
-    { type: 'divider' as const },
+  ];
+
+  // Settings sits in its own menu pinned to the foot of the sidebar rather than trailing
+  // the list: it is not a place you work, it is where you go when something about how the
+  // work behaves needs changing, and parking it at the bottom keeps it out of the way of
+  // the tabs that are used all day. Its own Menu is what allows that — one Menu cannot
+  // have an item that floats away from its siblings.
+  const settingsItems = [
     { key: '/settings', icon: <SettingOutlined />, label: 'Settings' },
   ];
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sider breakpoint="lg" collapsedWidth="0">
-        <div style={{ color: '#fff', padding: 16, fontWeight: 600, fontSize: 16 }}>
-          ⚓ Chartering
+      {/* Pinned to the viewport, not to the page: without this the sider grows to the
+          height of whatever table is on screen, and "the bottom" ends up thousands of
+          pixels down. alignSelf matters — a flex child stretches to the row's height by
+          default, which leaves sticky nothing to move within. */}
+      <Sider
+        breakpoint="lg"
+        collapsedWidth="0"
+        style={{ position: 'sticky', top: 0, alignSelf: 'flex-start', height: '100vh' }}
+      >
+        {/* antd gives .ant-layout-sider-children height:100%, so a flex column here fills
+            the sider and lets the main menu take the slack above the pinned footer. */}
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          <div style={{ color: '#fff', padding: 16, fontWeight: 600, fontSize: 16 }}>
+            ⚓ Chartering
+          </div>
+          {/* minHeight:0 lets this shrink and scroll instead of pushing Settings off the
+              bottom once the list outgrows a short window. */}
+          <Menu
+            theme="dark"
+            mode="inline"
+            selectedKeys={[selected]}
+            items={items}
+            onClick={(e) => navigate(e.key)}
+            style={{ flex: 1, minHeight: 0, overflowY: 'auto', borderInlineEnd: 0 }}
+          />
+          <Menu
+            theme="dark"
+            mode="inline"
+            selectedKeys={[selected]}
+            items={settingsItems}
+            onClick={(e) => navigate(e.key)}
+            style={{ borderInlineEnd: 0, borderTop: '1px solid rgba(255,255,255,0.12)' }}
+          />
         </div>
-        <Menu
-          theme="dark"
-          mode="inline"
-          selectedKeys={[selected]}
-          items={items}
-          onClick={(e) => navigate(e.key)}
-        />
       </Sider>
       <Layout>
         <Header style={{ background: '#fff', paddingInline: 24 }}>
