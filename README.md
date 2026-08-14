@@ -45,6 +45,7 @@ db/
   not_working_contact_flag.sql # idempotent patch: dead email/phone flag (baked into the seed)
   vessel_company_links.sql # idempotent patch: vessel<->company broker roles + solo flag
   circulations.sql       # idempotent patch: circ flag, circulation lists, circulation history
+  app_settings.sql       # idempotent patch: runtime settings edited from the Settings tab
   chartering.dump        # same data in pg_restore (-Fc) format, for manual restore
   schema.sql             # DDL reference (the dump already contains the schema)
 db-export/               # portable full snapshot for reproducing the DB elsewhere
@@ -202,6 +203,34 @@ recipients still marked `PENDING` — "never reached" is the fact you need when 
 
 Endpoints: `GET /api/v1/circulations` (paged, newest first), `GET /circulations/{id}`,
 `GET /circulations/{id}/recipients/{recipientId}/message`, `DELETE /circulations/{id}`.
+
+### Settings
+
+The **Settings** tab (bottom of the sidebar) edits the circulation knobs at runtime, stored in
+`app_settings` (`db/app_settings.sql`):
+
+| Setting | Default |
+|---|---|
+| SMTP host / port | `smtp.zoho.eu` / `465` |
+| Gap between messages (random within the range) | 3–10s |
+| Max recipients per run | 200 |
+
+Only values you actually change are stored. An absent key falls through to `application.yml` and
+therefore to the `.env` variables, so those stay meaningful as the baseline for a fresh
+deployment and **Reset to defaults** is simply a delete. A row holding an unreadable value falls
+back to the default rather than breaking a send.
+
+Changes apply to the **next** circulation started; a run already in flight keeps the pacing and
+cap it began with, the same rule the footer follows. Changing the port moves the TLS mode with
+it by convention — 465 means implicit SSL, anything else STARTTLS — because a port change alone
+would otherwise just fail to connect; leaving the port alone keeps whatever `MAIL_SSL` /
+`MAIL_STARTTLS` said.
+
+**Credentials are not settings.** `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM` and
+`MAIL_REPLY_TO` stay in `.env`: this table is served to the browser, which is the wrong place
+for a mailbox password.
+
+Endpoints: `GET /api/v1/settings/circulation`, `PUT` to change, `DELETE` to reset.
 
 ### The campaign log
 

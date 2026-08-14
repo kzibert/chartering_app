@@ -431,6 +431,24 @@ export interface CirculationMessage {
   text: string;
 }
 
+/* ---------------- settings ---------------- */
+
+export interface CirculationSettingsRequest {
+  smtpHost: string;
+  smtpPort: number;
+  /** The gap between two messages is random in [min, max] — never fixed. */
+  minDelayMs: number;
+  maxDelayMs: number;
+  maxRecipientsPerCampaign: number;
+}
+
+export interface CirculationSettings extends CirculationSettingsRequest {
+  /** true when any value differs from the configured default */
+  customised: boolean;
+  /** what Reset restores — absent on the nested defaults block itself */
+  defaults?: CirculationSettingsRequest;
+}
+
 /* ---------------- circular templates & footers ---------------- */
 
 export interface EmailTemplateRequest {

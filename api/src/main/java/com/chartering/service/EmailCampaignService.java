@@ -23,6 +23,7 @@ import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.stereotype.Service;
 
 import java.io.UnsupportedEncodingException;
+import java.util.Properties;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -76,6 +77,7 @@ public class EmailCampaignService {
     private final ContactRepository contacts;
     private final CirculationHistoryService history;
     private final CirculationListService circulationLists;
+    private final SettingsService settings;
 
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "email-campaign");
@@ -87,6 +89,12 @@ public class EmailCampaignService {
     private final AtomicBoolean cancelRequested = new AtomicBoolean(false);
     private volatile RunState state = RunState.idle();
 
+    /**
+     * The settings the running campaign started with. Kept so the progress endpoint's ETA
+     * uses the pacing the run is actually honouring rather than whatever Settings says now.
+     */
+    private volatile SettingsService.CirculationSettings activeSettings;
+
     public EmailCampaignService(JavaMailSender mailSender,
                                 MailCampaignProperties props,
                                 MailTemplateService templates,
@@ -95,7 +103,8 @@ public class EmailCampaignService {
                                 HtmlSanitizer sanitizer,
                                 ContactRepository contacts,
                                 CirculationHistoryService history,
-                                CirculationListService circulationLists) {
+                                CirculationListService circulationLists,
+                                SettingsService settings) {
         this.mailSender = mailSender;
         this.props = props;
         this.templates = templates;
@@ -105,6 +114,7 @@ public class EmailCampaignService {
         this.contacts = contacts;
         this.history = history;
         this.circulationLists = circulationLists;
+        this.settings = settings;
     }
 
     /**
@@ -151,10 +161,15 @@ public class EmailCampaignService {
                     ? "No valid recipients left: every remaining address is flagged as not working."
                     : "No valid recipients left after removing duplicates and blanks.");
         }
-        if (recipients.size() > props.getMaxRecipientsPerCampaign()) {
+        // Resolved once, here: the pacing and cap a run starts with are the ones it keeps,
+        // so changing them in Settings mid-send cannot speed up half a campaign.
+        SettingsService.CirculationSettings cfg = settings.circulation();
+        activeSettings = cfg;
+
+        if (recipients.size() > cfg.maxRecipientsPerCampaign()) {
             throw new IllegalArgumentException(
                     "This campaign has %d recipients but the per-campaign limit is %d. Split it into smaller batches to stay under the mailbox's daily cap."
-                            .formatted(recipients.size(), props.getMaxRecipientsPerCampaign()));
+                            .formatted(recipients.size(), cfg.maxRecipientsPerCampaign()));
         }
 
         // Resolve the footer before anything is sent, so a bad footerId is a 404 up front
@@ -164,14 +179,15 @@ public class EmailCampaignService {
 
         // Fail here rather than at message 1 of 200: a bad password should not leave a
         // half-sent campaign and a log full of identical auth errors behind it.
-        verifyConnection();
+        JavaMailSenderImpl sender = senderFor(cfg);
+        verifyConnection(sender);
 
         cancelRequested.set(false);
         running.set(true);
         state = RunState.starting(req.getSubject(), recipients.size());
 
         String carriedOver = campaignLog.beginRun(req.getSubject(), recipients.size(),
-                props.getMinDelayMs(), props.getMaxDelayMs());
+                cfg.minDelayMs(), cfg.maxDelayMs());
         if (duplicates > 0) {
             campaignLog.append("NOTE   %d duplicate address(es) removed before sending".formatted(duplicates));
         }
@@ -197,7 +213,8 @@ public class EmailCampaignService {
                 recipients.size(), req.getSubject(), carriedOver);
 
         CirculationHistoryService.StartedRun record = run;
-        worker.submit(() -> execute(req.getSubject(), composedHtml, recipients, duplicates, record));
+        worker.submit(() -> execute(req.getSubject(), composedHtml, recipients, duplicates,
+                record, cfg, sender));
         return status();
     }
 
@@ -250,29 +267,33 @@ public class EmailCampaignService {
         CampaignRecipientRequest sample = req.getRecipients() == null || req.getRecipients().isEmpty()
                 ? previewRecipient(to)
                 : withEmail(req.getRecipients().get(0), to);
-        verifyConnection();
+        JavaMailSenderImpl sender = senderFor(settings.circulation());
+        verifyConnection(sender);
         // Composed the same way as a real send, footer included — that's the whole point of
         // a test: seeing exactly what a recipient will get.
-        deliver(sample, "[TEST] " + req.getSubject(), composeBody(req));
+        deliver(sample, "[TEST] " + req.getSubject(), composeBody(req), sender);
         log.info("Test circular sent to {}", to);
     }
 
     public CampaignConfigResponse config() {
         List<String> missing = missingSettings();
         JavaMailSenderImpl impl = asImpl();
+        // Host, pacing and cap come from Settings; the credentials and identity still come
+        // from the environment, which is why they are read off different objects here.
+        SettingsService.CirculationSettings cfg = settings.circulation();
         return new CampaignConfigResponse(
                 props.isEnabled(),
                 props.isEnabled() && missing.isEmpty(),
                 missing,
-                impl == null ? null : impl.getHost(),
-                impl == null ? 0 : impl.getPort(),
+                cfg.smtpHost(),
+                cfg.smtpPort(),
                 impl == null ? null : impl.getUsername(),
                 props.getFromAddress(),
                 props.getFromName(),
                 props.getReplyTo(),
-                props.getMinDelayMs(),
-                props.getMaxDelayMs(),
-                props.getMaxRecipientsPerCampaign(),
+                cfg.minDelayMs(),
+                cfg.maxDelayMs(),
+                cfg.maxRecipientsPerCampaign(),
                 isSet(props.getUnsubscribeMailto()));
     }
 
@@ -280,7 +301,8 @@ public class EmailCampaignService {
 
     private void execute(String subject, String composedHtml,
                          List<CampaignRecipientRequest> recipients, int duplicates,
-                         CirculationHistoryService.StartedRun record) {
+                         CirculationHistoryService.StartedRun record,
+                         SettingsService.CirculationSettings cfg, JavaMailSenderImpl sender) {
         int sent = 0;
         int failed = 0;
         int skipped = duplicates;
@@ -299,7 +321,7 @@ public class EmailCampaignService {
 
                 // Pace before every message except the first, so the run starts immediately
                 // but no two messages ever leave closer together than the configured gap.
-                if (i > 0 && !sleepRandomDelay()) {
+                if (i > 0 && !sleepRandomDelay(cfg)) {
                     finalState = "CANCELLED";
                     finalMessage = "Cancelled after %d of %d message(s).".formatted(sent, recipients.size());
                     campaignLog.append("CANCELLED by user");
@@ -311,7 +333,7 @@ public class EmailCampaignService {
 
                 Attempted outcome = new Attempted();
                 try {
-                    sendWithRetries(r, subject, composedHtml, outcome);
+                    sendWithRetries(r, subject, composedHtml, outcome, sender);
                     sent++;
                     consecutiveFailures = 0;
                     campaignLog.append("SENT   %-40s %s".formatted(r.getEmail(), describe(r)));
@@ -395,13 +417,13 @@ public class EmailCampaignService {
     }
 
     private void sendWithRetries(CampaignRecipientRequest r, String subject, String composedHtml,
-                                 Attempted outcome) {
+                                 Attempted outcome, JavaMailSenderImpl sender) {
         int attempt = 0;
         long backoff = props.getRetryBackoffMs();
         while (true) {
             try {
                 outcome.attempts++;
-                deliver(r, subject, composedHtml);
+                deliver(r, subject, composedHtml, sender);
                 return;
             } catch (MailAuthenticationException e) {
                 throw e; // never retried — handled by the caller as a hard abort
@@ -422,8 +444,9 @@ public class EmailCampaignService {
     }
 
     /** Build and hand one personalised message to the transport. */
-    private void deliver(CampaignRecipientRequest r, String subject, String htmlTemplate) {
-        MimeMessage mime = mailSender.createMimeMessage();
+    private void deliver(CampaignRecipientRequest r, String subject, String htmlTemplate,
+                         JavaMailSenderImpl sender) {
+        MimeMessage mime = sender.createMimeMessage();
         try {
             mime.setFrom(new InternetAddress(props.getFromAddress(), props.getFromName(), "UTF-8"));
             mime.setRecipient(Message.RecipientType.TO, new InternetAddress(r.getEmail().trim()));
@@ -450,7 +473,7 @@ public class EmailCampaignService {
             if (isSet(props.getUnsubscribeMailto())) {
                 mime.setHeader("List-Unsubscribe", "<mailto:%s>".formatted(props.getUnsubscribeMailto().trim()));
             }
-            mailSender.send(mime);
+            sender.send(mime);
         } catch (MessagingException | UnsupportedEncodingException e) {
             throw new IllegalStateException("Could not build the message for " + r.getEmail() + ": " + e.getMessage(), e);
         }
@@ -508,22 +531,15 @@ public class EmailCampaignService {
      *
      * @return false if a cancel arrived while waiting
      */
-    private boolean sleepRandomDelay() {
-        return sleepInterruptible(randomDelayMs());
+    private boolean sleepRandomDelay(SettingsService.CirculationSettings cfg) {
+        return sleepInterruptible(randomDelayMs(cfg));
     }
 
-    private long randomDelayMs() {
-        long min = Math.max(0, props.getMinDelayMs());
-        long max = Math.max(min, props.getMaxDelayMs());
+    private long randomDelayMs(SettingsService.CirculationSettings cfg) {
+        long min = Math.max(0, cfg.minDelayMs());
+        long max = Math.max(min, cfg.maxDelayMs());
         // nextLong's bound is exclusive, so +1 keeps maxDelayMs itself reachable.
         return min == max ? min : ThreadLocalRandom.current().nextLong(min, max + 1);
-    }
-
-    /** Mean gap, used for the estimate shown to the user. */
-    private long averageDelayMs() {
-        long min = Math.max(0, props.getMinDelayMs());
-        long max = Math.max(min, props.getMaxDelayMs());
-        return (min + max) / 2;
     }
 
     /** Sleep in slices so a cancel is picked up promptly instead of after the full delay. */
@@ -559,8 +575,9 @@ public class EmailCampaignService {
     private List<String> missingSettings() {
         List<String> missing = new ArrayList<>();
         JavaMailSenderImpl impl = asImpl();
-        if (impl == null || !isSet(impl.getHost())) {
-            missing.add("MAIL_HOST");
+        // Host comes from Settings, which falls back to MAIL_HOST when it was never changed.
+        if (!isSet(settings.circulation().smtpHost())) {
+            missing.add("SMTP host (Settings, or MAIL_HOST)");
         }
         if (impl == null || !isSet(impl.getUsername())) {
             missing.add("MAIL_USERNAME");
@@ -574,8 +591,7 @@ public class EmailCampaignService {
         return missing;
     }
 
-    private void verifyConnection() {
-        JavaMailSenderImpl impl = asImpl();
+    private void verifyConnection(JavaMailSenderImpl impl) {
         if (impl == null) {
             return;
         }
@@ -591,13 +607,59 @@ public class EmailCampaignService {
         return mailSender instanceof JavaMailSenderImpl impl ? impl : null;
     }
 
+    /**
+     * A sender pointed at the host/port currently configured in Settings, carrying the
+     * credentials and transport properties of the Spring-configured one.
+     *
+     * <p>A fresh instance rather than mutating the shared bean: the bean is a singleton, and
+     * reconfiguring it in place would make the host depend on whoever sent last.
+     *
+     * <p>When the port is changed, the TLS mode moves with it by convention — 465 is
+     * implicit SSL, anything else is STARTTLS — because the two are not independently
+     * meaningful and a port change alone would otherwise just fail to connect. Leaving the
+     * port at its configured value keeps whatever MAIL_SSL/MAIL_STARTTLS said, so an
+     * environment tuned by hand is never second-guessed.
+     */
+    private JavaMailSenderImpl senderFor(SettingsService.CirculationSettings s) {
+        JavaMailSenderImpl base = asImpl();
+        if (base == null) {
+            return null;
+        }
+        boolean unchanged = s.smtpPort() == base.getPort()
+                && s.smtpHost() != null && s.smtpHost().equalsIgnoreCase(base.getHost());
+        if (unchanged) {
+            return base;
+        }
+
+        JavaMailSenderImpl out = new JavaMailSenderImpl();
+        out.setHost(s.smtpHost());
+        out.setPort(s.smtpPort());
+        out.setUsername(base.getUsername());
+        out.setPassword(base.getPassword());
+        out.setProtocol(base.getProtocol());
+        out.setDefaultEncoding(base.getDefaultEncoding());
+
+        Properties p = new Properties();
+        p.putAll(base.getJavaMailProperties());
+        if (s.smtpPort() != base.getPort()) {
+            boolean implicitSsl = s.smtpPort() == 465;
+            p.setProperty("mail.smtp.ssl.enable", String.valueOf(implicitSsl));
+            p.setProperty("mail.smtp.starttls.enable", String.valueOf(!implicitSsl));
+        }
+        // Certificate trust names a host, so it has to follow the host it was set for.
+        p.setProperty("mail.smtp.ssl.trust", s.smtpHost());
+        out.setJavaMailProperties(p);
+        return out;
+    }
+
     private Long etaSeconds(RunState s) {
         if (!running.get() || s.total() <= 0) {
             return null;
         }
         int done = s.sent() + s.failed();
         int remaining = Math.max(0, s.total() - done);
-        return remaining * averageDelayMs() / 1000;
+        SettingsService.CirculationSettings cfg = activeSettings;
+        return remaining * (cfg != null ? cfg.averageDelayMs() : settings.circulation().averageDelayMs()) / 1000;
     }
 
     private static CampaignRecipientRequest withEmail(CampaignRecipientRequest src, String email) {

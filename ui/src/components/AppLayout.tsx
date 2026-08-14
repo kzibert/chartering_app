@@ -7,6 +7,7 @@ import {
   TeamOutlined,
   UnorderedListOutlined,
   SendOutlined,
+  SettingOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useCurrentList } from '../circulations/store';
@@ -14,7 +15,9 @@ import { useCurrentList } from '../circulations/store';
 const { Sider, Header, Content } = Layout;
 
 // No '/contacts': contacts live inside People now, grouped under the person who owns them.
-const KEYS = ['/', '/vessels', '/companies', '/people', '/circulation-lists', '/circulars'];
+const KEYS = [
+  '/', '/vessels', '/companies', '/people', '/circulation-lists', '/circulars', '/settings',
+];
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
@@ -42,6 +45,10 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       ),
     },
     { key: '/circulars', icon: <SendOutlined />, label: 'Circulars' },
+    // Last, and after a divider: settings are not a place you work, they are where you go
+    // when something about how the work behaves needs changing.
+    { type: 'divider' as const },
+    { key: '/settings', icon: <SettingOutlined />, label: 'Settings' },
   ];
 
   return (

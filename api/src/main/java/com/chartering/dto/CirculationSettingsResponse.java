@@ -1,0 +1,26 @@
+package com.chartering.dto;
+
+import com.fasterxml.jackson.annotation.JsonInclude;
+
+/**
+ * Circulation settings in force, alongside the configured defaults they can be reset to,
+ * so the screen can show what a value would revert to without a second request.
+ */
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public record CirculationSettingsResponse(
+        String smtpHost,
+        int smtpPort,
+        long minDelayMs,
+        long maxDelayMs,
+        int maxRecipientsPerCampaign,
+        /** true when any of these differ from the configured defaults */
+        boolean customised,
+        CirculationSettingsResponse defaults) {
+
+    /** The defaults block itself has no nested defaults — that would recurse forever. */
+    public static CirculationSettingsResponse defaultsOnly(String host, int port, long minDelay,
+                                                           long maxDelay, int maxRecipients) {
+        return new CirculationSettingsResponse(host, port, minDelay, maxDelay, maxRecipients,
+                false, null);
+    }
+}
