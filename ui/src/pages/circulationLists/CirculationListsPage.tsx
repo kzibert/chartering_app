@@ -3,6 +3,7 @@ import {
   App,
   Button,
   Card,
+  Dropdown,
   Empty,
   Modal,
   Popconfirm,
@@ -22,6 +23,7 @@ import {
   ImportOutlined,
   PlusOutlined,
   MinusOutlined,
+  DownOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import * as XLSX from 'xlsx';
@@ -111,6 +113,28 @@ export default function CirculationListsPage() {
     onSuccess: (r) => {
       message.success(
         `Added ${r.added} address${r.added === 1 ? '' : 'es'} to the current list` +
+          (r.skipped ? ` (${r.skipped} already there)` : ''),
+      );
+      invalidateLists();
+    },
+  });
+
+  /**
+   * The mirror of addToCurrent, going the other way: push rows off the current list into a
+   * saved one. The target has to be chosen, hence a dropdown rather than a plain button —
+   * and only existing lists are offered, since "Save as list" already covers making a new
+   * one out of the current list.
+   */
+  const addToSavedList = useMutation({
+    mutationFn: (targetId: number) =>
+      circulationListsApi.addEntries(
+        targetId,
+        picked.map(({ id: _id, ...fields }) => fields),
+      ),
+    onSuccess: (r, targetId) => {
+      const name = savedLists.data?.find((l) => l.id === targetId)?.name ?? 'the list';
+      message.success(
+        `Added ${r.added} address${r.added === 1 ? '' : 'es'} to "${name}"` +
           (r.skipped ? ` (${r.skipped} already there)` : ''),
       );
       invalidateLists();
@@ -289,11 +313,44 @@ export default function CirculationListsPage() {
         extra={
           <Space wrap>
             {viewingCurrent ? (
-              <Tooltip title="Copy these addresses into a new named list — the current list keeps them">
-                <Button icon={<SaveOutlined />} disabled={empty} onClick={() => openNameModal('saveAs')}>
-                  Save as list
-                </Button>
-              </Tooltip>
+              <>
+                <Tooltip
+                  title={
+                    savedLists.data?.length
+                      ? `Copy ${scopeLabel} of these addresses into one of your saved lists. The current list keeps them.`
+                      : 'No saved lists yet — use "Save as list" to make one first'
+                  }
+                >
+                  {/* Wrapped: a disabled Dropdown swallows pointer events, so the Tooltip
+                      needs its own element to hang off when there is nothing to pick. */}
+                  <span>
+                    <Dropdown
+                      trigger={['click']}
+                      disabled={empty || !savedLists.data?.length}
+                      menu={{
+                        items: (savedLists.data ?? []).map((l) => ({
+                          key: String(l.id),
+                          label: `${l.name} (${l.entryCount})`,
+                        })),
+                        onClick: ({ key }) => addToSavedList.mutate(Number(key)),
+                      }}
+                    >
+                      <Button
+                        icon={<PlusOutlined />}
+                        loading={addToSavedList.isPending}
+                        disabled={empty || !savedLists.data?.length}
+                      >
+                        Add {scopeLabel} to list <DownOutlined />
+                      </Button>
+                    </Dropdown>
+                  </span>
+                </Tooltip>
+                <Tooltip title="Copy these addresses into a new named list — the current list keeps them">
+                  <Button icon={<SaveOutlined />} disabled={empty} onClick={() => openNameModal('saveAs')}>
+                    Save as list
+                  </Button>
+                </Tooltip>
+              </>
             ) : (
               <>
                 <Tooltip
@@ -391,17 +448,15 @@ export default function CirculationListsPage() {
             dataSource={entries}
             pagination={entries.length > 50 ? { pageSize: 50, showSizeChanger: false } : false}
             scroll={{ x: true }}
-            // Only on a saved list: the ticks exist to scope the add/remove buttons above,
-            // and the current list has no such buttons to scope.
-            rowSelection={
-              viewingCurrent
-                ? undefined
-                : {
-                    selectedRowKeys: pickedIds,
-                    preserveSelectedRowKeys: true,
-                    onChange: (keys) => setPickedIds(keys as number[]),
-                  }
-            }
+            // Both views have a button scoped by the ticks: a saved list moves rows to and
+            // from the current one, the current list pushes rows into a saved one.
+            rowSelection={{
+              selectedRowKeys: pickedIds,
+              // Ticks on other pages leave dataSource; without this, paging away would
+              // silently shrink the selection.
+              preserveSelectedRowKeys: true,
+              onChange: (keys) => setPickedIds(keys as number[]),
+            }}
           />
         )}
       </Card>

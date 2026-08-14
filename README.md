@@ -129,9 +129,13 @@ into by default — plus any number of **saved lists** prepared in advance.
 - **Circulation lists** tab: switch between the current list and the saved ones, edit any row's
   address or mail-merge fields inline, and *Save as list* to keep a copy of the current one.
   Editing a row edits the list, never the contact record — a list is a prepared document.
-- A saved list has row checkboxes and three actions against the current list. Each acts on the
-  ticked rows, or on the whole list when nothing is ticked, so one button covers "all" and "only
-  these"; none of them changes the saved list itself:
+- Both views have row checkboxes, and every action below acts on the ticked rows, or on the whole
+  list when nothing is ticked — so one button covers "all" and "only these".
+- On the **current list**, *Add … to list* picks one of your saved lists as the destination. The
+  current list keeps its rows; this files a copy. (*Save as list* is the same move into a list that
+  does not exist yet.)
+- On a **saved list**, three actions against the current list, none of which changes the saved
+  list itself:
   - **Add … to current** — union, deduped by address.
   - **Remove … from current** — subtract. This is how you exclude a list you have already
     circulated to: build the current list broadly, then subtract "Sent in March".
