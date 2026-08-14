@@ -124,7 +124,9 @@ both tables and one starter footer already.
 
 Recipients live in **circulation lists**, stored in Postgres (`db/circulations.sql`). There is
 one unnamed **current list** — what the Circulars tab sends to, and what every other tab adds
-into by default — plus any number of **saved lists** prepared in advance.
+into by default — plus any number of **saved lists** prepared in advance. Building the current
+list lives entirely on this tab; the Circulars tab only sends it, so there is one place to look
+when the question is "who is on it".
 
 - **Circulation lists** tab: switch between the current list and the saved ones, edit any row's
   address or mail-merge fields inline, and *Save as list* to keep a copy of the current one.

@@ -30,13 +30,12 @@ import {
   DeleteOutlined,
   SettingOutlined,
   HistoryOutlined,
-  UnorderedListOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { campaignsApi } from '../../api/campaigns';
 import { circulationsApi } from '../../api/circulations';
 import { emailFootersApi, emailTemplatesApi } from '../../api/emailLibrary';
-import { useCurrentList, useSavedLists } from '../../circulations/store';
+import { useCurrentList } from '../../circulations/store';
 import RichTextEditor from '../../components/RichTextEditor';
 import FooterManagerModal from './FooterManagerModal';
 import HistoryModal from './HistoryModal';
@@ -112,7 +111,6 @@ function humanDuration(seconds: number): string {
 export default function CircularsPage() {
   const currentList = useCurrentList();
   const entries = currentList.entries;
-  const savedLists = useSavedLists();
   const { message } = App.useApp();
   const qc = useQueryClient();
 
@@ -391,45 +389,22 @@ export default function CircularsPage() {
             </Descriptions>
           )}
 
-          {/* Sending always uses the current list; loading a saved one replaces it, which
-              keeps "what will be sent" a single answer rather than a hidden selection. */}
+          {/* Sending always uses the current list, and building it — loading a saved list
+              into it, adding, subtracting — belongs on the Circulation lists tab. Only the
+              snapshot lives here, because "save who I am about to send to" is a thing you
+              want at the moment of sending. */}
           <Row gutter={[8, 8]} align="middle">
             <Col>
-              <Space wrap>
-                <UnorderedListOutlined />
-                <Typography.Text type="secondary">Load a saved list:</Typography.Text>
-                <Select<number>
-                  style={{ minWidth: 260 }}
-                  placeholder={
-                    savedLists.data?.length ? 'Replace the current list with…' : 'No saved lists yet'
-                  }
-                  value={null as unknown as number}
-                  loading={savedLists.isLoading}
-                  disabled={composeDisabled || !savedLists.data?.length}
-                  onChange={(id) =>
-                    currentList.load.mutate(id, {
-                      onSuccess: (l) =>
-                        message.success(
-                          `Current list replaced with ${savedLists.data?.find((x) => x.id === id)?.name} (${l.entryCount} addresses)`,
-                        ),
-                    })
-                  }
-                  options={(savedLists.data ?? []).map((l) => ({
-                    value: l.id,
-                    label: `${l.name} (${l.entryCount})`,
-                  }))}
-                />
-                <Tooltip title="Save the current list under a name so it can be reused">
-                  <Button
-                    icon={<SaveOutlined />}
-                    disabled={composeDisabled || recipients.length === 0}
-                    loading={currentList.saveAs.isPending}
-                    onClick={promptSaveList}
-                  >
-                    Save list as…
-                  </Button>
-                </Tooltip>
-              </Space>
+              <Tooltip title="Save the current list under a name so it can be reused">
+                <Button
+                  icon={<SaveOutlined />}
+                  disabled={composeDisabled || recipients.length === 0}
+                  loading={currentList.saveAs.isPending}
+                  onClick={promptSaveList}
+                >
+                  Save list as…
+                </Button>
+              </Tooltip>
             </Col>
           </Row>
 
