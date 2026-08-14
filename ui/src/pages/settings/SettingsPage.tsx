@@ -27,6 +27,8 @@ const toSeconds = (ms: number) => Math.round(ms / 100) / 10;
 const toMillis = (s: number) => Math.round(s * 1000);
 
 interface FormValues {
+  fromAddress: string;
+  fromName: string;
   smtpHost: string;
   smtpPort: number;
   minDelaySeconds: number;
@@ -35,6 +37,8 @@ interface FormValues {
 }
 
 const toForm = (s: CirculationSettingsRequest): FormValues => ({
+  fromAddress: s.fromAddress,
+  fromName: s.fromName ?? '',
   smtpHost: s.smtpHost,
   smtpPort: s.smtpPort,
   minDelaySeconds: toSeconds(s.minDelayMs),
@@ -66,6 +70,8 @@ export default function SettingsPage() {
   const save = useMutation({
     mutationFn: (v: FormValues) =>
       settingsApi.update({
+        fromAddress: v.fromAddress.trim(),
+        fromName: v.fromName?.trim() ?? '',
         smtpHost: v.smtpHost.trim(),
         smtpPort: v.smtpPort,
         minDelayMs: toMillis(v.minDelaySeconds),
@@ -131,6 +137,37 @@ export default function SettingsPage() {
         }
       >
         <Form<FormValues> form={form} layout="vertical" onFinish={(v) => save.mutate(v)}>
+          <Row gutter={16}>
+            <Col xs={24} md={12}>
+              <Form.Item
+                name="fromName"
+                label="From name"
+                extra={d && defaultHint('Default', d.fromName || '(none)')}
+              >
+                <Input placeholder="Maritella Chartering Desk" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item
+                name="fromAddress"
+                label="From address"
+                rules={[
+                  { required: true, message: 'A From address is required' },
+                  { type: 'email', message: 'Not a valid email address' },
+                ]}
+                extra={
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    Must be the authenticated mailbox or one of its verified aliases, or the
+                    provider will refuse the message.
+                    {d?.fromAddress ? ` Default: ${d.fromAddress}` : ''}
+                  </Typography.Text>
+                }
+              >
+                <Input placeholder="desk@example.com" />
+              </Form.Item>
+            </Col>
+          </Row>
+
           <Row gutter={16}>
             <Col xs={24} md={12}>
               <Form.Item
@@ -223,11 +260,14 @@ export default function SettingsPage() {
 
       <Card title="Mail credentials">
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          The sending account — username, password, From address and Reply-To — is set with
-          environment variables in <Typography.Text code>.env</Typography.Text> and is
-          deliberately not editable here: these settings are stored in the database and served
-          to the browser, which is the wrong place for a mailbox password. Change them in{' '}
-          <Typography.Text code>.env</Typography.Text> and restart the api container.
+          The mailbox login — <Typography.Text code>MAIL_USERNAME</Typography.Text> and{' '}
+          <Typography.Text code>MAIL_PASSWORD</Typography.Text> — plus{' '}
+          <Typography.Text code>MAIL_REPLY_TO</Typography.Text> stay in{' '}
+          <Typography.Text code>.env</Typography.Text> and are deliberately not editable here:
+          these settings are stored in the database and served to the browser, which is the
+          wrong place for a mailbox password. Change them there and restart the api container.
+          The From identity above is editable because it is not a secret — but the provider
+          still checks it against the authenticated account.
         </Typography.Paragraph>
       </Card>
     </Space>

@@ -1,5 +1,6 @@
 package com.chartering.dto;
 
+import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -15,6 +16,17 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class CirculationSettingsRequest {
+
+    /**
+     * Envelope From. Providers reject a From that is not the authenticated mailbox or one
+     * of its verified aliases, so this is editable but not free.
+     */
+    @NotBlank(message = "a From address is required")
+    @Email(message = "not a valid email address")
+    private String fromAddress;
+
+    /** Display name recipients see. Optional — blank sends the bare address. */
+    private String fromName;
 
     @NotBlank(message = "SMTP host is required")
     private String smtpHost;

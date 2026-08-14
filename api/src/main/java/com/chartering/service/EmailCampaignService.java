@@ -267,11 +267,12 @@ public class EmailCampaignService {
         CampaignRecipientRequest sample = req.getRecipients() == null || req.getRecipients().isEmpty()
                 ? previewRecipient(to)
                 : withEmail(req.getRecipients().get(0), to);
-        JavaMailSenderImpl sender = senderFor(settings.circulation());
+        SettingsService.CirculationSettings cfg = settings.circulation();
+        JavaMailSenderImpl sender = senderFor(cfg);
         verifyConnection(sender);
         // Composed the same way as a real send, footer included — that's the whole point of
         // a test: seeing exactly what a recipient will get.
-        deliver(sample, "[TEST] " + req.getSubject(), composeBody(req), sender);
+        deliver(sample, "[TEST] " + req.getSubject(), composeBody(req), sender, cfg);
         log.info("Test circular sent to {}", to);
     }
 
@@ -288,8 +289,8 @@ public class EmailCampaignService {
                 cfg.smtpHost(),
                 cfg.smtpPort(),
                 impl == null ? null : impl.getUsername(),
-                props.getFromAddress(),
-                props.getFromName(),
+                cfg.fromAddress(),
+                cfg.fromName(),
                 props.getReplyTo(),
                 cfg.minDelayMs(),
                 cfg.maxDelayMs(),
@@ -333,7 +334,7 @@ public class EmailCampaignService {
 
                 Attempted outcome = new Attempted();
                 try {
-                    sendWithRetries(r, subject, composedHtml, outcome, sender);
+                    sendWithRetries(r, subject, composedHtml, outcome, sender, cfg);
                     sent++;
                     consecutiveFailures = 0;
                     campaignLog.append("SENT   %-40s %s".formatted(r.getEmail(), describe(r)));
@@ -417,13 +418,14 @@ public class EmailCampaignService {
     }
 
     private void sendWithRetries(CampaignRecipientRequest r, String subject, String composedHtml,
-                                 Attempted outcome, JavaMailSenderImpl sender) {
+                                 Attempted outcome, JavaMailSenderImpl sender,
+                                 SettingsService.CirculationSettings cfg) {
         int attempt = 0;
         long backoff = props.getRetryBackoffMs();
         while (true) {
             try {
                 outcome.attempts++;
-                deliver(r, subject, composedHtml, sender);
+                deliver(r, subject, composedHtml, sender, cfg);
                 return;
             } catch (MailAuthenticationException e) {
                 throw e; // never retried — handled by the caller as a hard abort
@@ -445,10 +447,10 @@ public class EmailCampaignService {
 
     /** Build and hand one personalised message to the transport. */
     private void deliver(CampaignRecipientRequest r, String subject, String htmlTemplate,
-                         JavaMailSenderImpl sender) {
+                         JavaMailSenderImpl sender, SettingsService.CirculationSettings cfg) {
         MimeMessage mime = sender.createMimeMessage();
         try {
-            mime.setFrom(new InternetAddress(props.getFromAddress(), props.getFromName(), "UTF-8"));
+            mime.setFrom(new InternetAddress(cfg.fromAddress(), cfg.fromName(), "UTF-8"));
             mime.setRecipient(Message.RecipientType.TO, new InternetAddress(r.getEmail().trim()));
             mime.setSubject(templates.renderText(subject, r), "UTF-8");
             if (isSet(props.getReplyTo())) {
@@ -585,8 +587,8 @@ public class EmailCampaignService {
         if (impl == null || !isSet(impl.getPassword())) {
             missing.add("MAIL_PASSWORD");
         }
-        if (!isSet(props.getFromAddress())) {
-            missing.add("MAIL_FROM");
+        if (!isSet(settings.circulation().fromAddress())) {
+            missing.add("From address (Settings, or MAIL_FROM)");
         }
         return missing;
     }

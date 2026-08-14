@@ -8,6 +8,8 @@ import com.fasterxml.jackson.annotation.JsonInclude;
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record CirculationSettingsResponse(
+        String fromAddress,
+        String fromName,
         String smtpHost,
         int smtpPort,
         long minDelayMs,
@@ -18,9 +20,10 @@ public record CirculationSettingsResponse(
         CirculationSettingsResponse defaults) {
 
     /** The defaults block itself has no nested defaults — that would recurse forever. */
-    public static CirculationSettingsResponse defaultsOnly(String host, int port, long minDelay,
+    public static CirculationSettingsResponse defaultsOnly(String fromAddress, String fromName,
+                                                           String host, int port, long minDelay,
                                                            long maxDelay, int maxRecipients) {
-        return new CirculationSettingsResponse(host, port, minDelay, maxDelay, maxRecipients,
-                false, null);
+        return new CirculationSettingsResponse(fromAddress, fromName, host, port, minDelay,
+                maxDelay, maxRecipients, false, null);
     }
 }

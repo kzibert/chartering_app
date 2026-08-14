@@ -434,6 +434,10 @@ export interface CirculationMessage {
 /* ---------------- settings ---------------- */
 
 export interface CirculationSettingsRequest {
+  /** Envelope From — must be the authenticated mailbox or a verified alias. */
+  fromAddress: string;
+  /** Display name recipients see; blank sends the bare address. */
+  fromName?: string;
   smtpHost: string;
   smtpPort: number;
   /** The gap between two messages is random in [min, max] — never fixed. */

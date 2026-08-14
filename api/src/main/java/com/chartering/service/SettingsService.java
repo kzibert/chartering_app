@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -27,21 +28,27 @@ import java.util.stream.Collectors;
  *
  * <p><b>Credentials are not settings.</b> MAIL_USERNAME / MAIL_PASSWORD stay in the
  * environment: this table is served to the browser, which is the wrong place for a mailbox
- * password. Only the host and port are adjustable here.
+ * password. The From identity is adjustable because it is not a secret — though a provider
+ * will still reject a From that is not the authenticated mailbox or a verified alias.
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class SettingsService {
 
+    public static final String FROM_ADDRESS = "mail.fromAddress";
+    public static final String FROM_NAME = "mail.fromName";
     public static final String SMTP_HOST = "mail.smtp.host";
     public static final String SMTP_PORT = "mail.smtp.port";
     public static final String MIN_DELAY_MS = "mail.minDelayMs";
     public static final String MAX_DELAY_MS = "mail.maxDelayMs";
     public static final String MAX_RECIPIENTS = "mail.maxRecipientsPerCampaign";
 
-    private static final List<String> CIRCULATION_KEYS =
-            List.of(SMTP_HOST, SMTP_PORT, MIN_DELAY_MS, MAX_DELAY_MS, MAX_RECIPIENTS);
+    private static final List<String> CIRCULATION_KEYS = List.of(
+            FROM_ADDRESS, FROM_NAME, SMTP_HOST, SMTP_PORT, MIN_DELAY_MS, MAX_DELAY_MS, MAX_RECIPIENTS);
+
+    /** Good enough to catch a typo; the mail server is the real authority on an address. */
+    private static final Pattern EMAIL = Pattern.compile("^[^@\\s]+@[^@\\s.]+(\\.[^@\\s.]+)+$");
 
     /** A day between two messages is already absurd; beyond that it is a typo. */
     private static final long MAX_DELAY_ALLOWED_MS = 86_400_000L;
@@ -76,6 +83,8 @@ public class SettingsService {
         Map<String, String> stored = repository.findByKeyIn(CIRCULATION_KEYS).stream()
                 .collect(Collectors.toMap(AppSetting::getKey, AppSetting::getValue));
         return new CirculationSettings(
+                stored.getOrDefault(FROM_ADDRESS, props.getFromAddress()),
+                stored.getOrDefault(FROM_NAME, props.getFromName()),
                 stored.getOrDefault(SMTP_HOST, defaultHost),
                 parse(stored, SMTP_PORT, defaultPort, Integer::parseInt),
                 parse(stored, MIN_DELAY_MS, props.getMinDelayMs(), Long::parseLong),
@@ -85,8 +94,9 @@ public class SettingsService {
 
     /** What the settings screen offers as "reset to" — the configured baseline. */
     public CirculationSettings circulationDefaults() {
-        return new CirculationSettings(defaultHost, defaultPort, props.getMinDelayMs(),
-                props.getMaxDelayMs(), props.getMaxRecipientsPerCampaign());
+        return new CirculationSettings(props.getFromAddress(), props.getFromName(),
+                defaultHost, defaultPort, props.getMinDelayMs(), props.getMaxDelayMs(),
+                props.getMaxRecipientsPerCampaign());
     }
 
     // ---------------------------------------------------------------- writing
@@ -94,14 +104,16 @@ public class SettingsService {
     @Transactional
     public CirculationSettings updateCirculation(CirculationSettingsRequest req) {
         validate(req);
+        put(FROM_ADDRESS, req.getFromAddress().trim());
+        put(FROM_NAME, req.getFromName() == null ? "" : req.getFromName().trim());
         put(SMTP_HOST, req.getSmtpHost().trim());
         put(SMTP_PORT, String.valueOf(req.getSmtpPort()));
         put(MIN_DELAY_MS, String.valueOf(req.getMinDelayMs()));
         put(MAX_DELAY_MS, String.valueOf(req.getMaxDelayMs()));
         put(MAX_RECIPIENTS, String.valueOf(req.getMaxRecipientsPerCampaign()));
-        log.info("Circulation settings updated: {}:{} pacing {}-{}ms cap {}",
-                req.getSmtpHost(), req.getSmtpPort(), req.getMinDelayMs(), req.getMaxDelayMs(),
-                req.getMaxRecipientsPerCampaign());
+        log.info("Circulation settings updated: from {} <{}> via {}:{} pacing {}-{}ms cap {}",
+                req.getFromName(), req.getFromAddress(), req.getSmtpHost(), req.getSmtpPort(),
+                req.getMinDelayMs(), req.getMaxDelayMs(), req.getMaxRecipientsPerCampaign());
         return circulation();
     }
 
@@ -131,6 +143,13 @@ public class SettingsService {
      * meaningless, and the sender would silently clamp it instead of telling anyone.
      */
     private void validate(CirculationSettingsRequest req) {
+        if (req.getFromAddress() == null || req.getFromAddress().isBlank()) {
+            throw new IllegalArgumentException("A From address is required.");
+        }
+        if (!EMAIL.matcher(req.getFromAddress().trim()).matches()) {
+            throw new IllegalArgumentException(
+                    "\"" + req.getFromAddress().trim() + "\" is not a valid email address.");
+        }
         if (req.getSmtpHost() == null || req.getSmtpHost().isBlank()) {
             throw new IllegalArgumentException("SMTP host is required.");
         }
@@ -173,8 +192,9 @@ public class SettingsService {
      * editing the settings mid-send cannot change the pacing half way through — the same
      * rule the footer follows.
      */
-    public record CirculationSettings(String smtpHost, int smtpPort, long minDelayMs,
-                                      long maxDelayMs, int maxRecipientsPerCampaign) {
+    public record CirculationSettings(String fromAddress, String fromName, String smtpHost,
+                                      int smtpPort, long minDelayMs, long maxDelayMs,
+                                      int maxRecipientsPerCampaign) {
 
         /** Mean gap, used for the "this will take about N minutes" estimate. */
         public long averageDelayMs() {

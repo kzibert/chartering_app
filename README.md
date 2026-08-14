@@ -211,6 +211,7 @@ The **Settings** tab (bottom of the sidebar) edits the circulation knobs at runt
 
 | Setting | Default |
 |---|---|
+| From name / address | `Maritella Chartering Desk` / `desk@example.com` |
 | SMTP host / port | `smtp.zoho.eu` / `465` |
 | Gap between messages (random within the range) | 3–10s |
 | Max recipients per run | 200 |
@@ -226,9 +227,12 @@ it by convention — 465 means implicit SSL, anything else STARTTLS — because 
 would otherwise just fail to connect; leaving the port alone keeps whatever `MAIL_SSL` /
 `MAIL_STARTTLS` said.
 
-**Credentials are not settings.** `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM` and
-`MAIL_REPLY_TO` stay in `.env`: this table is served to the browser, which is the wrong place
-for a mailbox password.
+The From identity is editable because it is not a secret, but it is not free either: Zoho (like
+every provider) refuses a From that is not the authenticated mailbox or one of its verified
+aliases, so changing it to an unverified address will make every send fail.
+
+**Credentials are not settings.** `MAIL_USERNAME`, `MAIL_PASSWORD` and `MAIL_REPLY_TO` stay in
+`.env`: this table is served to the browser, which is the wrong place for a mailbox password.
 
 Endpoints: `GET /api/v1/settings/circulation`, `PUT` to change, `DELETE` to reset.
 
