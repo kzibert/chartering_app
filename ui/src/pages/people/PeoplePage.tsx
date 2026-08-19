@@ -199,6 +199,7 @@ export default function PeoplePage() {
             </Button>
             <AddToListActions
               entity="people"
+              rowsArePeople
               selectedIds={selectedIds}
               totalMatching={query.data?.totalElements ?? 0}
               collect={(ids, confirmedOnly) => collectApi.fromPeople(filters, ids, confirmedOnly)}

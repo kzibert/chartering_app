@@ -50,8 +50,22 @@ public class MailCampaignProperties {
     /** Upper bound of the random gap. Values below {@code minDelayMs} are clamped to it. */
     private long maxDelayMs = 10_000;
 
-    /** Hard ceiling per campaign, checked before the first message goes out. */
+    /**
+     * How many recipients one run may cover. A campaign with more than this is not
+     * refused — it is sent as a sequence of runs of at most this size, each separated by
+     * {@link #batchPauseMs}. The ceiling is what keeps a single burst inside the
+     * provider's per-hour allowance.
+     */
     private int maxRecipientsPerCampaign = 200;
+
+    /**
+     * Quiet gap between one run and the next of the same campaign. This is what makes
+     * splitting worth doing: six runs back to back are one burst wearing six hats.
+     *
+     * <p>It spreads the load across the hours, not across days — a campaign larger than
+     * the mailbox's <em>daily</em> allowance is still larger than it, however it is paced.
+     */
+    private long batchPauseMs = 900_000; // 15 minutes
 
     /** Retries for a recipient that fails with a transient (4xx) SMTP error. */
     private int maxRetries = 2;

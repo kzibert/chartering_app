@@ -228,6 +228,18 @@ export interface CirculationListEntryRequest {
   companyName?: string;
 }
 
+/**
+ * What a bulk add did. `invalid` rows are values the contact data holds that are not
+ * sendable addresses — they are dropped instead of failing the whole add, and named in
+ * `invalidEmails` so the contact record can be corrected.
+ */
+export interface AddEntriesResult {
+  added: number;
+  skipped: number;
+  invalid: number;
+  invalidEmails: string[];
+}
+
 export interface CirculationListRequest {
   name: string;
   notes?: string;
@@ -318,7 +330,11 @@ export type CampaignState =
   | 'COMPLETED'
   | 'COMPLETED_WITH_ERRORS'
   | 'CANCELLED'
-  | 'ABORTED';
+  | 'ABORTED'
+  /** Stopped by hand with people still to reach; resume carries it on. */
+  | 'PAUSED'
+  /** Stopped by an API restart mid-send. Resumable in exactly the same way. */
+  | 'INTERRUPTED';
 
 /** Mail-merge fields sent per recipient — mirrors EmailListEntry. */
 export interface CampaignRecipient {
@@ -343,6 +359,8 @@ export interface CampaignRequest {
 export interface CampaignStatus {
   state: CampaignState;
   running: boolean;
+  /** The history run this progress belongs to — what resume and restart are called with. */
+  runId?: number;
   subject?: string;
   total: number;
   sent: number;
@@ -354,6 +372,21 @@ export interface CampaignStatus {
   etaSeconds?: number;
   lastError?: string;
   message?: string;
+  /**
+   * Which run of the campaign is in flight and how many there are. A list within the
+   * per-run cap is run 1 of 1, so these never need a special case.
+   */
+  batch: number;
+  batchCount: number;
+  /** True between runs — nothing is being sent until nextBatchAt. */
+  paused: boolean;
+  nextBatchAt?: string;
+  /**
+   * This run stopped with people still to reach, so it can be carried on. Only ever true
+   * once the send has actually stopped. Status is in-memory, so after an API restart it
+   * reports IDLE — ask campaignsApi.resumable() for runs that outlived the process.
+   */
+  resumable: boolean;
 }
 
 export interface CampaignConfig {
@@ -369,7 +402,10 @@ export interface CampaignConfig {
   /** Gap between messages is random in [minDelayMs, maxDelayMs] — never fixed. */
   minDelayMs: number;
   maxDelayMs: number;
+  /** Recipients per run; a longer list is sent as several runs of this size. */
   maxRecipientsPerCampaign: number;
+  /** Quiet gap between those runs. */
+  batchPauseMs: number;
   unsubscribeConfigured: boolean;
 }
 
@@ -394,6 +430,10 @@ export interface CirculationRun {
   sent: number;
   failed: number;
   skipped: number;
+  /** Queued and never reached — who a resume would send to. */
+  pending: number;
+  /** The run stopped with those people still to reach, so it can be carried on. */
+  resumable: boolean;
   startedAt: string;
   finishedAt?: string;
   message?: string;
@@ -448,7 +488,10 @@ export interface CirculationSettingsRequest {
   /** The gap between two messages is random in [min, max] — never fixed. */
   minDelayMs: number;
   maxDelayMs: number;
+  /** Recipients per run; a longer list is split into runs of this size. */
   maxRecipientsPerCampaign: number;
+  /** Quiet gap between those runs. 0 sends them back to back. */
+  batchPauseMs: number;
 }
 
 export interface CirculationSettings extends CirculationSettingsRequest {

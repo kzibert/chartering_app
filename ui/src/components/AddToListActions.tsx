@@ -17,6 +17,7 @@ export default function AddToListActions({
   selectedIds,
   totalMatching,
   collect,
+  rowsArePeople,
   onCleared,
 }: {
   /** Plural noun for the dialog and tooltips, e.g. "companies". */
@@ -29,6 +30,11 @@ export default function AddToListActions({
    * as "use the filter instead" — so the caller passes its filter in once, at binding time.
    */
   collect: (ids: number[], confirmedOnly: boolean) => Promise<ContactResponse[]>;
+  /**
+   * Set by the People tab, where a ticked row is a person. The dialog's per-company limit
+   * can then drop people that were picked by hand, so it warns instead of just counting.
+   */
+  rowsArePeople?: boolean;
   /**
    * Drops the caller's tick marks. Called after a successful add, and by the Clear
    * selection button. Deliberately *not* called on cancel — losing a selection you spent
@@ -43,6 +49,7 @@ export default function AddToListActions({
       label,
       cacheKey: [entity, ids],
       collect: (confirmedOnly) => collect(ids, confirmedOnly),
+      rowsArePeople,
     });
 
   const n = selectedIds.length;

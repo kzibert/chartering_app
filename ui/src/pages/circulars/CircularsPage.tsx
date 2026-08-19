@@ -30,6 +30,9 @@ import {
   DeleteOutlined,
   SettingOutlined,
   HistoryOutlined,
+  PauseCircleOutlined,
+  PlayCircleOutlined,
+  RedoOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { campaignsApi } from '../../api/campaigns';
@@ -47,6 +50,13 @@ import type {
 } from '../../api/types';
 
 const DRAFT_KEY = 'chartering.circularDraft.v1';
+/**
+ * Runs the user has waved away. A run stays resumable for as long as it has anybody left
+ * to reach — that is a fact about the run, not a preference — so "don't offer me this one
+ * again" is kept here rather than written back to the server. Dismissed runs are still
+ * reachable, and still resumable, from the History dropdown.
+ */
+const DISMISSED_KEY = 'chartering.dismissedResumable.v1';
 
 const DEFAULT_BODY =
   '<p>Dear {{greeting}},</p><p><br></p><p>Please find below our current position list.</p>' +
@@ -60,7 +70,20 @@ const STATE_COLOUR: Record<CampaignState, string> = {
   COMPLETED_WITH_ERRORS: 'warning',
   CANCELLED: 'default',
   ABORTED: 'error',
+  // Not terminal: both mean "stopped with people still to reach", which is a state you are
+  // meant to act on rather than read and move past.
+  PAUSED: 'warning',
+  INTERRUPTED: 'warning',
 };
+
+function readDismissed(): number[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? '[]');
+    return Array.isArray(raw) ? raw.filter((v): v is number => typeof v === 'number') : [];
+  } catch {
+    return [];
+  }
+}
 
 function toRecipient(e: CirculationListEntry): CampaignRecipient {
   return {
@@ -104,8 +127,18 @@ function renderPreview(html: string, r?: CampaignRecipient): string {
 function humanDuration(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
   const m = Math.floor(seconds / 60);
+  if (m >= 90) {
+    const h = Math.floor(m / 60);
+    const rem = m % 60;
+    return rem ? `${h}h ${rem}m` : `${h}h`;
+  }
   const s = Math.round(seconds % 60);
   return s ? `${m}m ${s}s` : `${m}m`;
+}
+
+/** Clock time only — a pause between runs is always today or tonight, never a date. */
+function clockTime(iso: string): string {
+  return iso.replace('T', ' ').slice(11, 16);
 }
 
 export default function CircularsPage() {
@@ -124,6 +157,7 @@ export default function CircularsPage() {
   const [footerPicked, setFooterPicked] = useState(false);
   const [footersOpen, setFootersOpen] = useState(false);
   const [historyRunId, setHistoryRunId] = useState<number>();
+  const [dismissed, setDismissed] = useState<number[]>(readDismissed);
 
   // Restore the draft so a reload mid-compose doesn't lose the circular.
   useEffect(() => {
@@ -185,6 +219,36 @@ export default function CircularsPage() {
 
   const logQ = useQuery({ queryKey: ['campaign', 'log'], queryFn: campaignsApi.log });
 
+  /**
+   * Circulations that stopped with people still to reach. Asked for on load rather than
+   * derived from status, because status lives in the API's memory and this is the case
+   * where that memory is gone — the API was restarted mid-send, and only the recipient
+   * rows in the database know how far it got.
+   */
+  const resumableQ = useQuery({
+    queryKey: ['campaign', 'resumable'],
+    queryFn: campaignsApi.resumable,
+    enabled: !running,
+  });
+  useEffect(() => {
+    if (!running) qc.invalidateQueries({ queryKey: ['campaign', 'resumable'] });
+  }, [running, qc]);
+
+  const stopped = (resumableQ.data ?? []).filter((r) => !dismissed.includes(r.id));
+
+  const dismiss = (id: number) => {
+    // Pruned against what is actually resumable, so the list can't grow without bound as
+    // runs are finished off or deleted.
+    const live = (resumableQ.data ?? []).map((r) => r.id);
+    const next = [...dismissed.filter((d) => live.includes(d)), id];
+    setDismissed(next);
+    try {
+      localStorage.setItem(DISMISSED_KEY, JSON.stringify(next));
+    } catch {
+      /* storage full — the banner just comes back on the next reload */
+    }
+  };
+
   // The permanent record. Refetched when a run finishes, since that is when a new entry
   // appears — polling it while idle would be a request per tab per interval for nothing.
   const historyQ = useQuery({
@@ -200,12 +264,20 @@ export default function CircularsPage() {
 
   // Gaps are random, so the estimate uses the mean of the range.
   const averageDelayMs = cfg ? (cfg.minDelayMs + cfg.maxDelayMs) / 2 : 6500;
-  const estimateSeconds =
-    recipients.length > 1 ? ((recipients.length - 1) * averageDelayMs) / 1000 : 0;
   const delayRange = cfg
     ? `${(cfg.minDelayMs / 1000).toFixed(0)}–${(cfg.maxDelayMs / 1000).toFixed(0)}s`
     : '3–10s';
-  const overCap = !!cfg && recipients.length > cfg.maxRecipientsPerCampaign;
+
+  // Over the per-run cap the server splits the send into runs and waits between them, so
+  // the estimate has to count those pauses — they are most of the elapsed time on a big
+  // list, and quoting the message time alone would promise minutes for a job of hours.
+  const perRun = cfg?.maxRecipientsPerCampaign ?? recipients.length;
+  const batchCount = recipients.length ? Math.ceil(recipients.length / Math.max(1, perRun)) : 1;
+  const split = batchCount > 1;
+  const estimateSeconds =
+    (recipients.length > 1 ? ((recipients.length - 1) * averageDelayMs) / 1000 : 0) +
+    ((batchCount - 1) * (cfg?.batchPauseMs ?? 0)) / 1000;
+  const pauseLabel = humanDuration((cfg?.batchPauseMs ?? 0) / 1000);
 
   // targetId is passed in rather than read from state: the caller may have just decided
   // this is a "save as copy", and a setState wouldn't have applied by the time this runs.
@@ -263,9 +335,7 @@ export default function CircularsPage() {
       }),
     onSuccess: () => {
       message.success('Campaign started');
-      qc.invalidateQueries({ queryKey: ['campaign', 'status'] });
-      qc.invalidateQueries({ queryKey: ['campaign', 'log'] });
-      qc.invalidateQueries({ queryKey: ['circulations', 'history'] });
+      refreshAfterLaunch();
     },
   });
 
@@ -277,15 +347,46 @@ export default function CircularsPage() {
     },
   });
 
+  const pauseMut = useMutation({
+    mutationFn: campaignsApi.pause,
+    onSuccess: () => {
+      message.info('Pausing after the current message');
+      qc.invalidateQueries({ queryKey: ['campaign', 'status'] });
+    },
+  });
+
+  const refreshAfterLaunch = () => {
+    qc.invalidateQueries({ queryKey: ['campaign', 'status'] });
+    qc.invalidateQueries({ queryKey: ['campaign', 'log'] });
+    qc.invalidateQueries({ queryKey: ['campaign', 'resumable'] });
+    qc.invalidateQueries({ queryKey: ['circulations', 'history'] });
+  };
+
+  const resumeMut = useMutation({
+    mutationFn: (runId: number) => campaignsApi.resume(runId),
+    onSuccess: (s) => {
+      message.success(`Resumed — ${Math.max(0, s.total - s.sent - s.failed)} left to send`);
+      refreshAfterLaunch();
+    },
+  });
+
+  const restartMut = useMutation({
+    mutationFn: (runId: number) => campaignsApi.restart(runId),
+    onSuccess: () => {
+      message.success('Restarted — sending the whole circulation again');
+      refreshAfterLaunch();
+    },
+  });
+
   const testMut = useMutation({
     mutationFn: () => campaignsApi.test(testTo, { subject, htmlBody: body, recipients, footerId }),
     onSuccess: () => message.success(`Test sent to ${testTo}`),
   });
 
   const status = statusQ.data;
+  const busy = running || resumeMut.isPending || restartMut.isPending;
   const composeDisabled = running;
-  const canSend =
-    !!cfg?.ready && !running && recipients.length > 0 && !overCap && subject.trim().length > 0;
+  const canSend = !!cfg?.ready && !running && recipients.length > 0 && subject.trim().length > 0;
 
   const progressPercent =
     status && status.total > 0
@@ -311,6 +412,49 @@ export default function CircularsPage() {
         />
       )}
 
+      {stopped.map((run) => (
+        <Alert
+          key={run.id}
+          type="warning"
+          showIcon
+          message={`"${run.subject}" stopped with ${run.pending} recipient${run.pending === 1 ? '' : 's'} still to reach`}
+          description={
+            <Space direction="vertical" size="small">
+              <span>
+                {run.sent} sent and {run.failed} failed out of {run.total}, started{' '}
+                {run.startedAt.replace('T', ' ').slice(0, 16)}.{' '}
+                {run.state === 'INTERRUPTED'
+                  ? 'The API was restarted while it was sending.'
+                  : (run.message ?? '')}{' '}
+                Resuming sends only to the {run.pending} it never reached.
+              </span>
+              <Space wrap>
+                <Popconfirm
+                  title="Carry on from where it stopped?"
+                  description={`${run.pending} message${run.pending === 1 ? '' : 's'} — nobody already reached is mailed twice.`}
+                  okText="Resume"
+                  onConfirm={() => resumeMut.mutate(run.id)}
+                  disabled={busy || !cfg?.ready}
+                >
+                  <Button
+                    type="primary"
+                    icon={<PlayCircleOutlined />}
+                    loading={resumeMut.isPending && resumeMut.variables === run.id}
+                    disabled={busy || !cfg?.ready}
+                  >
+                    Resume ({run.pending})
+                  </Button>
+                </Popconfirm>
+                <Button onClick={() => setHistoryRunId(run.id)}>See who was reached</Button>
+                <Button type="text" onClick={() => dismiss(run.id)}>
+                  Not now
+                </Button>
+              </Space>
+            </Space>
+          }
+        />
+      ))}
+
       <Card
         title="Compose circular"
         extra={
@@ -319,7 +463,10 @@ export default function CircularsPage() {
               <>
                 <Tag>{cfg.smtpHost}:{cfg.smtpPort}</Tag>
                 <Tag color="blue">1 email every {delayRange} (random)</Tag>
-                <Tag>max {cfg.maxRecipientsPerCampaign} per run</Tag>
+                <Tag>
+                  max {cfg.maxRecipientsPerCampaign} per run
+                  {cfg.batchPauseMs > 0 && `, ${humanDuration(cfg.batchPauseMs / 1000)} between`}
+                </Tag>
               </>
             )}
             <Select<number>
@@ -484,10 +631,22 @@ export default function CircularsPage() {
               <Popconfirm
                 title="Send this circular?"
                 description={
-                  <div style={{ maxWidth: 320 }}>
+                  <div style={{ maxWidth: 340 }}>
                     {recipients.length} separate message{recipients.length === 1 ? '' : 's'}, one per
-                    recipient — no CC or BCC. Sent at a random {delayRange} apart, so this takes
-                    roughly <b>{humanDuration(estimateSeconds)}</b>.
+                    recipient — no CC or BCC. Sent at a random {delayRange} apart
+                    {split && (
+                      <>
+                        , in <b>{batchCount} runs</b> of up to {perRun} with {pauseLabel} between them
+                      </>
+                    )}
+                    , so this takes roughly <b>{humanDuration(estimateSeconds)}</b>.
+                    {split && (
+                      <div style={{ marginTop: 8 }}>
+                        You can pause it at any point, and a restart of the API stops it rather
+                        than losing it — either way it picks up from where it stopped, with
+                        nobody mailed twice.
+                      </div>
+                    )}
                   </div>
                 }
                 okText="Send"
@@ -507,12 +666,20 @@ export default function CircularsPage() {
             </Col>
           </Row>
 
-          {overCap && (
+          {split && (
             <Alert
-              type="error"
+              type="info"
               showIcon
-              message={`Too many recipients: ${recipients.length} > ${cfg?.maxRecipientsPerCampaign} allowed per run`}
-              description="Trim the email list, or raise MAIL_MAX_RECIPIENTS — but check your Zoho plan's daily limit before you do, since exceeding it can suspend outgoing mail on the account."
+              message={`${recipients.length} recipients — sent as ${batchCount} runs of up to ${perRun}, ${pauseLabel} apart (about ${humanDuration(estimateSeconds)})`}
+              description={
+                <>
+                  Splitting keeps each burst inside the mailbox's per-hour allowance. It does not
+                  fit the campaign inside a <b>daily</b> limit — {recipients.length} messages still
+                  count as {recipients.length} against your Zoho plan's daily cap, and exceeding
+                  that can suspend outgoing mail on the account. Trim the list or change the run
+                  size and pause in Settings.
+                </>
+              }
             />
           )}
           {recipients.length === 0 && (
@@ -527,6 +694,12 @@ export default function CircularsPage() {
             <Space>
               Campaign
               <Tag color={STATE_COLOUR[status.state]}>{status.state.replace(/_/g, ' ')}</Tag>
+              {status.batchCount > 1 && (
+                <Tag color={status.paused ? 'warning' : 'blue'}>
+                  run {status.batch} of {status.batchCount}
+                  {status.paused && status.nextBatchAt && ` — next at ${clockTime(status.nextBatchAt)}`}
+                </Tag>
+              )}
             </Space>
           }
           extra={
@@ -541,14 +714,73 @@ export default function CircularsPage() {
                 Refresh
               </Button>
               {running && (
-                <Popconfirm
-                  title="Stop after the current message?"
-                  onConfirm={() => cancelMut.mutate()}
-                >
-                  <Button danger icon={<StopOutlined />} loading={cancelMut.isPending}>
-                    Cancel
-                  </Button>
-                </Popconfirm>
+                <>
+                  <Popconfirm
+                    title="Pause after the current message?"
+                    description={
+                      <div style={{ maxWidth: 320 }}>
+                        The rest of the list is kept. You can carry on later — even after the
+                        API is restarted.
+                      </div>
+                    }
+                    okText="Pause"
+                    onConfirm={() => pauseMut.mutate()}
+                  >
+                    <Button icon={<PauseCircleOutlined />} loading={pauseMut.isPending}>
+                      Pause
+                    </Button>
+                  </Popconfirm>
+                  <Popconfirm
+                    title="Stop after the current message?"
+                    description={
+                      <div style={{ maxWidth: 320 }}>
+                        Closes the run. Whoever it never reached is still recorded, so this can
+                        be picked up again from the History dropdown if you change your mind.
+                      </div>
+                    }
+                    onConfirm={() => cancelMut.mutate()}
+                  >
+                    <Button danger icon={<StopOutlined />} loading={cancelMut.isPending}>
+                      Cancel
+                    </Button>
+                  </Popconfirm>
+                </>
+              )}
+              {!running && status?.runId != null && (
+                <>
+                  {status.resumable && (
+                    <Button
+                      type="primary"
+                      icon={<PlayCircleOutlined />}
+                      loading={resumeMut.isPending}
+                      disabled={busy || !cfg?.ready}
+                      onClick={() => resumeMut.mutate(status.runId!)}
+                    >
+                      Resume ({Math.max(0, status.total - status.sent - status.failed)})
+                    </Button>
+                  )}
+                  <Popconfirm
+                    title="Send this circulation again, from the top?"
+                    description={
+                      <div style={{ maxWidth: 320 }}>
+                        All {status.total} recipient{status.total === 1 ? '' : 's'} are mailed
+                        again, including everyone who already received it. Recorded as a new
+                        circulation — this one stays as it is.
+                      </div>
+                    }
+                    okText="Restart"
+                    onConfirm={() => restartMut.mutate(status.runId!)}
+                    disabled={busy || !cfg?.ready}
+                  >
+                    <Button
+                      icon={<RedoOutlined />}
+                      loading={restartMut.isPending}
+                      disabled={busy || !cfg?.ready}
+                    >
+                      Restart
+                    </Button>
+                  </Popconfirm>
+                </>
               )}
             </Space>
           }
@@ -560,7 +792,9 @@ export default function CircularsPage() {
                 status.state === 'ABORTED'
                   ? 'exception'
                   : running
-                    ? 'active'
+                    ? status.paused
+                      ? 'normal' // no animation while nothing is leaving
+                      : 'active'
                     : status.failed > 0
                       ? 'normal'
                       : 'success'
@@ -594,7 +828,19 @@ export default function CircularsPage() {
               </Col>
             </Row>
 
-            {running && status.currentEmail && (
+            {running && status.paused && (
+              <Alert
+                type="warning"
+                showIcon
+                message={
+                  status.nextBatchAt
+                    ? `Between runs — run ${status.batch} of ${status.batchCount} starts at ${clockTime(status.nextBatchAt)}`
+                    : `Between runs — run ${status.batch} of ${status.batchCount} is next`
+                }
+                description="Nothing is being sent right now. Pause or Cancel both stop the campaign here — either way the runs still to come are kept, and can be resumed."
+              />
+            )}
+            {running && !status.paused && status.currentEmail && (
               <Typography.Text type="secondary">Sending to {status.currentEmail}…</Typography.Text>
             )}
             {status.message && (

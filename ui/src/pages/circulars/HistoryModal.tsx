@@ -6,6 +6,7 @@ import {
   Descriptions,
   Empty,
   Modal,
+  Popconfirm,
   Space,
   Statistic,
   Table,
@@ -14,11 +15,18 @@ import {
   Tooltip,
   Typography,
 } from 'antd';
-import { EyeOutlined, PlusOutlined } from '@ant-design/icons';
+import {
+  EyeOutlined,
+  PlusOutlined,
+  PlayCircleOutlined,
+  RedoOutlined,
+} from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnsType } from 'antd/es/table';
+import { campaignsApi } from '../../api/campaigns';
 import { circulationsApi, circulationListsApi } from '../../api/circulations';
 import { useCurrentList, listKeys } from '../../circulations/store';
+import { reportAdd } from '../../circulations/addResult';
 import type { CirculationRecipientStatus, CirculationRunRecipient } from '../../api/types';
 
 /** Sent, failed and "never reached" have to be distinguishable at a glance. */
@@ -85,6 +93,30 @@ export default function HistoryModal({
     enabled: runId != null && messageFor != null,
   });
 
+  // Whether anything is in flight right now — the API runs one campaign at a time, so
+  // offering Resume while another send is going would only produce a 409.
+  const statusQ = useQuery({ queryKey: ['campaign', 'status'], queryFn: campaignsApi.status });
+  const busy = statusQ.data?.running ?? false;
+
+  const afterLaunch = (note: string) => {
+    message.success(note);
+    qc.invalidateQueries({ queryKey: ['campaign'] });
+    qc.invalidateQueries({ queryKey: ['circulations'] });
+    qc.invalidateQueries({ queryKey: ['circulation', runId] });
+    onClose();
+  };
+
+  const resumeMut = useMutation({
+    mutationFn: () => campaignsApi.resume(runId!),
+    onSuccess: (s) =>
+      afterLaunch(`Resumed — ${Math.max(0, s.total - s.sent - s.failed)} left to send`),
+  });
+
+  const restartMut = useMutation({
+    mutationFn: () => campaignsApi.restart(runId!),
+    onSuccess: () => afterLaunch('Restarted — sending the whole circulation again'),
+  });
+
   const detail = detailQ.data;
   const run = detail?.run;
   const rows = detail?.recipients ?? [];
@@ -114,10 +146,7 @@ export default function HistoryModal({
         })),
       ),
     onSuccess: (r) => {
-      message.success(
-        `Added ${r.added} address${r.added === 1 ? '' : 'es'} to the current list` +
-          (r.skipped ? ` (${r.skipped} already there)` : ''),
-      );
+      reportAdd(message, r, 'the current list');
       qc.invalidateQueries({ queryKey: listKeys.all });
     },
   });
@@ -220,6 +249,57 @@ export default function HistoryModal({
                 valueStyle={run.failed ? { color: '#cf1322' } : undefined}
               />
               <Statistic title="Skipped" value={run.skipped} />
+            </Space>
+
+            {/* Send it again: carry the same run on to whoever it never reached, or repeat
+                the whole thing as a circulation of its own. */}
+            <Space wrap>
+              {run.resumable && (
+                <Popconfirm
+                  title="Carry on from where it stopped?"
+                  description={
+                    <div style={{ maxWidth: 320 }}>
+                      Sends only to the {run.pending} this run never reached. Nobody already
+                      mailed is mailed twice, and the outcome is recorded against this same
+                      circulation.
+                    </div>
+                  }
+                  okText="Resume"
+                  onConfirm={() => resumeMut.mutate()}
+                  disabled={busy}
+                >
+                  <Button
+                    type="primary"
+                    icon={<PlayCircleOutlined />}
+                    loading={resumeMut.isPending}
+                    disabled={busy}
+                  >
+                    Resume ({run.pending} not reached)
+                  </Button>
+                </Popconfirm>
+              )}
+              <Popconfirm
+                title="Send this circulation again, from the top?"
+                description={
+                  <div style={{ maxWidth: 340 }}>
+                    Everyone here is mailed again, including the {run.sent} who already received
+                    it. Recorded as a new circulation — this one is left as it is. Addresses
+                    flagged not-working since are dropped.
+                  </div>
+                }
+                okText="Restart"
+                onConfirm={() => restartMut.mutate()}
+                disabled={busy}
+              >
+                <Button icon={<RedoOutlined />} loading={restartMut.isPending} disabled={busy}>
+                  Restart
+                </Button>
+              </Popconfirm>
+              {busy && (
+                <Typography.Text type="secondary">
+                  Another campaign is sending — one runs at a time.
+                </Typography.Text>
+              )}
             </Space>
 
             {run.message && (

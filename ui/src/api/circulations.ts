@@ -1,5 +1,6 @@
 import { client, cleanParams } from './client';
 import type {
+  AddEntriesResult,
   CirculationList,
   CirculationListEntryRequest,
   CirculationListRequest,
@@ -42,10 +43,13 @@ export const circulationListsApi = {
   remove: (id: number) =>
     client.delete<void>(`/circulation-lists/${id}`).then((r) => r.data),
 
-  /** Returns {added, skipped} — addresses already on the list are skipped, not duplicated. */
+  /**
+   * Addresses already on the list are skipped rather than duplicated, and values that are
+   * not sendable addresses are dropped rather than failing the call — see AddEntriesResult.
+   */
   addEntries: (id: number, entries: CirculationListEntryRequest[]) =>
     client
-      .post<{ added: number; skipped: number }>(`/circulation-lists/${id}/entries`, entries)
+      .post<AddEntriesResult>(`/circulation-lists/${id}/entries`, entries)
       .then((r) => r.data),
 
   updateEntry: (id: number, entryId: number, body: CirculationListEntryRequest) =>

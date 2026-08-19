@@ -1,5 +1,6 @@
 package com.chartering.controller;
 
+import com.chartering.dto.AddEntriesResponse;
 import com.chartering.dto.CirculationListEntryRequest;
 import com.chartering.dto.CirculationListRequest;
 import com.chartering.dto.CirculationListResponse;
@@ -95,15 +96,21 @@ public class CirculationListController {
 
     // ---------------------------------------------------------------- entries
 
+    // Deliberately not @Valid: this is a bulk add of addresses the user never typed, taken
+    // from contact records that predate this system, and a single malformed one among them
+    // must not 400 the whole batch. The service drops those rows and names them in the
+    // response instead. Hand-typed addresses are validated where they are typed — see
+    // updateEntry below.
     @PostMapping("/{id}/entries")
     @Operation(summary = "Add addresses to a list",
-            description = "Addresses already on the list are skipped. Returns {added, skipped} "
-                    + "so the caller can report \"added 12 (3 already there)\".")
-    public ResponseEntity<Map<String, Integer>> addEntries(
+            description = "Addresses already on the list are skipped, and values that are not "
+                    + "usable email addresses are dropped rather than refused. Returns "
+                    + "{added, skipped, invalid, invalidEmails} so the caller can report "
+                    + "\"added 12 (3 already there, 1 unusable)\" and say which.")
+    public ResponseEntity<AddEntriesResponse> addEntries(
             @PathVariable Long id,
-            @Valid @RequestBody List<CirculationListEntryRequest> entries) {
-        int added = listService.addEntries(id, entries);
-        return ResponseEntity.ok(Map.of("added", added, "skipped", entries.size() - added));
+            @RequestBody List<CirculationListEntryRequest> entries) {
+        return ResponseEntity.ok(listService.addEntries(id, entries));
     }
 
     @PostMapping("/{id}/entries/remove")

@@ -36,6 +36,7 @@ import {
   useListMutations,
   listKeys,
 } from '../../circulations/store';
+import { reportAdd } from '../../circulations/addResult';
 import type { CirculationListEntry } from '../../api/types';
 
 /** Text columns the user can tweak inline (handy before a mail-merge); ids stay read-only. */
@@ -111,10 +112,7 @@ export default function CirculationListsPage() {
         picked.map(({ id: _id, ...fields }) => fields),
       ),
     onSuccess: (r) => {
-      message.success(
-        `Added ${r.added} address${r.added === 1 ? '' : 'es'} to the current list` +
-          (r.skipped ? ` (${r.skipped} already there)` : ''),
-      );
+      reportAdd(message, r, 'the current list');
       invalidateLists();
     },
   });
@@ -133,10 +131,7 @@ export default function CirculationListsPage() {
       ),
     onSuccess: (r, targetId) => {
       const name = savedLists.data?.find((l) => l.id === targetId)?.name ?? 'the list';
-      message.success(
-        `Added ${r.added} address${r.added === 1 ? '' : 'es'} to "${name}"` +
-          (r.skipped ? ` (${r.skipped} already there)` : ''),
-      );
+      reportAdd(message, r, `"${name}"`);
       invalidateLists();
     },
   });

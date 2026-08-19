@@ -54,6 +54,7 @@ chartering:
     min-delay-ms: ${MAIL_MIN_DELAY_MS:3000}
     max-delay-ms: ${MAIL_MAX_DELAY_MS:10000}
     max-recipients-per-campaign: ${MAIL_MAX_RECIPIENTS:200}
+    batch-pause-ms: ${MAIL_BATCH_PAUSE_MS:900000}
     max-retries: ${MAIL_MAX_RETRIES:2}
     retry-backoff-ms: ${MAIL_RETRY_BACKOFF_MS:10000}
     abort-after-consecutive-failures: ${MAIL_ABORT_AFTER_FAILURES:5}

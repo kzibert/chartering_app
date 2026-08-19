@@ -43,7 +43,15 @@ export default function AddToListButton({ ct }: { ct: ContactResponse }) {
             });
           } else {
             add.mutate([contactToEntry(ct)], {
-              onSuccess: () => message.success(`Added ${ct.contactValue}`),
+              // A single row can come back rejected as unusable — the address on the
+              // contact is not one that can be sent to — so the outcome decides the
+              // wording rather than the call having succeeded.
+              onSuccess: (r) =>
+                r.added
+                  ? message.success(`Added ${ct.contactValue}`)
+                  : message.warning(
+                      `${ct.contactValue} is not a usable email address — fix the contact first.`,
+                    ),
             });
           }
         }}

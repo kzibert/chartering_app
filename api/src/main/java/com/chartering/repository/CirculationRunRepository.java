@@ -29,8 +29,26 @@ public interface CirculationRunRepository extends JpaRepository<CirculationRun, 
 
     /**
      * A run left RUNNING with no finishedAt was interrupted by an API restart mid-send —
-     * the process that owned it is gone, so nothing will ever complete it. Marked ABORTED
-     * at startup rather than left to look permanently in flight.
+     * the process that owned it is gone, so nothing in this one will ever continue it on
+     * its own. Reopened as INTERRUPTED at startup: no longer in flight, but still carrying
+     * the PENDING rows that make it resumable.
      */
     List<CirculationRun> findByStateAndFinishedAtIsNull(String state);
+
+    /**
+     * Runs that still have somebody to send to. A run is resumable whatever ended it —
+     * paused by hand, cancelled, aborted on errors, or cut off by an API restart — because
+     * the only thing resuming needs is addresses still marked PENDING.
+     *
+     * <p>{@code state <> 'RUNNING'} excludes the campaign in flight right now. A run left
+     * RUNNING by a dead process is reopened as INTERRUPTED at startup, so RUNNING here
+     * always means live.
+     */
+    @Query("""
+            select distinct r from CirculationRun r
+              join r.recipients p
+            where p.status = 'PENDING' and r.state <> 'RUNNING'
+            order by r.startedAt desc
+            """)
+    List<CirculationRun> findResumable();
 }

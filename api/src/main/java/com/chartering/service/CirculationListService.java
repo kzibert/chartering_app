@@ -1,5 +1,6 @@
 package com.chartering.service;
 
+import com.chartering.dto.AddEntriesResponse;
 import com.chartering.dto.CirculationListEntryRequest;
 import com.chartering.dto.CirculationListEntryResponse;
 import com.chartering.dto.CirculationListRequest;
@@ -9,6 +10,7 @@ import com.chartering.model.CirculationList;
 import com.chartering.model.CirculationListEntry;
 import com.chartering.model.Contact;
 import com.chartering.repository.CirculationListRepository;
+import jakarta.validation.Validator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,6 +40,8 @@ import java.util.stream.Collectors;
 public class CirculationListService {
 
     private final CirculationListRepository lists;
+    /** Used to apply the request DTO's own {@code @Email} rule to collected addresses. */
+    private final Validator validator;
 
     // ---------------------------------------------------------------- reading
 
@@ -133,23 +137,42 @@ public class CirculationListService {
     // ---------------------------------------------------------------- entries
 
     /**
-     * Add addresses to a list, skipping the ones already on it.
+     * Add addresses to a list, skipping the ones already on it and the ones that are not
+     * addresses at all.
      *
-     * @return how many rows were actually added — the UI reports "added N (M already there)",
-     * which is only honest if the duplicate check happens where the write happens.
+     * <p>Unusable addresses are dropped rather than refused. A bulk add carries whatever the
+     * contact records happen to hold — a value with a space in it, a stray pipe from an old
+     * import — and rejecting the request over one of them would cost the user the other
+     * several hundred good addresses with nothing to show for it. They come back named in
+     * the result so the contact record can be put right.
+     *
+     * @return what was written, what was already there, and what was unusable — the UI's
+     * "added N (M already there)" is only honest if all three are counted where the write
+     * happens.
      */
     @Transactional
-    public int addEntries(Long listId, List<CirculationListEntryRequest> requests) {
+    public AddEntriesResponse addEntries(Long listId, List<CirculationListEntryRequest> requests) {
         CirculationList l = find(listId);
         Set<String> seen = existingAddresses(l);
+        Set<String> unusable = new LinkedHashSet<>();
         int added = 0;
+        int skipped = 0;
+        int invalid = 0;
         for (CirculationListEntryRequest req : requests) {
-            String email = normalise(req.getEmail());
-            if (email == null || !seen.add(email)) {
+            String email = req.getEmail() == null ? null : req.getEmail().trim();
+            if (!isAddress(email)) {
+                invalid++;
+                if (email != null && !email.isEmpty()) {
+                    unusable.add(email);
+                }
+                continue;
+            }
+            if (!seen.add(normalise(email))) {
+                skipped++;
                 continue;
             }
             CirculationListEntry e = new CirculationListEntry();
-            e.setEmail(req.getEmail().trim());
+            e.setEmail(email);
             e.setContactId(req.getContactId());
             e.setPersonId(req.getPersonId());
             e.setPersonName(req.getPersonName());
@@ -161,13 +184,22 @@ public class CirculationListService {
             added++;
         }
         lists.save(l);
-        return added;
+        return new AddEntriesResponse(added, skipped, invalid, List.copyOf(unusable));
     }
 
     /** Add contacts straight from a selection, without the caller shaping them into DTOs. */
     @Transactional
-    public int addContacts(Long listId, List<Contact> contacts) {
+    public AddEntriesResponse addContacts(Long listId, List<Contact> contacts) {
         return addEntries(listId, contacts.stream().map(CirculationListService::toEntryRequest).toList());
+    }
+
+    /**
+     * Whether an address can be sent to. Checked against the request DTO's own constraints
+     * so that a row this method lets onto a list is one the campaign's identical
+     * {@code @Email} rule will accept at send time.
+     */
+    private boolean isAddress(String email) {
+        return validator.validateValue(CirculationListEntryRequest.class, "email", email).isEmpty();
     }
 
     /** Edit one row's merge fields. The list is a document; this does not touch the contact. */

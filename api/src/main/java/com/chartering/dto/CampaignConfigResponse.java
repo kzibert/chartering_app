@@ -24,6 +24,9 @@ public record CampaignConfigResponse(
         /** Gap between messages is random in [minDelayMs, maxDelayMs] — never fixed. */
         long minDelayMs,
         long maxDelayMs,
+        /** Recipients per run; a longer list is sent as several runs of this size. */
         int maxRecipientsPerCampaign,
+        /** Quiet gap between those runs, so the UI can show the plan before sending. */
+        long batchPauseMs,
         boolean unsubscribeConfigured) {
 }

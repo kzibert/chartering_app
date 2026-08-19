@@ -29,4 +29,14 @@ public interface CirculationRunRecipientRepository extends JpaRepository<Circula
                        @Param("attempts") int attempts,
                        @Param("error") String error,
                        @Param("sentAt") LocalDateTime sentAt);
+
+    /**
+     * How many of a run's addresses ended up in one status.
+     *
+     * <p>The run-level counters are written once, when the run closes — an UPDATE per
+     * message would double the write cost of a send for a number nobody reads mid-run. A
+     * run killed with its process never got that write, so its counters are rebuilt from
+     * these rows, which <em>are</em> written as each message goes out.
+     */
+    int countByRunIdAndStatus(Long runId, String status);
 }

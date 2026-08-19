@@ -52,10 +52,10 @@ public class SettingsController {
         CirculationSettings d = settings.circulationDefaults();
         return new CirculationSettingsResponse(
                 s.fromAddress(), s.fromName(), s.smtpHost(), s.smtpPort(),
-                s.minDelayMs(), s.maxDelayMs(), s.maxRecipientsPerCampaign(),
+                s.minDelayMs(), s.maxDelayMs(), s.maxRecipientsPerCampaign(), s.batchPauseMs(),
                 !s.equals(d),
                 CirculationSettingsResponse.defaultsOnly(d.fromAddress(), d.fromName(),
                         d.smtpHost(), d.smtpPort(), d.minDelayMs(), d.maxDelayMs(),
-                        d.maxRecipientsPerCampaign()));
+                        d.maxRecipientsPerCampaign(), d.batchPauseMs()));
     }
 }

@@ -43,9 +43,11 @@ public class SettingsService {
     public static final String MIN_DELAY_MS = "mail.minDelayMs";
     public static final String MAX_DELAY_MS = "mail.maxDelayMs";
     public static final String MAX_RECIPIENTS = "mail.maxRecipientsPerCampaign";
+    public static final String BATCH_PAUSE_MS = "mail.batchPauseMs";
 
     private static final List<String> CIRCULATION_KEYS = List.of(
-            FROM_ADDRESS, FROM_NAME, SMTP_HOST, SMTP_PORT, MIN_DELAY_MS, MAX_DELAY_MS, MAX_RECIPIENTS);
+            FROM_ADDRESS, FROM_NAME, SMTP_HOST, SMTP_PORT, MIN_DELAY_MS, MAX_DELAY_MS,
+            MAX_RECIPIENTS, BATCH_PAUSE_MS);
 
     /** Good enough to catch a typo; the mail server is the real authority on an address. */
     private static final Pattern EMAIL = Pattern.compile("^[^@\\s]+@[^@\\s.]+(\\.[^@\\s.]+)+$");
@@ -89,14 +91,15 @@ public class SettingsService {
                 parse(stored, SMTP_PORT, defaultPort, Integer::parseInt),
                 parse(stored, MIN_DELAY_MS, props.getMinDelayMs(), Long::parseLong),
                 parse(stored, MAX_DELAY_MS, props.getMaxDelayMs(), Long::parseLong),
-                parse(stored, MAX_RECIPIENTS, props.getMaxRecipientsPerCampaign(), Integer::parseInt));
+                parse(stored, MAX_RECIPIENTS, props.getMaxRecipientsPerCampaign(), Integer::parseInt),
+                parse(stored, BATCH_PAUSE_MS, props.getBatchPauseMs(), Long::parseLong));
     }
 
     /** What the settings screen offers as "reset to" — the configured baseline. */
     public CirculationSettings circulationDefaults() {
         return new CirculationSettings(props.getFromAddress(), props.getFromName(),
                 defaultHost, defaultPort, props.getMinDelayMs(), props.getMaxDelayMs(),
-                props.getMaxRecipientsPerCampaign());
+                props.getMaxRecipientsPerCampaign(), props.getBatchPauseMs());
     }
 
     // ---------------------------------------------------------------- writing
@@ -111,9 +114,11 @@ public class SettingsService {
         put(MIN_DELAY_MS, String.valueOf(req.getMinDelayMs()));
         put(MAX_DELAY_MS, String.valueOf(req.getMaxDelayMs()));
         put(MAX_RECIPIENTS, String.valueOf(req.getMaxRecipientsPerCampaign()));
-        log.info("Circulation settings updated: from {} <{}> via {}:{} pacing {}-{}ms cap {}",
+        put(BATCH_PAUSE_MS, String.valueOf(req.getBatchPauseMs()));
+        log.info("Circulation settings updated: from {} <{}> via {}:{} pacing {}-{}ms cap {} pause {}ms",
                 req.getFromName(), req.getFromAddress(), req.getSmtpHost(), req.getSmtpPort(),
-                req.getMinDelayMs(), req.getMaxDelayMs(), req.getMaxRecipientsPerCampaign());
+                req.getMinDelayMs(), req.getMaxDelayMs(), req.getMaxRecipientsPerCampaign(),
+                req.getBatchPauseMs());
         return circulation();
     }
 
@@ -170,6 +175,12 @@ public class SettingsService {
         if (req.getMaxRecipientsPerCampaign() < 1) {
             throw new IllegalArgumentException("The per-run cap must be at least 1.");
         }
+        if (req.getBatchPauseMs() < 0) {
+            throw new IllegalArgumentException("The pause between runs cannot be negative.");
+        }
+        if (req.getBatchPauseMs() > MAX_DELAY_ALLOWED_MS) {
+            throw new IllegalArgumentException("A pause of over 24 hours between runs is not sensible.");
+        }
     }
 
     private static <T> T parse(Map<String, String> stored, String key, T fallback,
@@ -194,12 +205,18 @@ public class SettingsService {
      */
     public record CirculationSettings(String fromAddress, String fromName, String smtpHost,
                                       int smtpPort, long minDelayMs, long maxDelayMs,
-                                      int maxRecipientsPerCampaign) {
+                                      int maxRecipientsPerCampaign, long batchPauseMs) {
 
         /** Mean gap, used for the "this will take about N minutes" estimate. */
         public long averageDelayMs() {
             long min = Math.max(0, minDelayMs);
             return (min + Math.max(min, maxDelayMs)) / 2;
+        }
+
+        /** How many runs a campaign of this size is sent as. Never fewer than one. */
+        public int batchCount(int recipients) {
+            int size = Math.max(1, maxRecipientsPerCampaign);
+            return Math.max(1, (recipients + size - 1) / size);
         }
     }
 }

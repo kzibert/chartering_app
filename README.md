@@ -57,7 +57,10 @@ db/
 db-export/               # portable full snapshot for reproducing the DB elsewhere
   chartering-full.dump   # pg_dump -Fc, --no-owner (restore with pg_restore)
   chartering-full.sql    # same content as plain SQL (restore with psql)
+  history/               # timestamped copy of every refresh (gitignored)
   README.md              # restore instructions
+  EXPORTING.md           # how to refresh all four dumps, and how to verify them
+refresh-db-export.bat    # one-click refresh of db-export/, keeping the previous dumps
 api/                     # Spring Boot backend, package com.chartering (multi-stage Dockerfile)
 ui/                      # React SPA (multi-stage: node build -> nginx)
 logs/                    # campaign send log, bind-mounted from the api container (gitignored)
@@ -90,7 +93,7 @@ enabled under Mail Settings → Mail Accounts.
 | One message per recipient, no CC/BCC | always on |
 | Gap between messages drawn at random from a range (default 3–10s), never a fixed interval | Settings tab (defaults `MAIL_MIN_DELAY_MS`, `MAIL_MAX_DELAY_MS`) |
 | Duplicate addresses dropped (case-insensitive) | always on |
-| Per-campaign ceiling, checked before the first send | Settings tab (default `MAIL_MAX_RECIPIENTS`) |
+| Per-run ceiling: a longer list is split into several runs, spaced apart, rather than refused | Settings tab (defaults `MAIL_MAX_RECIPIENTS`, `MAIL_BATCH_PAUSE_MS`) |
 | Transient (4xx) failures retried with doubling backoff; permanent (5xx) never retried | `MAIL_MAX_RETRIES`, `MAIL_RETRY_BACKOFF_MS` |
 | Consecutive failures abort the run, so a throttle doesn't escalate into a block | `MAIL_ABORT_AFTER_FAILURES` |
 | Auth rejection aborts immediately instead of retrying a bad password 200 times | always on |
@@ -101,6 +104,20 @@ enabled under Mail Settings → Mail Accounts.
 
 Only one campaign runs at a time process-wide — a second start returns `409`. Two concurrent
 runs would each honour the throttle while together doubling the real send rate.
+
+**Lists longer than the per-run cap are split, not refused.** 256 recipients with the cap at 50
+go out as six runs of up to 50, `MAIL_BATCH_PAUSE_MS` apart (default 15 min), driven by the same
+worker and the same campaign: the Circulars tab shows `run 3 of 6`, the progress bar counts the
+whole 256, and the estimate includes the pauses. Between runs the campaign is *paused* — nothing
+is in flight and **Cancel** ends it there, leaving the runs still to come unsent. An abort (auth
+rejection, or the consecutive-failure breaker) likewise stops the whole campaign, not just the
+run it happened in. The pause is held in memory, so an API restart mid-campaign ends it — the
+history entry closes as `ABORTED` with its unreached recipients still `PENDING`.
+
+What splitting buys is a smaller burst, which is what per-hour allowances measure. It does not
+fit a campaign inside a **daily** cap that is smaller than the campaign: 300 messages count as
+300 whatever their spacing, and exceeding a plan's daily limit can suspend outgoing mail on the
+account. That total is shown before sending, on the Send confirmation and in the plan banner.
 
 ### Templates and footers
 
@@ -188,7 +205,7 @@ any flag, and are dropped again at send time.
 
 Every run is recorded permanently and reachable from the **History** dropdown on the Circulars tab.
 Opening one shows when it ran, the identity it went out under, the list and footer it used, and
-every address it touched — including those skipped as duplicates or as dead, and those a cancelled
+every address it touched — including those skipped as duplicates or as dead, and those a stopped
 run never reached. Clicking a recipient reproduces **the exact message that person received**, both
 the HTML and the plain-text alternative.
 
@@ -204,11 +221,42 @@ therefore costs one copy of the body rather than three hundred, which is what ma
 history indefinitely reasonable. Template, footer and list are recorded by **name**, so deleting a
 footer later cannot rewrite what history says was sent.
 
-A run left `RUNNING` by an API restart is closed as `ABORTED` at next startup, with its unreached
-recipients still marked `PENDING` — "never reached" is the fact you need when re-sending.
-
 Endpoints: `GET /api/v1/circulations` (paged, newest first), `GET /circulations/{id}`,
 `GET /circulations/{id}/recipients/{recipientId}/message`, `DELETE /circulations/{id}`.
+
+### Pausing, resuming and restarting
+
+A circulation can be stopped part-way and picked up later, and a finished one can be sent
+again. Neither needs anything held in memory: the history above already stores the composed
+circular and every address with its own status, so **the queue for a resume is simply the rows
+still marked `PENDING`**. That is what makes a resume survive an API restart — there is no
+in-flight state anywhere to lose, only rows to read back.
+
+- **Pause** stops after the message already handed to the transport (stopping sooner would have
+  history claim someone was never reached who has the circular in their inbox) and leaves the
+  run open as `PAUSED`. **Cancel** stops the same way but closes the run as `CANCELLED`.
+- **Resume** carries the *same* run on, mailing only what it never reached — one circular sent
+  over two sittings stays one entry in history, so "who received this?" keeps one answer. The
+  progress bar and counters continue from where they stopped rather than restarting at zero.
+- **Restart** opens a *new* run over the same circular and the same addresses. The first send
+  happened; rewriting its record afterwards would make the history useless. The circular is
+  replayed exactly as that run stored it, footer included, so a re-send is the same message
+  even if the footer has been edited or deleted since.
+- A run left `RUNNING` by an API restart is reopened as `INTERRUPTED` at next startup rather
+  than abandoned, with its run-level counters rebuilt from the recipient rows. Shutting the API
+  down mid-send asks the run to pause and gives it a moment to record that, so the usual case
+  is a clean `PAUSED`; `INTERRUPTED` is the backstop for a hard kill.
+- Anything paused, cancelled, aborted or interrupted with people still to reach is offered on
+  the Circulars tab as a banner, and carries **Resume** and **Restart** in its History entry.
+  *Not now* hides the banner in this browser only — the run stays resumable, because having
+  people still to reach is a fact about the run and not a preference.
+- A resume re-checks the remaining addresses against the not-working flags, so one flagged dead
+  during the pause is dropped then rather than mailed. Those move from the run's total to its
+  skipped count, which is why a resumed run can finish with a smaller total than it started with.
+- Only one campaign runs at a time, so resume and restart are refused while another is sending.
+
+Endpoints: `POST /api/v1/campaigns/current/pause`, `GET /campaigns/resumable`,
+`POST /campaigns/runs/{runId}/resume`, `POST /campaigns/runs/{runId}/restart`.
 
 ### Settings
 
@@ -221,6 +269,7 @@ The **Settings** tab (bottom of the sidebar) edits the circulation knobs at runt
 | SMTP host / port | `smtp.zoho.eu` / `465` |
 | Gap between messages (random within the range) | 3–10s |
 | Max recipients per run | 200 |
+| Pause between runs of a split circulation | 15 min |
 
 Only values you actually change are stored. An absent key falls through to `application.yml` and
 therefore to the `.env` variables, so those stay meaningful as the baseline for a fresh
@@ -246,7 +295,8 @@ Endpoints: `GET /api/v1/settings/circulation`, `PUT` to change, `DELETE` to rese
 
 `logs/campaign-current.log` (bind-mounted from the container) records every recipient with
 its outcome. A run that finished cleanly is **overwritten** by the next one; a run that
-failed, aborted, or was cancelled is **rotated** to `campaign-current-<timestamp>.log` first,
+failed, aborted, was cancelled or was paused is **rotated** to `campaign-current-<timestamp>.log`
+first,
 since that's exactly the record you need to see who already received the circular. The
 outcome is recovered from the log's own end marker, so the rule survives an API restart.
 
@@ -254,8 +304,9 @@ It is a convenience view of the run in progress, not the record of it — the du
 the circulation history above, which survives rotation, restarts and the next run.
 
 Endpoints: `POST /api/v1/campaigns` (202, sends in the background), `GET /campaigns/current`,
-`POST /campaigns/current/cancel`, `GET /campaigns/current/log`, `POST /campaigns/test?to=…`,
-`GET /campaigns/config`, plus CRUD on `/api/v1/email-templates` and `/api/v1/email-footers`.
+`POST /campaigns/current/cancel`, `POST /campaigns/current/pause`, `GET /campaigns/current/log`,
+`POST /campaigns/test?to=…`, `GET /campaigns/config`, plus the resume/restart endpoints above
+and CRUD on `/api/v1/email-templates` and `/api/v1/email-footers`.
 
 ## Local dev (without Docker)
 
@@ -271,3 +322,7 @@ docker compose exec -T db psql -U chartering_user -d chartering < db/seed/charte
 # or the custom-format dump
 docker compose exec -T db pg_restore -U chartering_user -d chartering --no-owner < db/chartering.dump
 ```
+
+Going the other way — refreshing the dumps *from* the current database — is
+`refresh-db-export.bat` for `db-export/`, and [db-export/EXPORTING.md](db-export/EXPORTING.md)
+for all four files plus the checks worth running before trusting them.

@@ -3,6 +3,7 @@ package com.chartering.controller;
 import com.chartering.dto.CampaignConfigResponse;
 import com.chartering.dto.CampaignRequest;
 import com.chartering.dto.CampaignStatusResponse;
+import com.chartering.dto.CirculationRunResponse;
 import com.chartering.service.EmailCampaignService;
 import com.chartering.service.MailTemplateService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -17,6 +18,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -24,6 +26,10 @@ import java.util.Map;
  *
  * <p>Starting a campaign returns immediately with 202 — a paced run takes minutes, so the
  * UI polls {@code /status} and tails {@code /log} rather than holding a request open.
+ *
+ * <p>A run can be paused and picked up later, and a past one can be sent again. Both are
+ * keyed by the circulation-history run id rather than by anything held in memory, which is
+ * why they still work after the API has been restarted.
  */
 @RestController
 @RequestMapping("/api/v1/campaigns")
@@ -59,9 +65,45 @@ public class CampaignController {
     }
 
     @PostMapping("/current/cancel")
-    @Operation(summary = "Stop the running campaign after the message currently in flight")
+    @Operation(summary = "Stop the running campaign after the message currently in flight, and close it",
+            description = "The addresses it never reached stay recorded as PENDING, so a cancel "
+                    + "decided too hastily can still be resumed.")
     public ResponseEntity<CampaignStatusResponse> cancel() {
         return ResponseEntity.ok(campaignService.cancel());
+    }
+
+    @PostMapping("/current/pause")
+    @Operation(summary = "Stop the running campaign after the message currently in flight, and keep it open",
+            description = "The run stays resumable and survives an API restart — the addresses "
+                    + "still to reach are held in the circulation history, not in memory.")
+    public ResponseEntity<CampaignStatusResponse> pause() {
+        return ResponseEntity.ok(campaignService.pause());
+    }
+
+    @GetMapping("/resumable")
+    @Operation(summary = "Circulations that stopped with somebody still to reach",
+            description = "Newest first. Covers runs paused by hand, cancelled, aborted on "
+                    + "errors, and those cut off by an API restart.")
+    public ResponseEntity<List<CirculationRunResponse>> resumable() {
+        return ResponseEntity.ok(campaignService.resumable());
+    }
+
+    @PostMapping("/runs/{runId}/resume")
+    @Operation(summary = "Carry a stopped circulation on from where it stopped",
+            description = "Sends only to the addresses that run never reached, and records the "
+                    + "outcome against the same history entry — one circular sent over two "
+                    + "sittings stays one circulation.")
+    public ResponseEntity<CampaignStatusResponse> resume(@PathVariable Long runId) {
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(campaignService.resume(runId));
+    }
+
+    @PostMapping("/runs/{runId}/restart")
+    @Operation(summary = "Send a past circulation again, from the top",
+            description = "Opens a new history entry rather than rewriting the old one, and "
+                    + "replays the circular exactly as that run stored it. Addresses flagged "
+                    + "not-working since are dropped, as on any other send.")
+    public ResponseEntity<CampaignStatusResponse> restart(@PathVariable Long runId) {
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(campaignService.restart(runId));
     }
 
     @GetMapping(value = "/current/log", produces = MediaType.TEXT_PLAIN_VALUE)

@@ -42,6 +42,11 @@ public class CirculationSettingsRequest {
     @Min(value = 0, message = "the longest gap cannot be negative")
     private long maxDelayMs;
 
+    /** Recipients one run may cover; a bigger campaign is split into runs of this size. */
     @Min(value = 1, message = "the per-run cap must be at least 1")
     private int maxRecipientsPerCampaign;
+
+    /** Quiet gap between one run of a split campaign and the next. 0 sends them back to back. */
+    @Min(value = 0, message = "the pause between runs cannot be negative")
+    private long batchPauseMs;
 }

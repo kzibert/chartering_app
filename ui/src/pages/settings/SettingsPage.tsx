@@ -26,6 +26,10 @@ import type { CirculationSettings, CirculationSettingsRequest } from '../../api/
 const toSeconds = (ms: number) => Math.round(ms / 100) / 10;
 const toMillis = (s: number) => Math.round(s * 1000);
 
+/** The pause between runs is an hours-and-minutes affair, so it is typed in minutes. */
+const toMinutes = (ms: number) => Math.round(ms / 6000) / 10;
+const minutesToMillis = (m: number) => Math.round(m * 60000);
+
 interface FormValues {
   fromAddress: string;
   fromName: string;
@@ -34,6 +38,7 @@ interface FormValues {
   minDelaySeconds: number;
   maxDelaySeconds: number;
   maxRecipientsPerCampaign: number;
+  batchPauseMinutes: number;
 }
 
 const toForm = (s: CirculationSettingsRequest): FormValues => ({
@@ -44,6 +49,7 @@ const toForm = (s: CirculationSettingsRequest): FormValues => ({
   minDelaySeconds: toSeconds(s.minDelayMs),
   maxDelaySeconds: toSeconds(s.maxDelayMs),
   maxRecipientsPerCampaign: s.maxRecipientsPerCampaign,
+  batchPauseMinutes: toMinutes(s.batchPauseMs),
 });
 
 export default function SettingsPage() {
@@ -77,6 +83,7 @@ export default function SettingsPage() {
         minDelayMs: toMillis(v.minDelaySeconds),
         maxDelayMs: toMillis(v.maxDelaySeconds),
         maxRecipientsPerCampaign: v.maxRecipientsPerCampaign,
+        batchPauseMs: minutesToMillis(v.batchPauseMinutes),
       }),
     onSuccess: () => {
       message.success('Circulation settings saved');
@@ -228,7 +235,7 @@ export default function SettingsPage() {
                 <InputNumber style={{ width: '100%' }} min={0} max={3600} step={0.5} />
               </Form.Item>
             </Col>
-            <Col xs={24} md={8}>
+            <Col xs={12} md={6}>
               <Form.Item
                 name="maxRecipientsPerCampaign"
                 label="Max recipients per run"
@@ -236,6 +243,16 @@ export default function SettingsPage() {
                 extra={d && defaultHint('Default', d.maxRecipientsPerCampaign)}
               >
                 <InputNumber style={{ width: '100%' }} min={1} max={100000} />
+              </Form.Item>
+            </Col>
+            <Col xs={12} md={6}>
+              <Form.Item
+                name="batchPauseMinutes"
+                label="Pause between runs (min)"
+                rules={[{ required: true, message: 'Required' }]}
+                extra={d && defaultHint('Default', toMinutes(d.batchPauseMs))}
+              >
+                <InputNumber style={{ width: '100%' }} min={0} max={1440} step={5} />
               </Form.Item>
             </Col>
           </Row>
@@ -249,10 +266,13 @@ export default function SettingsPage() {
             <>
               The gap between two messages is drawn at random from the range above — never a
               fixed interval, because a regular cadence is the classic bulk-sender fingerprint.
-              The per-run cap is checked before the first message goes out. Changes apply to
-              the next circulation you start; one already sending keeps the pacing it began
-              with. Raising the cap does not raise your mailbox provider's own daily limit —
-              check the plan before you do.
+              A circulation with more recipients than the per-run cap is not refused: it is
+              sent as several runs of that size with the pause above between them, which keeps
+              each burst inside the provider's per-hour allowance. It does not fit a
+              circulation inside a <b>daily</b> limit — 300 messages are 300 messages however
+              they are spaced, so check the plan before sending a list that large. Changes
+              apply to the next circulation you start; one already sending keeps the pacing
+              and run size it began with.
             </>
           }
         />

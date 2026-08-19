@@ -38,6 +38,11 @@ import java.util.List;
 @Slf4j
 public class CirculationHistoryService {
 
+    /** Stopped by hand, resumable. Set by the campaign; nothing else writes it. */
+    public static final String PAUSED = "PAUSED";
+    /** Stopped by an API restart, resumable. */
+    public static final String INTERRUPTED = "INTERRUPTED";
+
     private final CirculationRunRepository runs;
     private final CirculationRunRecipientRepository recipients;
     private final MailTemplateService templates;
@@ -45,8 +50,15 @@ public class CirculationHistoryService {
 
     /**
      * A run still marked RUNNING at startup belonged to a process that no longer exists —
-     * the API was restarted mid-send. Nothing will ever finish it, so it is closed here
-     * rather than left looking permanently in flight in the History dropdown.
+     * the API was restarted mid-send. Nothing in <em>this</em> process is sending it, so it
+     * is taken out of flight here rather than left looking permanently in progress.
+     *
+     * <p>INTERRUPTED, not ABORTED: the recipient rows say exactly who was already reached,
+     * so the run can be picked up where it stopped. {@code finishedAt} stays null because
+     * the run has not finished — it is waiting for someone to resume or discard it.
+     *
+     * <p>The run-level counters are rebuilt from the rows first. They are normally written
+     * once, when a run closes, and a run killed with its process never got that write.
      *
      * <p>Bound to ApplicationReadyEvent rather than @PostConstruct on purpose: the
      * transactional proxy is not in place while a bean is still initialising, so
@@ -57,14 +69,16 @@ public class CirculationHistoryService {
     public void closeInterruptedRuns() {
         List<CirculationRun> stale = runs.findByStateAndFinishedAtIsNull("RUNNING");
         for (CirculationRun run : stale) {
-            run.setState("ABORTED");
-            run.setFinishedAt(LocalDateTime.now());
+            run.setSent(recipients.countByRunIdAndStatus(run.getId(), CirculationRunRecipient.SENT));
+            run.setFailed(recipients.countByRunIdAndStatus(run.getId(), CirculationRunRecipient.FAILED));
+            run.setState(INTERRUPTED);
             run.setMessage("Interrupted — the API restarted while this circulation was sending. "
-                    + "Recipients still marked PENDING were never reached.");
+                    + "Everyone still marked PENDING was never reached; resume to send to them.");
             runs.save(run);
         }
         if (!stale.isEmpty()) {
-            log.warn("Closed {} circulation run(s) left RUNNING by a previous process", stale.size());
+            log.warn("Reopened {} circulation run(s) left RUNNING by a previous process as {}",
+                    stale.size(), INTERRUPTED);
         }
     }
 
@@ -141,6 +155,113 @@ public class CirculationHistoryService {
         });
     }
 
+    /**
+     * Take the run out of flight without ending it. Everyone still PENDING stays PENDING,
+     * which is precisely what makes the run resumable — and {@code finishedAt} stays null,
+     * so a run paused now is still paused after an API restart rather than being swept up
+     * as an interrupted one.
+     */
+    @Transactional
+    public void pause(Long runId, int sent, int failed, int skipped, String message) {
+        runs.findById(runId).ifPresent(run -> {
+            run.setState(PAUSED);
+            run.setSent(sent);
+            run.setFailed(failed);
+            run.setSkipped(skipped);
+            run.setMessage(message);
+            run.setFinishedAt(null);
+            runs.save(run);
+        });
+    }
+
+    /**
+     * Put a stopped run back in flight for a resume. The totals are passed in because a
+     * resume re-checks the remaining addresses against the not-working flags, and anyone
+     * dropped there moves from the run's total to its skipped count.
+     */
+    @Transactional
+    public void reopen(Long runId, int total, int skipped) {
+        runs.findById(runId).ifPresent(run -> {
+            run.setState("RUNNING");
+            run.setTotal(total);
+            run.setSkipped(skipped);
+            run.setFinishedAt(null);
+            run.setMessage(null);
+            runs.save(run);
+        });
+    }
+
+    /** Addresses that went not-working since the run started, dropped as the resume begins. */
+    @Transactional
+    public void markNotWorking(List<Long> recipientIds) {
+        for (Long id : recipientIds) {
+            recipients.recordOutcome(id, CirculationRunRecipient.SKIPPED_NOT_WORKING, 0, null, null);
+        }
+    }
+
+    // ---------------------------------------------------------------- resuming and restarting
+
+    /**
+     * Everything needed to carry a stopped run on from where it stopped: the circular as
+     * it was composed then, and the addresses still marked PENDING in send order.
+     *
+     * <p>The stored {@code composedHtml} is used as-is rather than recomposed from the
+     * footer — the second half of a circular has to read like the first, even if the
+     * footer was edited or deleted in between.
+     */
+    @Transactional(readOnly = true)
+    public ResumableRun loadForResume(Long runId) {
+        CirculationRun run = findWithRecipients(runId);
+        List<PendingRecipient> pending = run.getRecipients().stream()
+                .filter(r -> CirculationRunRecipient.PENDING.equals(r.getStatus()))
+                .map(r -> new PendingRecipient(r.getId(), toMergeFields(r)))
+                .toList();
+        return new ResumableRun(run.getId(), run.getSubjectTemplate(), run.getComposedHtml(),
+                run.getListName(), pending, run.getSent(), run.getFailed(), run.getSkipped());
+    }
+
+    /**
+     * Everything needed to send a past run again from the top, as a new run of its own.
+     *
+     * <p>Duplicates are left out — they were dropped as duplicates of addresses that are
+     * in the list, and re-adding them would only have them dropped again. Not-working ones
+     * <em>are</em> included: a flag cleared since is a reason to try that address again,
+     * and one still set is re-applied when the new run starts.
+     */
+    @Transactional(readOnly = true)
+    public RestartableRun loadForRestart(Long runId) {
+        CirculationRun run = findWithRecipients(runId);
+        List<CampaignRecipientRequest> all = run.getRecipients().stream()
+                .filter(r -> !CirculationRunRecipient.SKIPPED_DUPLICATE.equals(r.getStatus()))
+                .map(CirculationHistoryService::toMergeFields)
+                .toList();
+        return new RestartableRun(run.getSubjectTemplate(), run.getComposedHtml(),
+                run.getFooterId(), run.getFooterName(), run.getListId(), run.getListName(), all);
+    }
+
+    /** Runs with somebody still to send to, newest first. */
+    @Transactional(readOnly = true)
+    public List<CirculationRunResponse> resumable() {
+        return runs.findResumable().stream()
+                .map(CirculationHistoryService::toRunResponse)
+                .toList();
+    }
+
+    /** One address a resume still has to reach, and the history row that records it. */
+    public record PendingRecipient(Long recipientId, CampaignRecipientRequest fields) {
+    }
+
+    /** A stopped run, with what it already achieved and who is left. */
+    public record ResumableRun(Long runId, String subject, String composedHtml, String listName,
+                               List<PendingRecipient> pending,
+                               int alreadySent, int alreadyFailed, int alreadySkipped) {
+    }
+
+    /** A past run, ready to be sent again as a fresh one. */
+    public record RestartableRun(String subject, String composedHtml, Long footerId, String footerName,
+                                 Long listId, String listName, List<CampaignRecipientRequest> recipients) {
+    }
+
     // ---------------------------------------------------------------- reading
 
     @Transactional(readOnly = true)
@@ -172,9 +293,7 @@ public class CirculationHistoryService {
                 .findFirst()
                 .orElseThrow(() -> new ResourceNotFoundException("Circulation recipient", recipientId));
 
-        CampaignRecipientRequest merge = new CampaignRecipientRequest(
-                r.getEmail(), r.getContactId(), r.getGreetingName(), r.getPersonName(),
-                r.getTitle(), r.getCompanyName());
+        CampaignRecipientRequest merge = toMergeFields(r);
         String html = templates.renderHtml(run.getComposedHtml(), merge);
         return new CirculationMessageResponse(
                 r.getEmail(),
@@ -198,6 +317,12 @@ public class CirculationHistoryService {
 
     // ---------------------------------------------------------------- mapping
 
+    /** A recipient row read back as the merge fields it was rendered with. */
+    private static CampaignRecipientRequest toMergeFields(CirculationRunRecipient r) {
+        return new CampaignRecipientRequest(r.getEmail(), r.getContactId(), r.getGreetingName(),
+                r.getPersonName(), r.getTitle(), r.getCompanyName());
+    }
+
     private static CirculationRunRecipient recipientRow(CampaignRecipientRequest r, String status) {
         CirculationRunRecipient row = new CirculationRunRecipient();
         row.setEmail(r.getEmail());
@@ -211,9 +336,14 @@ public class CirculationHistoryService {
     }
 
     private static CirculationRunResponse toRunResponse(CirculationRun run) {
+        // Derived rather than counted: sent + failed + pending is the run's total by
+        // construction, and the alternative is a count query per row of the History list.
+        int pending = Math.max(0, run.getTotal() - run.getSent() - run.getFailed());
+        boolean resumable = pending > 0 && !"RUNNING".equals(run.getState());
         return new CirculationRunResponse(run.getId(), run.getSubjectTemplate(), run.getListName(),
                 run.getFooterName(), run.getState(), run.getTotal(), run.getSent(), run.getFailed(),
-                run.getSkipped(), run.getStartedAt(), run.getFinishedAt(), run.getMessage());
+                run.getSkipped(), pending, resumable,
+                run.getStartedAt(), run.getFinishedAt(), run.getMessage());
     }
 
     private static CirculationRunRecipientResponse toRecipientResponse(CirculationRunRecipient r) {
