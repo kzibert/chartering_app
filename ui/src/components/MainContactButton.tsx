@@ -42,7 +42,9 @@ export default function MainContactButton({ ct }: { ct: ContactResponse }) {
             },
           )
         }
-      />
+      >
+        main
+      </Button>
     </Tooltip>
   );
 }

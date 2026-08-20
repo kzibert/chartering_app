@@ -62,6 +62,7 @@ db/
   not_working_contact_flag.sql # idempotent patch: dead email/phone flag (baked into the seed)
   vessel_company_links.sql # idempotent patch: vessel<->company broker roles + solo flag (baked in)
   circulations.sql       # idempotent patch: circ flag, circulation lists, circulation history (baked in)
+  no_circ_flag.sql       # idempotent patch: "never circulate to this address" flag (baked in)
   app_settings.sql       # idempotent patch: runtime settings edited from the Settings tab (baked in)
   circulation_provider.sql # idempotent patch: which flow each message left by (baked in)
   chartering.dump        # same data in pg_restore (-Fc) format, for manual restore
@@ -287,8 +288,30 @@ more group of their own:
 So flagging one person's address never silences their colleagues. **circ** is set with the paper-plane
 button on a contact row (edit mode) and, unlike the main-contact star, is not a radio choice: any
 number of a person's addresses may carry it, because "who gets the circular" and "one address to
-reach them on" are different questions. Addresses flagged not-working are never collected under
-any flag, and are dropped again at send time.
+reach them on" are different questions.
+
+#### Keeping an address out of circulations
+
+Two flags do that, and they mean different things:
+
+| Flag | Means | The address is |
+|---|---|---|
+| **not working** | the mailbox is dead — it bounced, or the account is gone | unusable for anything |
+| **not for circ** | it works, it just must never be bulk-mailed | still the right one to write to by hand |
+
+`not for circ` (`db/no_circ_flag.sql`) is for an `accounts@` or `ops@` inbox, or a broker who asked
+to come off the circular. Without it the only way to achieve that was to mark a live address dead,
+which loses real information: the address stops being offered anywhere, and nobody later can tell a
+bounced mailbox from a deliberate exclusion.
+
+Both are honoured **twice** — left out of bulk collection, and dropped again when a campaign starts
+— so an address already sitting in a saved list still cannot be mailed, and one flagged during a
+pause is dropped when the run resumes. The circulation history records *which* of the two applied
+rather than collapsing them, because "their mailbox is dead" and "they are off the circular" send
+you somewhere completely different when someone asks why a broker never heard from us.
+
+`not for circ` is the exact opposite of `circ`, so setting either clears the other — the two could
+otherwise be held at once, leaving the address in a state no rule could read.
 
 ### Circulation history
 

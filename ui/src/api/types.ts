@@ -163,6 +163,12 @@ export interface ContactResponse {
    * else all their working ones.
    */
   circ: boolean;
+  /**
+   * Flagged never to be circulated to. Distinct from `working: false` — the address is
+   * fine and still the one to write to by hand, it is only bulk mail it is kept out of.
+   * The exact opposite of `circ`, so setting either clears the other.
+   */
+  noCirc: boolean;
 }
 
 export interface ContactRequest {
@@ -430,7 +436,8 @@ export type CirculationRecipientStatus =
   | 'FAILED'
   | 'PENDING'
   | 'SKIPPED_DUPLICATE'
-  | 'SKIPPED_NOT_WORKING';
+  | 'SKIPPED_NOT_WORKING'
+  | 'SKIPPED_NOT_FOR_CIRC';
 
 /** One line of the History dropdown. */
 export interface CirculationRun {

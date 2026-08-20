@@ -38,7 +38,9 @@ export default function WorkingToggleButton({ ct }: { ct: ContactResponse }) {
             },
           )
         }
-      />
+      >
+        {ct.working ? 'not working' : 'restore'}
+      </Button>
     </Tooltip>
   );
 }

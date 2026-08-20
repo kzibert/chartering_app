@@ -82,4 +82,20 @@ public class Contact {
      */
     @Column(name = "is_circ", nullable = false)
     private boolean circ = false;
+
+    /**
+     * "Never circulate to this address." A working address that must stay out of bulk mail —
+     * an accounts@ or ops@ inbox, or somebody who asked to be taken off the circular.
+     *
+     * <p>Not the same as {@link #working} = false, and the difference is worth keeping: a
+     * dead address cannot receive anything, while this one is still the right address to
+     * write to by hand. Marking a live mailbox dead to keep it off a circular would lose
+     * that, and would leave nobody able to tell a bounce from a deliberate exclusion.
+     *
+     * <p>The exact opposite of {@link #circ}, so setting either clears the other. Honoured
+     * twice: in bulk collection, and again at send time, so an address already sitting in a
+     * saved list still cannot be mailed.
+     */
+    @Column(name = "is_no_circ", nullable = false)
+    private boolean noCirc = false;
 }

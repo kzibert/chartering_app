@@ -108,6 +108,21 @@ public class ContactController {
         return ResponseEntity.ok(contactService.setCirc(id, circ));
     }
 
+    @PatchMapping("/{id}/no-circ")
+    @Operation(summary = "Flag an email as never to be circulated to (or clear with ?noCirc=false)",
+            description = "For an address that works but must stay out of bulk mail — an "
+                    + "accounts@ inbox, or somebody who asked to come off the circular. It is "
+                    + "left out of bulk collection and dropped again at send time, so an address "
+                    + "already sitting in a saved list still cannot be mailed. Distinct from "
+                    + "not-working, which means the address is dead; this one stays the right "
+                    + "address to write to by hand. Clears the circ flag, which is its opposite. "
+                    + "Email contacts only.")
+    public ResponseEntity<ContactResponse> noCirc(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "true") boolean noCirc) {
+        return ResponseEntity.ok(contactService.setNoCirc(id, noCirc));
+    }
+
     @PatchMapping("/{id}/ban")
     @Operation(summary = "Ban a contact as Russian-rooted (or unban with ?banned=false)")
     public ResponseEntity<ContactResponse> ban(

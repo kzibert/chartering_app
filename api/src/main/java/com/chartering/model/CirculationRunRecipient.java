@@ -25,6 +25,8 @@ public class CirculationRunRecipient {
     public static final String FAILED = "FAILED";
     public static final String SKIPPED_DUPLICATE = "SKIPPED_DUPLICATE";
     public static final String SKIPPED_NOT_WORKING = "SKIPPED_NOT_WORKING";
+    /** Address flagged "not for circ" — it works, it is simply never bulk-mailed. */
+    public static final String SKIPPED_NOT_FOR_CIRC = "SKIPPED_NOT_FOR_CIRC";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

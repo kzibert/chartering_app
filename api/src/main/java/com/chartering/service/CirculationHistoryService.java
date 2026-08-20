@@ -101,8 +101,7 @@ public class CirculationHistoryService {
     public StartedRun begin(String subject, String composedHtml, Long footerId, String footerName,
                             Long listId, String listName,
                             List<CampaignRecipientRequest> toSend,
-                            List<CampaignRecipientRequest> duplicates,
-                            List<CampaignRecipientRequest> notWorking) {
+                            SkippedRecipients skipped) {
         CirculationRun run = new CirculationRun();
         run.setSubjectTemplate(subject);
         run.setComposedHtml(composedHtml);
@@ -115,14 +114,16 @@ public class CirculationHistoryService {
         run.setReplyTo(props.getReplyTo());
         run.setState("RUNNING");
         run.setTotal(toSend.size());
-        run.setSkipped(duplicates.size() + notWorking.size());
+        run.setSkipped(skipped.total());
 
         // Sendable first, so the recipient rows sit in the order the run works through them.
         toSend.forEach(r -> run.addRecipient(recipientRow(r, CirculationRunRecipient.PENDING)));
-        duplicates.forEach(r -> run.addRecipient(
+        skipped.duplicates().forEach(r -> run.addRecipient(
                 recipientRow(r, CirculationRunRecipient.SKIPPED_DUPLICATE)));
-        notWorking.forEach(r -> run.addRecipient(
+        skipped.notWorking().forEach(r -> run.addRecipient(
                 recipientRow(r, CirculationRunRecipient.SKIPPED_NOT_WORKING)));
+        skipped.notForCirc().forEach(r -> run.addRecipient(
+                recipientRow(r, CirculationRunRecipient.SKIPPED_NOT_FOR_CIRC)));
 
         CirculationRun saved = runs.save(run);
         List<Long> sendableIds = saved.getRecipients().stream()
@@ -200,11 +201,31 @@ public class CirculationHistoryService {
         });
     }
 
-    /** Addresses that went not-working since the run started, dropped as the resume begins. */
+    /**
+     * Addresses dropped as a resume begins, because a flag has been set since the run
+     * started. The status carries which flag, so history keeps saying why rather than
+     * collapsing two quite different reasons into one.
+     */
     @Transactional
-    public void markNotWorking(List<Long> recipientIds) {
+    public void markSkipped(List<Long> recipientIds, String status) {
         for (Long id : recipientIds) {
-            recipients.markSkipped(id, CirculationRunRecipient.SKIPPED_NOT_WORKING);
+            recipients.markSkipped(id, status);
+        }
+    }
+
+    /**
+     * The addresses a run filtered out before sending, kept apart by reason.
+     *
+     * <p>Grouped into one object rather than passed as three same-typed lists: they are
+     * always supplied together, and three adjacent {@code List<CampaignRecipientRequest>}
+     * parameters are three chances to record everyone as a duplicate.
+     */
+    public record SkippedRecipients(List<CampaignRecipientRequest> duplicates,
+                                    List<CampaignRecipientRequest> notWorking,
+                                    List<CampaignRecipientRequest> notForCirc) {
+
+        public int total() {
+            return duplicates.size() + notWorking.size() + notForCirc.size();
         }
     }
 

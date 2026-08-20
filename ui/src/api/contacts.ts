@@ -44,6 +44,15 @@ export const contactsApi = {
       .patch<ContactResponse>(`/contacts/${id}/circ`, null, { params: { circ } })
       .then((r) => r.data),
 
+  /**
+   * Flag an email as never to be circulated to. Clears `circ`, which is its opposite.
+   * Excluded from bulk collection and dropped again at send time.
+   */
+  setNoCirc: (id: number, noCirc: boolean) =>
+    client
+      .patch<ContactResponse>(`/contacts/${id}/no-circ`, null, { params: { noCirc } })
+      .then((r) => r.data),
+
   setWorking: (id: number, working: boolean) =>
     client
       .patch<ContactResponse>(`/contacts/${id}/working`, {}, { params: { working } })

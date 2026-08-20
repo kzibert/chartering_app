@@ -37,7 +37,7 @@ public interface ContactRepository
      * Distinct <em>working</em> email contacts belonging to the given companies (used to
      * bulk-collect the owner contacts of a filtered vessel set). person + company are
      * join-fetched so the mapper doesn't N+1. confirmedOnly=true restricts to confirmed
-     * emails. Addresses flagged not-working never appear.
+     * emails. Addresses flagged not-working or not-for-circ never appear.
      * <p>
      * Ordered circ-first then main-first within each company, which is the order the
      * selection rule reads each group in.
@@ -49,6 +49,7 @@ public interface ContactRepository
             where c.contactKind = 'email'
               and comp.id in :companyIds
               and c.working = true
+              and c.noCirc = false
               and (:confirmedOnly = false or c.confirmed = true)
               and (:includeBanned = true or c.banned = false)
             order by comp.id, c.circ desc, c.main desc, c.id
@@ -89,6 +90,7 @@ public interface ContactRepository
             where c.contactKind = 'email'
               and p.id in :personIds
               and c.working = true
+              and c.noCirc = false
               and (:confirmedOnly = false or c.confirmed = true)
               and (:includeBanned = true or c.banned = false)
             order by p.id, c.circ desc, c.main desc, c.id
@@ -101,6 +103,17 @@ public interface ContactRepository
     /** Lower-cased dead email addresses — the send-time blocklist for campaigns. */
     @Query("select lower(c.contactValue) from Contact c where c.contactKind = 'email' and c.working = false")
     Set<String> findNotWorkingEmailValues();
+
+    /**
+     * Lower-cased addresses flagged "not for circ" — the second send-time blocklist.
+     *
+     * <p>Kept apart from {@link #findNotWorkingEmailValues()} rather than unioned with it,
+     * because the run has to record <em>which</em> reason applied: "we never mailed them,
+     * the address is dead" and "we never mailed them, they are off the circular" lead to
+     * completely different actions when somebody asks why a broker did not hear from us.
+     */
+    @Query("select lower(c.contactValue) from Contact c where c.contactKind = 'email' and c.noCirc = true")
+    Set<String> findNoCircEmailValues();
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""

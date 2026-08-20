@@ -7,6 +7,7 @@ import com.chartering.dto.CampaignRequest;
 import com.chartering.dto.CampaignStatusResponse;
 import com.chartering.dto.CirculationRunResponse;
 import com.chartering.exception.MailNotConfiguredException;
+import com.chartering.model.CirculationRunRecipient;
 import com.chartering.repository.ContactRepository;
 import com.chartering.service.mail.CircularProvider;
 import com.chartering.service.mail.CircularSendException;
@@ -239,15 +240,17 @@ public class EmailCampaignService {
         int duplicates = byDuplicate.dropped().size();
 
         // Last line of defence: a list is a snapshot taken when the addresses were
-        // collected, so one flagged not-working since would otherwise still be mailed.
-        Split byWorking = dropNotWorking(deduped);
-        List<CampaignRecipientRequest> recipients = byWorking.kept();
+        // collected, so one flagged not-working, or off the circular, since it was collected
+        // would otherwise still be mailed.
+        Split byWorking = dropByAddress(deduped, contacts.findNotWorkingEmailValues());
         int dead = byWorking.dropped().size();
 
+        Split byCirc = dropByAddress(byWorking.kept(), contacts.findNoCircEmailValues());
+        List<CampaignRecipientRequest> recipients = byCirc.kept();
+        int notForCirc = byCirc.dropped().size();
+
         if (recipients.isEmpty()) {
-            throw new IllegalArgumentException(dead > 0
-                    ? "No valid recipients left: every remaining address is flagged as not working."
-                    : "No valid recipients left after removing duplicates and blanks.");
+            throw new IllegalArgumentException(emptyAfterFiltering(dead, notForCirc));
         }
         // Resolved once, here: the pacing and cap a run starts with are the ones it keeps,
         // so changing them in Settings mid-send cannot speed up half a campaign.
@@ -278,6 +281,9 @@ public class EmailCampaignService {
         if (dead > 0) {
             campaignLog.append("NOTE   %d address(es) skipped: flagged as not working".formatted(dead));
         }
+        if (notForCirc > 0) {
+            campaignLog.append("NOTE   %d address(es) skipped: flagged not for circ".formatted(notForCirc));
+        }
 
         // The permanent record, opened before the first message so a run that dies halfway
         // still leaves a history entry naming everyone it had already reached. A failure to
@@ -285,7 +291,8 @@ public class EmailCampaignService {
         CirculationHistoryService.StartedRun run;
         try {
             run = history.begin(subject, composedHtml, footerId, footerName, listId, listName,
-                    recipients, byDuplicate.dropped(), byWorking.dropped());
+                    recipients, new CirculationHistoryService.SkippedRecipients(
+                            byDuplicate.dropped(), byWorking.dropped(), byCirc.dropped()));
         } catch (RuntimeException e) {
             run = CirculationHistoryService.StartedRun.none();
             campaignLog.append("NOTE   history could not be opened for this run: " + rootMessage(e));
@@ -296,7 +303,7 @@ public class EmailCampaignService {
                 verb, cfg.provider().label(), recipients.size(), batchCount, subject, carriedOver);
 
         return submit(new Job(run, subject, composedHtml, recipients, cfg, sender,
-                0, 0, duplicates + dead, recipients.size()));
+                0, 0, duplicates + dead + notForCirc, recipients.size()));
     }
 
     /**
@@ -319,31 +326,41 @@ public class EmailCampaignService {
         }
 
         // Re-checked rather than trusted: the gap before a resume is exactly when an address
-        // gets flagged dead, and the whole point of the flag is that it is honoured late.
+        // gets flagged dead or taken off the circular, and the whole point of both flags is
+        // that they are honoured late.
         Set<String> dead = contacts.findNotWorkingEmailValues();
+        Set<String> offCirc = contacts.findNoCircEmailValues();
         List<CirculationHistoryService.PendingRecipient> live = new ArrayList<>();
-        List<Long> dropped = new ArrayList<>();
+        List<Long> droppedDead = new ArrayList<>();
+        List<Long> droppedOffCirc = new ArrayList<>();
         for (CirculationHistoryService.PendingRecipient pending : src.pending()) {
-            if (dead.contains(pending.fields().getEmail().trim().toLowerCase(Locale.ROOT))) {
-                dropped.add(pending.recipientId());
+            String email = pending.fields().getEmail().trim().toLowerCase(Locale.ROOT);
+            if (dead.contains(email)) {
+                droppedDead.add(pending.recipientId());
+            } else if (offCirc.contains(email)) {
+                droppedOffCirc.add(pending.recipientId());
             } else {
                 live.add(pending);
             }
         }
+        int dropped = droppedDead.size() + droppedOffCirc.size();
         if (live.isEmpty()) {
             throw new IllegalArgumentException(
-                    "Nobody is left to resume: every remaining address is flagged as not working.");
+                    "Nobody is left to resume: " + whyNobodyLeft(droppedDead.size(), droppedOffCirc.size()));
         }
 
         SettingsService.CirculationSettings cfg = settings.circulation();
         CircularSender.Bound sender = bind(cfg);
 
-        int skipped = src.alreadySkipped() + dropped.size();
+        int skipped = src.alreadySkipped() + dropped;
         // The run's total loses whoever will now never be mailed, so sent + failed can still
         // reach it and the progress bar still ends where it should.
         int total = src.alreadySent() + src.alreadyFailed() + live.size();
-        if (!dropped.isEmpty()) {
-            history.markNotWorking(dropped);
+        if (!droppedDead.isEmpty()) {
+            history.markSkipped(droppedDead, CirculationRunRecipient.SKIPPED_NOT_WORKING);
+        }
+        if (!droppedOffCirc.isEmpty()) {
+            history.markSkipped(droppedOffCirc, CirculationRunRecipient.SKIPPED_NOT_FOR_CIRC);
         }
         history.reopen(runId, total, skipped);
 
@@ -358,9 +375,13 @@ public class EmailCampaignService {
                     .formatted(live.size(), batchCount, cfg.maxRecipientsPerCampaign(),
                             formatDelay(cfg.batchPauseMs())));
         }
-        if (!dropped.isEmpty()) {
+        if (!droppedDead.isEmpty()) {
             campaignLog.append("NOTE   %d address(es) skipped: flagged as not working since the run started"
-                    .formatted(dropped.size()));
+                    .formatted(droppedDead.size()));
+        }
+        if (!droppedOffCirc.isEmpty()) {
+            campaignLog.append("NOTE   %d address(es) skipped: flagged not for circ since the run started"
+                    .formatted(droppedOffCirc.size()));
         }
 
         CirculationHistoryService.StartedRun record = new CirculationHistoryService.StartedRun(
@@ -716,21 +737,48 @@ public class EmailCampaignService {
     // ---------------------------------------------------------------- helpers
 
     /**
-     * Drop recipients whose address is flagged not working. Matched on the address itself
-     * rather than contactId, so a hand-typed or edited row in a list is caught too.
+     * Split recipients on a blocklist of addresses. Matched on the address itself rather
+     * than contactId, so a hand-typed or edited row in a list is caught too.
      *
      * <p>The dropped ones are handed back rather than discarded: history records who was
      * skipped and why, which is the question you ask when a circular has to be re-sent.
+     *
+     * <p>Called once per reason rather than against one merged set, because the reasons are
+     * recorded separately — "the address is dead" and "they are off the circular" send the
+     * reader somewhere completely different when they ask why a broker never heard from us.
      */
-    private Split dropNotWorking(List<CampaignRecipientRequest> input) {
-        Set<String> dead = contacts.findNotWorkingEmailValues();
-        if (dead.isEmpty()) return new Split(input, List.of());
+    private static Split dropByAddress(List<CampaignRecipientRequest> input, Set<String> blocked) {
+        if (blocked.isEmpty()) return new Split(input, List.of());
         List<CampaignRecipientRequest> kept = new ArrayList<>();
         List<CampaignRecipientRequest> dropped = new ArrayList<>();
         for (CampaignRecipientRequest r : input) {
-            (dead.contains(r.getEmail().trim().toLowerCase(Locale.ROOT)) ? dropped : kept).add(r);
+            (blocked.contains(r.getEmail().trim().toLowerCase(Locale.ROOT)) ? dropped : kept).add(r);
         }
         return new Split(kept, dropped);
+    }
+
+    /**
+     * Why nothing is left to send to. Worth naming the reason: "no valid recipients" in
+     * front of a list the user can see is full of addresses reads as a bug, whereas
+     * "every one of them is flagged not for circ" tells them exactly which flag to go
+     * and look at.
+     */
+    private static String emptyAfterFiltering(int dead, int notForCirc) {
+        if (dead == 0 && notForCirc == 0) {
+            return "No valid recipients left after removing duplicates and blanks.";
+        }
+        return "No valid recipients left: " + whyNobodyLeft(dead, notForCirc);
+    }
+
+    /** The reason clause on its own, so both "cannot start" and "cannot resume" can use it. */
+    private static String whyNobodyLeft(int dead, int notForCirc) {
+        if (dead > 0 && notForCirc > 0) {
+            return "%d address(es) are flagged as not working and %d as not for circ."
+                    .formatted(dead, notForCirc);
+        }
+        return notForCirc > 0
+                ? "every remaining address is flagged as not for circ."
+                : "every remaining address is flagged as not working.";
     }
 
     /** Keep the first occurrence of each address, case-insensitively. */

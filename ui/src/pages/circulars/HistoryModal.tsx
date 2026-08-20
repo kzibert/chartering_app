@@ -48,6 +48,11 @@ const STATUS: Record<CirculationRecipientStatus, { colour: string; label: string
     label: 'not working',
     hint: 'Flagged as a dead address when the run started, so it was never mailed',
   },
+  SKIPPED_NOT_FOR_CIRC: {
+    colour: 'warning',
+    label: 'not for circ',
+    hint: 'Flagged never to be circulated to — the address works, it is just kept out of bulk mail',
+  },
 };
 
 function stamp(iso?: string) {

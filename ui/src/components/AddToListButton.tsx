@@ -15,12 +15,18 @@ export default function AddToListButton({ ct }: { ct: ContactResponse }) {
   const inList = has(ct);
   const pending = add.isPending || removeEntry.isPending;
 
-  // A dead address can still be removed from the list, just never added to it — the
-  // campaign would drop it at send time anyway, so offering the add is only misleading.
-  if (!ct.working && !inList) {
+  // A dead address, or one flagged not-for-circ, can still be removed from the list but
+  // never added to it — the campaign would drop it at send time anyway, so offering the add
+  // is only misleading. Removal stays available so a list collected before the flag was set
+  // can still be tidied up.
+  const excluded = !ct.working || ct.noCirc;
+  if (excluded && !inList) {
+    const why = !ct.working
+      ? 'Marked not working — excluded from circulations'
+      : 'Marked not for circ — never included in circulations';
     return (
-      <Tooltip title="Marked not working — excluded from circulations">
-        <Button type="text" size="small" disabled aria-label="Not working" icon={<PlusOutlined />} />
+      <Tooltip title={why}>
+        <Button type="text" size="small" disabled aria-label={why} icon={<PlusOutlined />} />
       </Tooltip>
     );
   }

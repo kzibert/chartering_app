@@ -25,5 +25,10 @@ public record ContactResponse(
         boolean main,
         boolean working,
         /** flagged for use in circulations — see RecipientSelectionService for the rule */
-        boolean circ) {
+        boolean circ,
+        /**
+         * flagged never to be circulated to. Distinct from {@code working}: the address is
+         * fine and still the one to write to by hand, it is only bulk mail it is kept out of.
+         */
+        boolean noCirc) {
 }

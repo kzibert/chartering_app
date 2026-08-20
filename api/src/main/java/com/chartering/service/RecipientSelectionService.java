@@ -27,7 +27,11 @@ import java.util.Map;
  * colleagues, and a company with an unflagged switchboard address still contributes it.
  *
  * <p>Everything here operates on contacts the repository has already filtered down to
- * working, non-banned emails — a dead address is not a candidate under any flag.
+ * working, non-banned emails that are not flagged "not for circ" — a dead address is not a
+ * candidate under any flag, and neither is one that is never to be circulated to. Both
+ * exclusions happen in the query rather than here, which matters for the rule below: an
+ * address removed before grouping cannot win its group, so a person whose only main address
+ * is off the circular correctly falls through to their remaining addresses.
  */
 @Service
 public class RecipientSelectionService {

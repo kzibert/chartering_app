@@ -133,6 +133,38 @@ public class ContactService {
                             + " is a " + ct.getContactKind() + ".");
         }
         ct.setCirc(circ);
+        if (circ) {
+            // The two are exact opposites, so holding both would leave the address in a
+            // state no rule could read. The flag just set wins — it is the one the user
+            // chose most recently, and silently refusing the click would be worse.
+            ct.setNoCirc(false);
+        }
+        return mapper.toContactResponse(contactRepository.save(ct));
+    }
+
+    /**
+     * Flag an address as never to be circulated to, or clear it.
+     *
+     * <p>Deliberately not the same as marking it not-working. The address is fine and stays
+     * the right one to write to by hand; it is only bulk mail it must be kept out of. Using
+     * the dead flag for this would hide the address everywhere and destroy the distinction
+     * between a mailbox that bounced and a person who asked to be left off the circular.
+     *
+     * <p>Phones are never circulated, so flagging one would be meaningless rather than
+     * merely redundant — hence the refusal instead of a silent no-op.
+     */
+    @Transactional
+    public ContactResponse setNoCirc(Long id, boolean noCirc) {
+        Contact ct = find(id);
+        if (noCirc && !"email".equalsIgnoreCase(ct.getContactKind())) {
+            throw new IllegalArgumentException(
+                    "Only email contacts can be flagged as not for circulations — contact " + id
+                            + " is a " + ct.getContactKind() + ".");
+        }
+        ct.setNoCirc(noCirc);
+        if (noCirc) {
+            ct.setCirc(false);
+        }
         return mapper.toContactResponse(contactRepository.save(ct));
     }
 

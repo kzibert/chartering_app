@@ -6,6 +6,7 @@ import AddToListButton from './AddToListButton';
 import BanButton from './BanButton';
 import MainContactButton from './MainContactButton';
 import CircToggleButton from './CircToggleButton';
+import NoCircToggleButton from './NoCircToggleButton';
 import WorkingToggleButton from './WorkingToggleButton';
 import { useContactMutations } from '../api/hooks';
 import type { ContactResponse } from '../api/types';
@@ -29,7 +30,8 @@ export default function ContactLine({
   /** Substring to mark in the value — the term this row was searched by. */
   highlight?: string;
   /**
-   * Gates every control that writes to the contact — main, not-working, edit, delete —
+   * Gates every control that writes to the contact — main, circ, no-circ, not-working,
+   * edit, delete —
    * so browsing a list stays read-only until the caller's Edit toggle is on. Add-to-list
    * is deliberately not gated: it only builds the local email list.
    */
@@ -54,11 +56,17 @@ export default function ContactLine({
             <Tag color="blue">circ</Tag>
           </Tooltip>
         )}
+        {ct.noCirc && (
+          <Tooltip title="Never circulated to — excluded from bulk collection and dropped again at send time. Still fine to write to by hand.">
+            <Tag color="red">no circ</Tag>
+          </Tooltip>
+        )}
         {!ct.working && <Tag color="red">not working</Tag>}
         {ct.confirmed && <Tag color="success">confirmed</Tag>}
         {ct.banned && <Tag color="red">banned</Tag>}
         {editing && <MainContactButton ct={ct} />}
         {editing && <CircToggleButton ct={ct} />}
+        {editing && <NoCircToggleButton ct={ct} />}
         {editing && <WorkingToggleButton ct={ct} />}
         <AddToListButton ct={ct} />
         {editing && onEdit && (
@@ -69,7 +77,9 @@ export default function ContactLine({
               aria-label="Edit contact"
               icon={<EditOutlined />}
               onClick={() => onEdit(ct)}
-            />
+            >
+              edit
+            </Button>
           </Tooltip>
         )}
         {editing && (
@@ -90,7 +100,9 @@ export default function ContactLine({
               danger
               aria-label="Delete contact"
               icon={<DeleteOutlined />}
-            />
+            >
+              delete
+            </Button>
           </Popconfirm>
         )}
       </Space>

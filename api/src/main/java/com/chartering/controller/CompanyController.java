@@ -58,6 +58,7 @@ public class CompanyController {
                     + "come back is decided by the circ/main flags: circ-flagged ones if the "
                     + "person has any, else their main one, else all their working ones — applied "
                     + "per person, so a company with five flagged people yields five addresses. "
+                    + "Addresses flagged not-working or not-for-circ never appear at all. "
                     + "Powers the Companies-tab bulk add.")
     public ResponseEntity<List<ContactResponse>> emailContacts(
             @RequestParam(required = false) String name,
