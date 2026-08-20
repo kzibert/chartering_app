@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 public interface CirculationRunRecipientRepository extends JpaRepository<CirculationRunRecipient, Long> {
 
@@ -21,14 +22,34 @@ public interface CirculationRunRecipientRepository extends JpaRepository<Circula
                set r.status = :status,
                    r.attempts = :attempts,
                    r.error = :error,
-                   r.sentAt = :sentAt
+                   r.sentAt = :sentAt,
+                   r.provider = :provider
              where r.id = :id
             """)
     void recordOutcome(@Param("id") Long id,
                        @Param("status") String status,
                        @Param("attempts") int attempts,
                        @Param("error") String error,
-                       @Param("sentAt") LocalDateTime sentAt);
+                       @Param("sentAt") LocalDateTime sentAt,
+                       @Param("provider") String provider);
+
+    /**
+     * Mark an address as never mailed — dropped as a duplicate, or flagged not-working
+     * between the run opening and reaching it.
+     *
+     * <p>Deliberately leaves {@code provider} alone rather than blanking it: nothing was
+     * sent, so no flow carried it, and the column says how a message left. Reusing
+     * {@link #recordOutcome} here would have to write some provider into a row that never
+     * had one.
+     */
+    @Modifying
+    @Query("""
+            update CirculationRunRecipient r
+               set r.status = :status,
+                   r.sentAt = null
+             where r.id = :id
+            """)
+    void markSkipped(@Param("id") Long id, @Param("status") String status);
 
     /**
      * How many addresses were actually mailed inside a window, across every run.
@@ -47,6 +68,27 @@ public interface CirculationRunRecipientRepository extends JpaRepository<Circula
     int countSentBetween(@Param("status") String status,
                          @Param("from") LocalDateTime from,
                          @Param("until") LocalDateTime until);
+
+    /**
+     * The same count, split by the flow each message actually left through.
+     *
+     * <p>Grouped in one query rather than asked once per provider: the two numbers are read
+     * together and have to describe the same instant, and a second round trip could land
+     * either side of a message going out — which is how a breakdown ends up not summing to
+     * its own total.
+     *
+     * @return rows of {@code [provider, count]}
+     */
+    @Query("""
+            select r.provider, count(r) from CirculationRunRecipient r
+            where r.status = :status
+              and r.sentAt >= :from
+              and r.sentAt < :until
+            group by r.provider
+            """)
+    List<Object[]> countSentByProviderBetween(@Param("status") String status,
+                                              @Param("from") LocalDateTime from,
+                                              @Param("until") LocalDateTime until);
 
     /**
      * How many circulations those messages came from. Counted over the same rows as

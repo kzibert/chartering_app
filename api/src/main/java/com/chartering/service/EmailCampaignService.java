@@ -582,11 +582,11 @@ public class EmailCampaignService {
                     sent++;
                     consecutiveFailures = 0;
                     campaignLog.append("SENT   %-40s %s".formatted(r.getEmail(), describe(r)));
-                    recordSent(record, i, outcome.attempts);
+                    recordSent(record, i, outcome.attempts, cfg.provider());
                 } catch (Exception e) {
                     failed++;
                     state = state.withError(rootMessage(e));
-                    recordFailed(record, i, outcome.attempts, rootMessage(e));
+                    recordFailed(record, i, outcome.attempts, rootMessage(e), cfg.provider());
 
                     // Credentials rejected mid-run: every remaining message would fail the same
                     // way, and repeated auth failures are themselves a lockout trigger. Whether
@@ -660,21 +660,28 @@ public class EmailCampaignService {
         return stop == Stop.PAUSE ? "PAUSED by user" : "CANCELLED by user";
     }
 
-    /** Recording history must never take a send down with it — a lost row is not a lost email. */
-    private void recordSent(CirculationHistoryService.StartedRun record, int index, int attempts) {
+    /**
+     * Recording history must never take a send down with it — a lost row is not a lost email.
+     *
+     * <p>The provider is stamped on the row here, as the message goes out, rather than taken
+     * from the run: a circulation paused under one flow and resumed under the other really
+     * did leave by two routes, and the day counter's breakdown has to be able to say so.
+     */
+    private void recordSent(CirculationHistoryService.StartedRun record, int index, int attempts,
+                            CircularProvider provider) {
         if (!record.recording() || index >= record.recipientIds().size()) return;
         try {
-            history.recordSent(record.recipientIds().get(index), attempts);
+            history.recordSent(record.recipientIds().get(index), attempts, provider);
         } catch (RuntimeException e) {
             log.warn("Could not record a sent recipient in circulation history", e);
         }
     }
 
     private void recordFailed(CirculationHistoryService.StartedRun record, int index,
-                              int attempts, String error) {
+                              int attempts, String error, CircularProvider provider) {
         if (!record.recording() || index >= record.recipientIds().size()) return;
         try {
-            history.recordFailed(record.recipientIds().get(index), attempts, error);
+            history.recordFailed(record.recipientIds().get(index), attempts, error, provider);
         } catch (RuntimeException e) {
             log.warn("Could not record a failed recipient in circulation history", e);
         }

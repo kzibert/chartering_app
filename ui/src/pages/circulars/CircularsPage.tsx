@@ -33,7 +33,6 @@ import {
   PauseCircleOutlined,
   PlayCircleOutlined,
   RedoOutlined,
-  MailOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { campaignsApi } from '../../api/campaigns';
@@ -43,6 +42,7 @@ import { useCurrentList } from '../../circulations/store';
 import RichTextEditor from '../../components/RichTextEditor';
 import FooterManagerModal from './FooterManagerModal';
 import HistoryModal from './HistoryModal';
+import { SendingTodayTags } from '../../components/SendingToday';
 import type {
   CampaignRecipient,
   CampaignState,
@@ -277,7 +277,6 @@ export default function CircularsPage() {
     queryKey: ['circulations', 'today'],
     queryFn: circulationsApi.today,
   });
-  const sentToday = todayQ.data?.sent;
 
   const cfg = configQ.data;
   const recipients = useMemo(() => entries.map(toRecipient), [entries]);
@@ -482,31 +481,9 @@ export default function CircularsPage() {
           <Space size="small" wrap>
             {/* Today's outgoing volume, first in the row because it is the one number to
                 check before pressing Send: the tags beside it describe the per-hour pacing,
-                and nothing in the app watches the mailbox's daily cap. */}
-            <Tooltip
-              title={
-                todayQ.data ? (
-                  <>
-                    {todayQ.data.sent} circular email{todayQ.data.sent === 1 ? '' : 's'}{' '}
-                    delivered since midnight ({todayQ.data.date}), over{' '}
-                    {todayQ.data.circulations} circulation
-                    {todayQ.data.circulations === 1 ? '' : 's'}. Counted in the server's local
-                    time. Check it against your mailbox's daily cap before sending another —
-                    the pacing above protects the per-hour allowance only.
-                  </>
-                ) : (
-                  "How many circular emails have gone out today, in the server's local time"
-                )
-              }
-            >
-              <Tag
-                icon={<MailOutlined />}
-                color={sentToday ? 'green' : 'default'}
-                style={{ marginInlineEnd: 0 }}
-              >
-                {sentToday ?? '—'} sent today
-              </Tag>
-            </Tooltip>
+                and nothing in the app watches either provider's daily cap. Split by flow,
+                and carrying Brevo's own remaining allowance when Brevo is configured. */}
+            <SendingTodayTags today={todayQ.data} />
             {cfg && (
               <>
                 {/* Which flow is sending, first among the config tags: it decides what the

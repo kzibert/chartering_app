@@ -234,12 +234,14 @@ public class BrevoCircularSender implements CircularSender {
     }
 
     /**
-     * The most useful sentence available about a failed response. Brevo answers errors with
+     * The most useful sentence available about a failed response. Shared with
+     * {@link BrevoStatsService}, so a Brevo failure reads the same whether it surfaced while
+     * sending or while reading the account. Brevo answers errors with
      * {@code {"code": "...", "message": "..."}}; that message names the actual problem
      * ("Sender not valid", "Contact is blocklisted"), so it is worth digging out of the body
      * rather than logging a bare status code.
      */
-    private static String describe(ClientHttpResponse res) {
+    static String describe(ClientHttpResponse res) {
         String body;
         try {
             body = new String(res.getBody().readAllBytes(), StandardCharsets.UTF_8).trim();

@@ -456,13 +456,44 @@ export interface CirculationRun {
  * The day's outgoing volume. The server counts it in *its* local day, so the figure does
  * not change with the reader's browser clock.
  */
+/**
+ * Today as Brevo reports it — account-wide, not just what this app sent through it.
+ *
+ * Every field is optional because each can genuinely be unavailable: Brevo may be
+ * unreachable (then `error` says why and the numbers are absent), and a plan with purchased
+ * credits rather than a daily ceiling has no `remaining` at all. Absent is left absent
+ * rather than shown as 0, which would read as "nothing left".
+ */
+export interface BrevoUsage {
+  /** Messages Brevo accepted today, across the whole account. */
+  sent?: number;
+  /** What is left of the daily allowance; absent on a plan with no daily cap. */
+  remaining?: number;
+  /** The plan's ceiling — derived as sent + remaining, since Brevo publishes only the remainder. */
+  dailyLimit?: number;
+  /** Why the figures are missing, when Brevo could not be reached. */
+  error?: string;
+}
+
 export interface CirculationToday {
   /** The local day counted, so a tab left open overnight can see the counter roll over. */
   date: string;
-  /** Addresses actually mailed today, across every circulation. */
+  /** Addresses this app mailed today, across every circulation and both flows. */
   sent: number;
   /** How many circulations those messages came from — those that delivered, not those opened. */
   circulations: number;
+  /** Of `sent`, how many left from the mailbox over SMTP. */
+  viaMailbox: number;
+  /** Of `sent`, how many left through the Brevo API. */
+  viaBrevo: number;
+  /**
+   * Brevo's own account-wide figures. Absent when no API key is configured.
+   *
+   * Worth showing next to `viaBrevo` rather than instead of it: they answer different
+   * questions. `viaBrevo` is what this app sent; `brevo.sent` is what the whole account
+   * spent, which is what the daily cap is actually enforced against.
+   */
+  brevo?: BrevoUsage;
 }
 
 export interface CirculationRunRecipient {

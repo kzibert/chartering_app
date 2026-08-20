@@ -72,4 +72,13 @@ public class CirculationRunRecipient {
 
     @Column(name = "sent_at")
     private LocalDateTime sentAt;
+
+    /**
+     * Which flow this message left by - see {@code CircularProvider}. Written as the message
+     * goes out, so it records the route actually taken rather than whatever Settings said
+     * when the run opened: a circulation paused under the mailbox flow and resumed after the
+     * switch genuinely left by two routes, and only a per-recipient column can say so.
+     */
+    @Column(nullable = false, length = 10)
+    private String provider = "SMTP";
 }

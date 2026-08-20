@@ -63,6 +63,7 @@ db/
   vessel_company_links.sql # idempotent patch: vessel<->company broker roles + solo flag (baked in)
   circulations.sql       # idempotent patch: circ flag, circulation lists, circulation history (baked in)
   app_settings.sql       # idempotent patch: runtime settings edited from the Settings tab (baked in)
+  circulation_provider.sql # idempotent patch: which flow each message left by (baked in)
   chartering.dump        # same data in pg_restore (-Fc) format, for manual restore
   schema.sql             # DDL reference (the dump already contains the schema)
 db-export/               # portable full snapshot for reproducing the DB elsewhere
@@ -176,6 +177,36 @@ every circulation, climbing live while a campaign runs. It counts each address b
 time, not by the run it belongs to, so a circulation started last night and resumed this morning
 puts its messages on the day they actually left. Read it against your plan's daily limit before
 starting another circular.
+
+### Today, split by flow
+
+The counter breaks down by the route each message took — `12 sent today · 8 mailbox · 4 Brevo ·
+296/300 left` — on the Circulars tab as tags, and on the Settings tab as a fuller panel. Both
+read the same query, so the two tabs cannot drift into quoting different totals.
+
+**The two halves are counted differently, and have to be.** SMTP gives no way to ask a mailbox
+what it has already sent, so the mailbox figure can only be counted here, from circulation
+history. Brevo can be asked, and is: `GET /v3/smtp/statistics/aggregatedReport` for the day's
+volume and the `sendLimit` entry of `GET /v3/account` for what is left of the allowance.
+
+That distinction matters, because **Brevo's figure is account-wide**. It includes anything sent
+on that key's account — a campaign launched from Brevo's own dashboard, another integration, a
+test send from this app (which deliberately writes no history) — and it is Brevo's number, not
+this app's, that the cap is enforced against. A purely local tally would read "plenty left" right
+up to the send Brevo refuses, which is exactly the failure this is meant to prevent. So both are
+shown: `viaBrevo` is what this app sent, `brevo.sent` is what the account spent.
+
+**The 300/day ceiling is derived, not hardcoded.** Brevo publishes only the remainder, so the
+limit is read back as `sent + remaining` — which stays correct on a paid plan, and if the free
+tier's allowance ever changes. A plan carrying purchased credits rather than a daily ceiling
+reports no `remaining` at all, and the panel says so instead of inventing one. Brevo is asked at
+most twice every 30 seconds however hard the tab polls; a reporting call that cannot reach Brevo
+shows the reason and leaves the mailbox half of the figure untouched.
+
+Which flow each message left by is recorded **per recipient**, not per run (`db/circulation_provider.sql`).
+A circulation paused under the mailbox flow and resumed after the switch genuinely left by two
+routes, and a run-level column would have to lie about one half of it. Rows that predate the
+column are backfilled `SMTP`, because that was the only flow there was.
 
 ### Templates and footers
 

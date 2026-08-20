@@ -18,6 +18,8 @@ import {
 import { SaveOutlined, UndoOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { settingsApi } from '../../api/settings';
+import { circulationsApi } from '../../api/circulations';
+import { SendingTodayPanel } from '../../components/SendingToday';
 import type { CirculationSettings, CirculationSettingsRequest } from '../../api/types';
 
 /**
@@ -60,6 +62,16 @@ export default function SettingsPage() {
 
   const query = useQuery({ queryKey: ['settings', 'circulation'], queryFn: settingsApi.circulation });
   const settings = query.data;
+
+  // Same query key the Circulars tab uses, so the two tabs share one cached answer and can
+  // never quote different totals for the same day. Refetched on an interval rather than once:
+  // this panel is read to decide whether there is room to send, and a figure from whenever the
+  // tab happened to be opened is the wrong basis for that.
+  const todayQ = useQuery({
+    queryKey: ['circulations', 'today'],
+    queryFn: circulationsApi.today,
+    refetchInterval: 60_000,
+  });
 
   // Reset the form whenever the server's answer changes, so a save or a reset leaves the
   // fields showing what is actually stored rather than what was typed.
@@ -122,6 +134,10 @@ export default function SettingsPage() {
 
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
+      <Card title="Sent today" loading={todayQ.isLoading}>
+        <SendingTodayPanel today={todayQ.data} />
+      </Card>
+
       <Card
         title={
           <Space>

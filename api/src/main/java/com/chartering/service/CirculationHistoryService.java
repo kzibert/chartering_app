@@ -7,6 +7,8 @@ import com.chartering.model.CirculationRun;
 import com.chartering.model.CirculationRunRecipient;
 import com.chartering.repository.CirculationRunRecipientRepository;
 import com.chartering.repository.CirculationRunRepository;
+import com.chartering.service.mail.BrevoStatsService;
+import com.chartering.service.mail.CircularProvider;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -18,7 +20,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The circulation history: every run that was started, who it reached, and what each of
@@ -48,6 +52,9 @@ public class CirculationHistoryService {
     private final CirculationRunRecipientRepository recipients;
     private final MailTemplateService templates;
     private final MailCampaignProperties props;
+    // Reporting only: the day counter pairs what this app sent with what Brevo says the
+    // account has spent, and the second half is knowable only by asking Brevo.
+    private final BrevoStatsService brevoStats;
 
     /**
      * A run still marked RUNNING at startup belonged to a process that no longer exists —
@@ -126,14 +133,15 @@ public class CirculationHistoryService {
     }
 
     @Transactional
-    public void recordSent(Long recipientId, int attempts) {
+    public void recordSent(Long recipientId, int attempts, CircularProvider provider) {
         recipients.recordOutcome(recipientId, CirculationRunRecipient.SENT, attempts, null,
-                LocalDateTime.now());
+                LocalDateTime.now(), provider.name());
     }
 
     @Transactional
-    public void recordFailed(Long recipientId, int attempts, String error) {
-        recipients.recordOutcome(recipientId, CirculationRunRecipient.FAILED, attempts, error, null);
+    public void recordFailed(Long recipientId, int attempts, String error, CircularProvider provider) {
+        recipients.recordOutcome(recipientId, CirculationRunRecipient.FAILED, attempts, error,
+                null, provider.name());
     }
 
     /**
@@ -196,7 +204,7 @@ public class CirculationHistoryService {
     @Transactional
     public void markNotWorking(List<Long> recipientIds) {
         for (Long id : recipientIds) {
-            recipients.recordOutcome(id, CirculationRunRecipient.SKIPPED_NOT_WORKING, 0, null, null);
+            recipients.markSkipped(id, CirculationRunRecipient.SKIPPED_NOT_WORKING);
         }
     }
 
@@ -287,9 +295,41 @@ public class CirculationHistoryService {
         LocalDate day = LocalDate.now();
         LocalDateTime from = day.atStartOfDay();
         LocalDateTime until = from.plusDays(1);
-        return new CirculationTodayResponse(day,
-                recipients.countSentBetween(CirculationRunRecipient.SENT, from, until),
-                recipients.countRunsSendingBetween(CirculationRunRecipient.SENT, from, until));
+
+        Map<CircularProvider, Integer> byProvider = sentTodayByProvider(from, until);
+        int viaMailbox = byProvider.getOrDefault(CircularProvider.SMTP, 0);
+        int viaBrevo = byProvider.getOrDefault(CircularProvider.BREVO, 0);
+
+        // Summed from the breakdown rather than counted again: two queries a moment apart can
+        // straddle a message going out, and a total that disagrees with its own parts is worse
+        // than a total that is a second stale.
+        int sent = viaMailbox + viaBrevo;
+
+        BrevoStatsService.BrevoUsage usage = brevoStats.today();
+        return new CirculationTodayResponse(day, sent,
+                recipients.countRunsSendingBetween(CirculationRunRecipient.SENT, from, until),
+                viaMailbox, viaBrevo,
+                usage.configured() ? new BrevoUsageResponse(
+                        usage.sent(), usage.remaining(), usage.dailyLimit(), usage.error()) : null);
+    }
+
+    /**
+     * Today's sends grouped by the flow they left through.
+     *
+     * <p>Unknown provider strings are folded into the mailbox flow rather than dropped: the
+     * only way to hold one is to predate the column, and everything that predates it went out
+     * over SMTP because that was the only route there was. Dropping them would silently shrink
+     * the day's total on the morning after an upgrade.
+     */
+    private Map<CircularProvider, Integer> sentTodayByProvider(LocalDateTime from, LocalDateTime until) {
+        Map<CircularProvider, Integer> out = new EnumMap<>(CircularProvider.class);
+        for (Object[] row : recipients.countSentByProviderBetween(
+                CirculationRunRecipient.SENT, from, until)) {
+            CircularProvider provider = CircularProvider.parse((String) row[0]);
+            int count = ((Number) row[1]).intValue();
+            out.merge(provider, count, Integer::sum);
+        }
+        return out;
     }
 
     @Transactional(readOnly = true)
