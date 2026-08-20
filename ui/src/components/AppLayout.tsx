@@ -7,22 +7,26 @@ import {
   TeamOutlined,
   UnorderedListOutlined,
   SendOutlined,
+  MailOutlined,
   SettingOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useCurrentList } from '../circulations/store';
+import { useMailboxStatus } from '../mailbox/store';
 
 const { Sider, Header, Content } = Layout;
 
 // No '/contacts': contacts live inside People now, grouped under the person who owns them.
 const KEYS = [
-  '/', '/vessels', '/companies', '/people', '/circulation-lists', '/circulars', '/settings',
+  '/', '/vessels', '/companies', '/people', '/circulation-lists', '/circulars', '/mailbox',
+  '/settings',
 ];
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { entries } = useCurrentList();
+  const status = useMailboxStatus();
   const selected = KEYS.includes(location.pathname) ? location.pathname : '/';
 
   const items = [
@@ -45,6 +49,21 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       ),
     },
     { key: '/circulars', icon: <SendOutlined />, label: 'Circulars' },
+    {
+      key: '/mailbox',
+      icon: <MailOutlined />,
+      // Unread mail is the one count in this app that means "somebody is waiting for you",
+      // so it is worth carrying in the nav the way the current list's size is. The query is
+      // the mailbox status endpoint the tab already polls, so this costs no extra request.
+      label: (
+        <span>
+          Mailbox
+          {(status.data?.unread ?? 0) > 0 && (
+            <Badge count={status.data?.unread} size="small" style={{ marginInlineStart: 8 }} />
+          )}
+        </span>
+      ),
+    },
   ];
 
   // Settings sits in its own menu pinned to the foot of the sidebar rather than trailing

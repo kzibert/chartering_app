@@ -6,6 +6,7 @@ import CompaniesPage from './pages/companies/CompaniesPage';
 import PeoplePage from './pages/people/PeoplePage';
 import CirculationListsPage from './pages/circulationLists/CirculationListsPage';
 import CircularsPage from './pages/circulars/CircularsPage';
+import MailboxPage from './pages/mailbox/MailboxPage';
 import SettingsPage from './pages/settings/SettingsPage';
 
 export default function App() {
@@ -22,6 +23,7 @@ export default function App() {
         {/* The single client-side email list became named, DB-backed lists. */}
         <Route path="/email-list" element={<Navigate to="/circulation-lists" replace />} />
         <Route path="/circulars" element={<CircularsPage />} />
+        <Route path="/mailbox" element={<MailboxPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -65,6 +65,28 @@ services:
       MAIL_MAX_RETRIES: ${MAIL_MAX_RETRIES:-2}
       MAIL_RETRY_BACKOFF_MS: ${MAIL_RETRY_BACKOFF_MS:-10000}
       MAIL_ABORT_AFTER_FAILURES: ${MAIL_ABORT_AFTER_FAILURES:-5}
+      # Reading the mailbox: the Mailbox tab's IMAP sync. Configured separately from the
+      # sending block above because the two fail independently — an unreachable IMAP host
+      # must not stop a circular going out. The mailbox is opened read-only.
+      IMAP_ENABLED: ${IMAP_ENABLED:-false}
+      IMAP_HOST: ${IMAP_HOST:-imap.zoho.eu}
+      IMAP_PORT: ${IMAP_PORT:-993}
+      IMAP_SSL: ${IMAP_SSL:-true}
+      # The fallback to the SMTP credentials is done HERE rather than in application.yml,
+      # and it has to be. Compose always defines a mapped variable, so an unset
+      # IMAP_USERNAME in .env would arrive as an empty string — which Spring resolves as
+      # the empty value, not as "absent", so its own ${IMAP_USERNAME:${MAIL_USERNAME:}}
+      # default would never fire. Compose's :- treats empty and unset alike, so the
+      # fallback works here and the app is handed one already-resolved value.
+      IMAP_USERNAME: ${IMAP_USERNAME:-${MAIL_USERNAME:-}}
+      IMAP_PASSWORD: ${IMAP_PASSWORD:-${MAIL_PASSWORD:-}}
+      IMAP_FOLDER: ${IMAP_FOLDER:-INBOX}
+      IMAP_POLL_MS: ${IMAP_POLL_MS:-300000}
+      IMAP_INITIAL_DAYS: ${IMAP_INITIAL_DAYS:-30}
+      IMAP_MAX_PER_POLL: ${IMAP_MAX_PER_POLL:-200}
+      IMAP_MAX_BODY_CHARS: ${IMAP_MAX_BODY_CHARS:-200000}
+      IMAP_CONNECT_TIMEOUT_MS: ${IMAP_CONNECT_TIMEOUT_MS:-15000}
+      IMAP_READ_TIMEOUT_MS: ${IMAP_READ_TIMEOUT_MS:-30000}
       # The other circular flow: Brevo's transactional API. Which of the two is used is a
       # runtime setting ("Use Brevo for circs" on the Settings tab), so only the key and
       # Brevo's own pacing baseline come from the environment. An empty key just means the

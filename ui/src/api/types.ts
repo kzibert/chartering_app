@@ -609,3 +609,142 @@ export interface EmailFooterResponse {
   createdAt?: string;
   updatedAt?: string;
 }
+
+/* ---------------- mailbox ---------------- */
+
+/** One row of the message list. The body is fetched only when a message is opened. */
+export interface MailMessage {
+  id: number;
+  fromAddress: string;
+  fromName?: string;
+  subject?: string;
+  snippet?: string;
+  sentAt?: string;
+  receivedAt: string;
+  read: boolean;
+  hasAttachments: boolean;
+  /** null/absent = the Inbox, i.e. nothing has filed it yet. */
+  folderId?: number;
+  folderName?: string;
+  /** Set when a rule filed it — the answer to "why is this in here?". */
+  filedByRuleId?: number;
+  companyId?: number;
+  companyName?: string;
+  personId?: number;
+  personName?: string;
+  /** The company link was set by hand; no re-link pass will overwrite it. */
+  linkManual: boolean;
+}
+
+export interface MailMessageDetail {
+  message: MailMessage;
+  toAddresses?: string;
+  ccAddresses?: string;
+  /** Sanitized server-side. Absent when the message carried no HTML part. */
+  bodyHtml?: string;
+  bodyText?: string;
+  attachmentNames?: string;
+  sizeBytes?: number;
+  messageId?: string;
+}
+
+/** A folder in the rail. The Inbox is one of these with no id. */
+export interface MailFolder {
+  id?: number;
+  name: string;
+  notes?: string;
+  sortOrder: number;
+  total: number;
+  unread: number;
+}
+
+export interface MailFolderRequest {
+  name: string;
+  notes?: string;
+  sortOrder?: number;
+}
+
+export type MailRuleField = 'FROM' | 'FROM_DOMAIN' | 'TO' | 'SUBJECT' | 'BODY' | 'ANY';
+export type MailRuleOperator =
+  | 'CONTAINS'
+  | 'NOT_CONTAINS'
+  | 'EQUALS'
+  | 'STARTS_WITH'
+  | 'ENDS_WITH';
+
+export interface MailRuleCondition {
+  id?: number;
+  field: MailRuleField;
+  operator: MailRuleOperator;
+  value: string;
+}
+
+export interface MailRule {
+  id: number;
+  name: string;
+  folderId: number;
+  folderName: string;
+  enabled: boolean;
+  sortOrder: number;
+  /** ALL = every condition must match, ANY = at least one. */
+  matchType: 'ALL' | 'ANY';
+  markRead: boolean;
+  conditions: MailRuleCondition[];
+}
+
+export interface MailRuleRequest {
+  name: string;
+  folderId: number;
+  enabled: boolean;
+  sortOrder?: number;
+  matchType: 'ALL' | 'ANY';
+  markRead: boolean;
+  conditions: MailRuleCondition[];
+}
+
+/** What re-running the rules over already-synced mail did. */
+export interface MailRuleRun {
+  evaluated: number;
+  filed: number;
+  markedRead: number;
+}
+
+export interface MailboxStatus {
+  enabled: boolean;
+  /** enabled and every credential present — a sync would actually be attempted. */
+  configured: boolean;
+  /** What is missing, named as the environment variable that supplies it. */
+  missingSettings: string[];
+  host?: string;
+  folder?: string;
+  username?: string;
+  syncing: boolean;
+  lastSyncAt?: string;
+  lastStatus?: 'OK' | 'FAILED';
+  lastError?: string;
+  lastFetched: number;
+  lastStored: number;
+  pollIntervalMs: number;
+  totalMessages: number;
+  unread: number;
+}
+
+export interface MailboxFilter extends PageParams {
+  /** One box for sender, subject, recipients and the linked company/person. */
+  search?: string;
+  /** Also scan the message text. Unindexed, hence opt-in — see the Mailbox tab. */
+  searchBody?: boolean;
+  folderId?: number;
+  /** true = the Inbox (mail nothing has filed). */
+  unfiled?: boolean;
+  read?: boolean;
+  companyId?: number;
+  linked?: boolean;
+}
+
+export interface MailLinkRequest {
+  companyId?: number;
+  personId?: number;
+  /** Also record the sender's address as a contact, so later mail links itself. */
+  createContact?: boolean;
+}

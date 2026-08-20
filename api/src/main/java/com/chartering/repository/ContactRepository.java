@@ -100,6 +100,26 @@ public interface ContactRepository
             @Param("confirmedOnly") boolean confirmedOnly,
             @Param("includeBanned") boolean includeBanned);
 
+    /**
+     * Email contacts whose address is one of these, person and company loaded — how a synced
+     * message finds the company it came from.
+     *
+     * <p>Takes a collection rather than one address because it is used both ways: once per
+     * message during a sync, and once for a whole re-link pass over thousands of stored
+     * messages, where one query per distinct sender would be the entire cost of the pass.
+     * Ordered by id so a duplicated address resolves to the same contact every time rather
+     * than to whichever row the planner happened to return first.
+     */
+    @Query("""
+            select c from Contact c
+              left join fetch c.person
+              left join fetch c.company
+            where c.contactKind = 'email'
+              and lower(c.contactValue) in :addresses
+            order by c.id
+            """)
+    List<Contact> findEmailContactsByAddresses(@Param("addresses") Collection<String> addresses);
+
     /** Lower-cased dead email addresses — the send-time blocklist for campaigns. */
     @Query("select lower(c.contactValue) from Contact c where c.contactKind = 'email' and c.working = false")
     Set<String> findNotWorkingEmailValues();

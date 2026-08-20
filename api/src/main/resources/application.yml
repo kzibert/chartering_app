@@ -64,6 +64,29 @@ chartering:
     abort-after-consecutive-failures: ${MAIL_ABORT_AFTER_FAILURES:5}
     log-file: ${MAIL_LOG_FILE:logs/campaign-current.log}
 
+  # Reading the mailbox: the Mailbox tab's IMAP sync. Separate from the sending block
+  # above because reading and sending fail independently — a broken IMAP host must not
+  # stop a circular going out, and a spent sending quota must not stop the inbox
+  # refreshing. The credentials default to the SMTP ones, since the usual case is one
+  # mailbox both read and written by the same account.
+  #
+  # The mailbox is opened READ-ONLY. Nothing is ever written back to it: folders and
+  # filing rules are the app's own, so a mis-written rule can only rearrange rows here.
+  mailbox:
+    enabled: ${IMAP_ENABLED:false}
+    host: ${IMAP_HOST:imap.zoho.eu}
+    port: ${IMAP_PORT:993}
+    ssl: ${IMAP_SSL:true}
+    username: ${IMAP_USERNAME:${MAIL_USERNAME:}}
+    password: ${IMAP_PASSWORD:${MAIL_PASSWORD:}}
+    folder: ${IMAP_FOLDER:INBOX}
+    poll-interval-ms: ${IMAP_POLL_MS:300000}
+    initial-sync-days: ${IMAP_INITIAL_DAYS:30}
+    max-messages-per-poll: ${IMAP_MAX_PER_POLL:200}
+    max-body-chars: ${IMAP_MAX_BODY_CHARS:200000}
+    connect-timeout-ms: ${IMAP_CONNECT_TIMEOUT_MS:15000}
+    read-timeout-ms: ${IMAP_READ_TIMEOUT_MS:30000}
+
   # The second circular flow: Brevo's transactional API instead of the mailbox over SMTP.
   # Which of the two is used is a runtime setting ("Use Brevo for circs" on the Settings tab),
   # not an environment variable — only the key lives here, because it is a credential.

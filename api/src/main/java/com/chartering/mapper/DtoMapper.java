@@ -3,6 +3,9 @@ package com.chartering.mapper;
 import com.chartering.dto.*;
 import com.chartering.model.Company;
 import com.chartering.model.Contact;
+import com.chartering.model.MailFolder;
+import com.chartering.model.MailMessage;
+import com.chartering.model.MailRule;
 import com.chartering.model.Person;
 import com.chartering.model.Vessel;
 import org.springframework.stereotype.Component;
@@ -66,5 +69,48 @@ public class DtoMapper {
                 c != null ? c.getId() : null,
                 c != null ? c.getName() : null,
                 p.getNotes(), p.isLegacy());
+    }
+
+    /**
+     * A message as one row of the list. Reads folder, company and person, which the search
+     * loads through an entity graph — see {@code MailMessageRepository#findAll}.
+     */
+    public MailMessageResponse toMailMessageResponse(MailMessage m) {
+        MailFolder f = m.getFolder();
+        Company c = m.getCompany();
+        Person p = m.getPerson();
+        return new MailMessageResponse(
+                m.getId(), m.getFromAddress(), m.getFromName(), m.getSubject(), m.getSnippet(),
+                m.getSentAt(), m.getReceivedAt(), m.isRead(), m.isHasAttachments(),
+                f != null ? f.getId() : null,
+                f != null ? f.getName() : null,
+                m.getFiledByRuleId(),
+                c != null ? c.getId() : null,
+                c != null ? c.getName() : null,
+                p != null ? p.getId() : null,
+                p != null ? p.getFullName() : null,
+                m.isLinkManual());
+    }
+
+    /**
+     * The opened message. The HTML body is sanitized by the caller, not here — this mapper
+     * holds no collaborators, and quietly returning unsanitized markup from one path while
+     * the other cleaned it is exactly the inconsistency worth avoiding.
+     */
+    public MailMessageDetailResponse toMailMessageDetail(MailMessage m, String sanitizedHtml) {
+        return new MailMessageDetailResponse(
+                toMailMessageResponse(m), m.getToAddresses(), m.getCcAddresses(),
+                sanitizedHtml, m.getBodyText(), m.getAttachmentNames(), m.getSizeBytes(),
+                m.getMessageId());
+    }
+
+    public MailRuleResponse toMailRuleResponse(MailRule r) {
+        return new MailRuleResponse(
+                r.getId(), r.getName(), r.getFolder().getId(), r.getFolder().getName(),
+                r.isEnabled(), r.getSortOrder(), r.getMatchType().name(), r.isMarkRead(),
+                r.getConditions().stream()
+                        .map(c -> new MailRuleConditionResponse(
+                                c.getId(), c.getField().name(), c.getOperator().name(), c.getValue()))
+                        .toList());
     }
 }

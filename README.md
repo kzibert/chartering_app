@@ -64,6 +64,7 @@ db/
   circulations.sql       # idempotent patch: circ flag, circulation lists, circulation history (baked in)
   no_circ_flag.sql       # idempotent patch: "never circulate to this address" flag (baked in)
   app_settings.sql       # idempotent patch: runtime settings edited from the Settings tab (baked in)
+  mailbox.sql            # idempotent patch: synced mail, its folders and its filing rules (baked in)
   circulation_provider.sql # idempotent patch: which flow each message left by (baked in)
   chartering.dump        # same data in pg_restore (-Fc) format, for manual restore
   schema.sql             # DDL reference (the dump already contains the schema)
@@ -437,6 +438,122 @@ Endpoints: `POST /api/v1/campaigns` (202, sends in the background), `GET /campai
 `POST /campaigns/current/cancel`, `POST /campaigns/current/pause`, `GET /campaigns/current/log`,
 `POST /campaigns/test?to=…`, `GET /campaigns/config`, plus the resume/restart endpoints above
 and CRUD on `/api/v1/email-templates` and `/api/v1/email-footers`.
+
+## Mailbox (incoming mail)
+
+The **Mailbox** tab is the other half of the correspondence: mail that arrives, synced from
+IMAP into Postgres, attached to the company it came from, and filed into folders by rules
+the desk writes. It is what lets "who is this from?" be answered by the app that already
+knows every broker, rather than by a mail client that knows none of them.
+
+**The mailbox is opened read-only.** The app sets no flags, moves nothing and deletes
+nothing on the server. Folders and rules here are the app's own, stored in `mail_folders` /
+`mail_rules` — so filing a message moves a row in this database, and the worst a mis-written
+rule can do is rearrange that table. Your real mailbox is exactly as you left it.
+
+```bash
+# in .env  (see .env.example for the full annotated block)
+IMAP_ENABLED=true
+IMAP_HOST=imap.zoho.eu
+IMAP_PORT=993
+# left blank these fall back to MAIL_USERNAME / MAIL_PASSWORD
+IMAP_USERNAME=
+IMAP_PASSWORD=
+
+docker compose up -d --force-recreate api
+```
+
+Until `IMAP_ENABLED=true` and the credentials resolve, the tab still loads and names the
+settings that are missing. Zoho needs an app-specific password when two-factor auth is on the
+account, exactly as SMTP does, and IMAP access must be enabled under Mail Settings → Mail
+Accounts.
+
+### What is synced, and how much
+
+A poller wakes every `IMAP_POLL_MS` (default 5 min) and asks for what arrived above the last
+IMAP UID it recorded. Two bounds keep it honest:
+
+| | |
+|---|---|
+| **First sync** | no cursor to resume from, so it takes the newest `IMAP_MAX_PER_POLL` messages and keeps those inside `IMAP_INITIAL_DAYS` (default 30). Pointing the app at fifteen years of mail must not mean downloading fifteen years of mail. |
+| **Every sync** | capped at `IMAP_MAX_PER_POLL` (default 200), **oldest first**. A backlog drains over several polls in arrival order, so the cursor only moves forward and an interrupted catch-up resumes where it stopped. |
+
+Headers, both body parts and the *names* of attachments are stored; the attachment files
+themselves are not. Deduplication is by `Message-ID`, which is the only identifier that
+survives a re-fetch, a re-index, or the provider reissuing UIDVALIDITY — so a re-sync is
+idempotent rather than a second copy of the inbox. When UIDVALIDITY does change, the reader
+notices, falls back to the date window instead of a cursor that has quietly started lying,
+and the dedupe absorbs the re-read.
+
+**Read/unread is the app's own.** It is seeded once from the server's `\Seen` flag when a
+message is first stored, and owned here from then on. It cannot be otherwise: the app never
+writes to the mailbox, so following the server afterwards would keep resetting what was read
+here.
+
+### One search box, and one checkbox
+
+Address, person, company and subject all go in the same field. Every whitespace-separated
+term has to match somewhere, but no term is tied to a particular field — so `ali position`
+finds Ali's position list, and typing an address, a name or a company all work without first
+deciding which kind of thing you are typing. It is the same rule the circulation-list search
+follows, deliberately: two search boxes in one app that behave differently is worse than
+either behaviour.
+
+**"Search message text" is the checkbox beside it, and it is off by default.** Sender,
+subject, recipients and the linked company are trigram-indexed and searched always. The
+bodies are not indexed at all — a GIN index over every message body is large, slow to write
+on each sync, and would be maintained for a search that is usually off. So the message-text
+search is a sequential scan of the largest columns in the table, taken knowingly, when it is
+asked for.
+
+### Folders and rules
+
+Rules run **as mail arrives**, in `sortOrder`, and the **first match wins** — a message lives
+in one folder, so "every matching rule applies" would really mean "the last one applies".
+Each rule is a target folder plus one or more conditions:
+
+| Field | Tests |
+|---|---|
+| `FROM` | the sender's address *and* display name |
+| `FROM_DOMAIN` | only the part after the `@`, so a display name quoting the domain cannot match |
+| `TO` | To and Cc |
+| `SUBJECT` | the subject |
+| `BODY` | the message text |
+| `ANY` | all of the above together |
+
+with `contains` / `does not contain` / `is exactly` / `starts with` / `ends with`, combined as
+**all** or **any**. A rule may also mark what it files as read. A rule with no conditions is
+refused — it would match every message and empty the Inbox into one folder.
+
+**Rules never touch mail you filed by hand.** They claim a message only when it is in the
+Inbox, or when a rule put it where it is. Without that line, correcting a mis-filed message
+would last exactly until the next sync. Moving a message back to the Inbox by hand returns it
+to the rules' reach, which is what "put it back" ought to mean.
+
+Because rules are evaluated against stored rows rather than live IMAP messages, **Apply now**
+re-runs them over mail that arrived before the rule existed. Mail that a rule had filed and
+that no rule now claims goes back to the Inbox, so rule-managed mail stays a function of the
+rules as they stand. Deleting a folder returns its mail to the Inbox rather than deleting it.
+
+### The link to companies
+
+The sender's address is resolved against `contacts` at sync time: contact → person → company.
+A message from a known address carries its company straight through to the company drawer.
+
+For an unknown sender, **Link to company** attaches it by hand, and offers to record the
+address as a contact at the same time — that is the half worth doing, since it makes every
+*later* message from that sender link itself and puts the address in front of the rest of the
+app (the company drawer, the circulation lists, the bulk collect). A hand-set link is flagged
+`link_manual` and no automatic pass will overwrite it. `POST /api/v1/mailbox/relink`
+re-resolves every *automatic* link against the contacts as they are now — worth running after
+adding a batch of contacts, since the link is otherwise resolved only once, at sync time.
+
+Endpoints: `GET /api/v1/mailbox/messages` (the search above), `GET /mailbox/messages/{id}`
+(full body, HTML sanitized on the way out; opening marks it read), `PATCH …/read`,
+`PATCH …/folder`, the `POST /mailbox/messages/{read,folder}` bulk pair, `PUT|DELETE …/link`,
+`POST /mailbox/relink`, `GET /mailbox/status`, `POST /mailbox/sync` (202 — runs on its own
+thread), plus CRUD on `/api/v1/mailbox/folders` and `/api/v1/mailbox/rules` and
+`POST /mailbox/rules/apply`.
 
 ## Local dev (without Docker)
 
