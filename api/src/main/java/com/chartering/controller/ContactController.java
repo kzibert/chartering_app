@@ -123,6 +123,19 @@ public class ContactController {
         return ResponseEntity.ok(contactService.setNoCirc(id, noCirc));
     }
 
+    @PatchMapping("/{id}/whatsapp")
+    @Operation(summary = "Record that a phone number is on WhatsApp (or clear with ?hasWhatsapp=false)",
+            description = "Set by hand from the wa.me check in the contact row: no open API "
+                    + "answers whether a number is registered, so the app opens a chat with the "
+                    + "configured greeting prefilled and the user says whether one came up. "
+                    + "Once flagged, the row carries a WhatsApp link straight to that chat. "
+                    + "Phone contacts only.")
+    public ResponseEntity<ContactResponse> whatsapp(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "true") boolean hasWhatsapp) {
+        return ResponseEntity.ok(contactService.setHasWhatsapp(id, hasWhatsapp));
+    }
+
     @PatchMapping("/{id}/ban")
     @Operation(summary = "Ban a contact as Russian-rooted (or unban with ?banned=false)")
     public ResponseEntity<ContactResponse> ban(

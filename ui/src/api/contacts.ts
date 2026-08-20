@@ -53,6 +53,15 @@ export const contactsApi = {
       .patch<ContactResponse>(`/contacts/${id}/no-circ`, null, { params: { noCirc } })
       .then((r) => r.data),
 
+  /**
+   * Record that a phone number is on WhatsApp, as seen by the user in the wa.me check.
+   * Never inferred — nothing here can ask WhatsApp anything.
+   */
+  setHasWhatsapp: (id: number, hasWhatsapp: boolean) =>
+    client
+      .patch<ContactResponse>(`/contacts/${id}/whatsapp`, null, { params: { hasWhatsapp } })
+      .then((r) => r.data),
+
   setWorking: (id: number, working: boolean) =>
     client
       .patch<ContactResponse>(`/contacts/${id}/working`, {}, { params: { working } })

@@ -21,6 +21,7 @@ import { settingsApi } from '../../api/settings';
 import { circulationsApi } from '../../api/circulations';
 import { SendingTodayPanel } from '../../components/SendingToday';
 import type { CirculationSettings, CirculationSettingsRequest } from '../../api/types';
+import WhatsappSettingsCard from './WhatsappSettingsCard';
 
 /**
  * Delays are stored in milliseconds but shown in seconds — nobody reasons about a send
@@ -390,6 +391,8 @@ export default function SettingsPage() {
           }
         />
       </Card>
+
+      <WhatsappSettingsCard />
 
       <Card title="Mail credentials">
         <Typography.Paragraph type="secondary">

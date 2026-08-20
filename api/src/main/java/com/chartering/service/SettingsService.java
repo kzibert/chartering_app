@@ -54,6 +54,16 @@ public class SettingsService {
     /** Which flow sends circulars. Absent means the mailbox flow, which is what predates it. */
     public static final String PROVIDER = "mail.provider";
 
+    /** The greeting prefilled into a wa.me link when checking or opening a WhatsApp chat. */
+    public static final String WHATSAPP_MESSAGE = "whatsapp.message";
+
+    /**
+     * The built-in default greeting. A constant rather than a configured property: unlike the
+     * mail settings there is no environment behind it — nothing is sent from the server, the
+     * text only ends up in a link the browser opens.
+     */
+    public static final String DEFAULT_WHATSAPP_MESSAGE = "Good day, {{greeting}}";
+
     public static final String FROM_ADDRESS = "mail.fromAddress";
     public static final String FROM_NAME = "mail.fromName";
     public static final String SMTP_HOST = "mail.smtp.host";
@@ -172,7 +182,41 @@ public class SettingsService {
                 viaBrevo ? brevo.getBatchPauseMs() : props.getBatchPauseMs());
     }
 
+    /**
+     * The greeting prefilled into wa.me links, and the default behind it.
+     *
+     * <p>Rendered in the browser, not here: the substitution needs the person on the row the
+     * user clicked, which the browser already has, and no request to the server would tell it
+     * anything it does not know. The server's job is only to remember the text.
+     */
+    @Transactional(readOnly = true)
+    public String whatsappMessage() {
+        return repository.findById(WHATSAPP_MESSAGE)
+                .map(AppSetting::getValue)
+                .filter(v -> !v.isBlank())
+                .orElse(DEFAULT_WHATSAPP_MESSAGE);
+    }
+
     // ---------------------------------------------------------------- writing
+
+    @Transactional
+    public String updateWhatsappMessage(String message) {
+        String trimmed = message == null ? "" : message.trim();
+        if (trimmed.isBlank()) {
+            throw new IllegalArgumentException("A message is required.");
+        }
+        put(WHATSAPP_MESSAGE, trimmed);
+        log.info("WhatsApp greeting updated to \"{}\"", trimmed);
+        return whatsappMessage();
+    }
+
+    /** Delete the override so {@link #DEFAULT_WHATSAPP_MESSAGE} applies again. */
+    @Transactional
+    public String resetWhatsappMessage() {
+        repository.deleteByKeyIn(List.of(WHATSAPP_MESSAGE));
+        log.info("WhatsApp greeting reset to the built-in default");
+        return whatsappMessage();
+    }
 
     /**
      * Switch which flow sends circulars.

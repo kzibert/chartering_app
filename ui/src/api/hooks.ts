@@ -4,6 +4,7 @@ import { companiesApi } from './companies';
 import { peopleApi } from './people';
 import { contactsApi } from './contacts';
 import { lookupsApi } from './lookups';
+import { settingsApi } from './settings';
 import type {
   CompanyFilter,
   CompanyRequest,
@@ -38,6 +39,13 @@ export const usePorts = () =>
   useQuery({ queryKey: ['lookups', 'ports'], queryFn: lookupsApi.ports, ...LOOKUP_OPTS });
 export const useTonnageCategories = () =>
   useQuery({ queryKey: ['lookups', 'tonnage'], queryFn: lookupsApi.tonnageCategories, ...LOOKUP_OPTS });
+
+/**
+ * The greeting prefilled into WhatsApp links. Long-lived and shared: every phone row on a
+ * page asks for it, and one cached answer keeps them all quoting the same message.
+ */
+export const useWhatsappSettings = () =>
+  useQuery({ queryKey: ['settings', 'whatsapp'], queryFn: settingsApi.whatsapp, ...LOOKUP_OPTS });
 
 /* ---------------- vessels ---------------- */
 export const useVessels = (filter: VesselFilter) =>
@@ -240,5 +248,16 @@ export function useContactMutations() {
     mutationFn: (v: { id: number; working: boolean }) => contactsApi.setWorking(v.id, v.working),
     onSuccess: () => invalidate(...touched),
   });
-  return { create, update, remove, confirm, ban, setMain, setCirc, setNoCirc, setWorking };
+  // Affects nothing but the row itself — no list is collected by WhatsApp. 'people' is in
+  // the list because the People tab renders its expanded contact rows straight out of the
+  // people search response, so invalidating 'contacts' alone leaves the button it was just
+  // clicked on still showing the old state.
+  const setHasWhatsapp = useMutation({
+    mutationFn: (v: { id: number; hasWhatsapp: boolean }) =>
+      contactsApi.setHasWhatsapp(v.id, v.hasWhatsapp),
+    onSuccess: () => invalidate('contacts', 'company', 'vessel', 'people'),
+  });
+  return {
+    create, update, remove, confirm, ban, setMain, setCirc, setNoCirc, setWorking, setHasWhatsapp,
+  };
 }

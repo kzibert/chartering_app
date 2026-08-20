@@ -169,6 +169,12 @@ export interface ContactResponse {
    * The exact opposite of `circ`, so setting either clears the other.
    */
   noCirc: boolean;
+  /**
+   * This number is on WhatsApp. Recorded by hand — nothing can ask WhatsApp whether a
+   * number is registered, so the row offers a wa.me link and the user says what they saw.
+   * Phone contacts only.
+   */
+  hasWhatsapp: boolean;
 }
 
 export interface ContactRequest {
@@ -576,6 +582,19 @@ export interface CirculationSettings extends CirculationSettingsRequest {
    * protecting different things.
    */
   defaults?: CirculationSettings;
+}
+
+export interface WhatsappSettingsRequest {
+  /** Prefilled into wa.me links. Takes the same {{...}} placeholders as a circular. */
+  message: string;
+}
+
+export interface WhatsappSettings extends WhatsappSettingsRequest {
+  /** What Reset restores. */
+  defaultMessage: string;
+  customised: boolean;
+  /** Placeholder name -> what it renders as, for the hint under the field. */
+  placeholders: Record<string, string>;
 }
 
 /* ---------------- circular templates & footers ---------------- */

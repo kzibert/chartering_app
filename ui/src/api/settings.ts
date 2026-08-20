@@ -1,5 +1,10 @@
 import { client } from './client';
-import type { CirculationSettings, CirculationSettingsRequest } from './types';
+import type {
+  CirculationSettings,
+  CirculationSettingsRequest,
+  WhatsappSettings,
+  WhatsappSettingsRequest,
+} from './types';
 
 /**
  * Runtime settings. Values live in the database and override the configured defaults from
@@ -30,4 +35,16 @@ export const settingsApi = {
 
   reset: () =>
     client.delete<CirculationSettings>('/settings/circulation').then((r) => r.data),
+
+  /**
+   * The greeting prefilled into the wa.me links on phone contacts. Stored here rather than
+   * rendered here — the substitution happens in the browser, from the contact on the row.
+   */
+  whatsapp: () => client.get<WhatsappSettings>('/settings/whatsapp').then((r) => r.data),
+
+  updateWhatsapp: (body: WhatsappSettingsRequest) =>
+    client.put<WhatsappSettings>('/settings/whatsapp', body).then((r) => r.data),
+
+  resetWhatsapp: () =>
+    client.delete<WhatsappSettings>('/settings/whatsapp').then((r) => r.data),
 };

@@ -63,6 +63,7 @@ db/
   vessel_company_links.sql # idempotent patch: vessel<->company broker roles + solo flag (baked in)
   circulations.sql       # idempotent patch: circ flag, circulation lists, circulation history (baked in)
   no_circ_flag.sql       # idempotent patch: "never circulate to this address" flag (baked in)
+  whatsapp_flag.sql      # idempotent patch: "this number is on WhatsApp" flag (baked in)
   app_settings.sql       # idempotent patch: runtime settings edited from the Settings tab (baked in)
   mailbox.sql            # idempotent patch: synced mail, its folders and its filing rules (baked in)
   circulation_provider.sql # idempotent patch: which flow each message left by (baked in)
@@ -438,6 +439,47 @@ Endpoints: `POST /api/v1/campaigns` (202, sends in the background), `GET /campai
 `POST /campaigns/current/cancel`, `POST /campaigns/current/pause`, `GET /campaigns/current/log`,
 `POST /campaigns/test?to=…`, `GET /campaigns/config`, plus the resume/restart endpoints above
 and CRUD on `/api/v1/email-templates` and `/api/v1/email-footers`.
+
+## WhatsApp on contacts
+
+A phone number that turns out to be on WhatsApp is worth knowing about — it is often the only way
+to get a quick answer out of a broker who does not read email until the afternoon. Two things
+support that: a way to find out, and a place to remember the answer.
+
+**Finding out.** There is no API behind this button and the app does not pretend otherwise:
+nothing available to us can ask WhatsApp whether a number is registered — the Business API's
+contact check is not open, and scraping `wa.me` would be both against the terms and unreliable.
+So the check is the honest one. With **Edit** on, every phone row carries a **WA?** button whose
+popup shows the number exactly as it will be dialled, opens `https://wa.me/<number>?text=<message>`
+in a new tab, and then asks what you saw. WhatsApp itself gives the answer: a chat opens, or it
+tells you the number is not registered.
+
+**Remembering it.** Saying yes sets `has_whatsapp` on the contact (`db/whatsapp_flag.sql`), and
+from then on the number carries a green WhatsApp icon linking straight to that chat, with the same
+greeting prefilled. That link is *not* behind the Edit toggle — messaging someone is reading the
+contact, not editing it, and being able to reach them from wherever the number happens to be
+listed is the entire point of having flagged it. The flag is somebody's observation, never
+inferred and never cleared automatically; the same popup clears it if a number goes dead.
+
+**The numbers are messy.** Thirty years of hand-typed values means `+38-050-472-44-19`,
+`+49 (0) 521 5225178` and `0216 333 20 00 - 2419` all sit in the same column, while `wa.me` wants
+bare international digits. Everything but the digits is stripped, and a `(0)` is dropped because
+it is a national trunk digit spelled out for a domestic caller. What cannot be repaired is
+flagged rather than blocked: a number starting `0` has no country code, one under 8 digits is too
+short, one over 15 usually has an extension typed into the same field. The popup says so and
+still opens the link — you are about to look at the result in WhatsApp anyway, which is a better
+check than any rule here, and refusing to open it would only hide the number that needs fixing.
+
+**The message** is one field on the **Settings** tab, defaulting to `Good day, {{greeting}}`. It
+takes the same placeholders as a circular — `{{greeting}}`, `{{name}}`, `{{title}}`, `{{company}}`
+— substituted in the browser from the contact on the row, with the same fallbacks (greeting name,
+then the person's name, then "Sirs" for a number filed against a company with nobody's name on
+it). `{{email}}` is not offered: it can mean nothing on a phone contact. Nothing is ever sent by
+the app — the text arrives typed into the chat box and you press send, or don't.
+
+Endpoints: `PATCH /api/v1/contacts/{id}/whatsapp?hasWhatsapp=…` for the flag (phone contacts
+only — an email can never be on WhatsApp, so the call is refused rather than storing a fact that
+could not be true), and `GET`/`PUT`/`DELETE /api/v1/settings/whatsapp` for the message.
 
 ## Mailbox (incoming mail)
 

@@ -4,6 +4,9 @@ import com.chartering.config.BrevoProperties;
 import com.chartering.dto.CirculationProviderRequest;
 import com.chartering.dto.CirculationSettingsRequest;
 import com.chartering.dto.CirculationSettingsResponse;
+import com.chartering.dto.WhatsappSettingsRequest;
+import com.chartering.dto.WhatsappSettingsResponse;
+import com.chartering.service.MailTemplateService;
 import com.chartering.service.SettingsService;
 import com.chartering.service.SettingsService.CirculationSettings;
 import com.chartering.service.mail.CircularProvider;
@@ -14,6 +17,10 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Runtime settings. Values live in the database and override the configured defaults from
@@ -28,6 +35,16 @@ public class SettingsController {
 
     private final SettingsService settings;
     private final BrevoProperties brevo;
+
+    /**
+     * The placeholders offered under the WhatsApp greeting field: the circular ones minus
+     * {@code email}, which cannot mean anything on a phone contact.
+     */
+    private static final Map<String, String> WHATSAPP_PLACEHOLDERS =
+            MailTemplateService.PLACEHOLDERS.entrySet().stream()
+                    .filter(e -> !"email".equals(e.getKey()))
+                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue,
+                            (a, b) -> a, LinkedHashMap::new));
 
     @GetMapping("/circulation")
     @Operation(summary = "Circulation settings in force, plus the defaults they reset to",
@@ -64,6 +81,37 @@ public class SettingsController {
             description = "Scoped to the provider in force; the choice of provider itself is kept.")
     public ResponseEntity<CirculationSettingsResponse> reset() {
         return ResponseEntity.ok(toResponse(settings.resetCirculation()));
+    }
+
+    @GetMapping("/whatsapp")
+    @Operation(summary = "The greeting prefilled into WhatsApp links",
+            description = "Used by the WhatsApp button on a phone contact — both the check "
+                    + "link and, once the number is flagged as on WhatsApp, the link to the "
+                    + "chat. Placeholders are the same ones a circular understands and are "
+                    + "substituted in the browser from the contact on the row.")
+    public ResponseEntity<WhatsappSettingsResponse> whatsapp() {
+        return ResponseEntity.ok(whatsappResponse(settings.whatsappMessage()));
+    }
+
+    @PutMapping("/whatsapp")
+    @Operation(summary = "Change the WhatsApp greeting")
+    public ResponseEntity<WhatsappSettingsResponse> updateWhatsapp(
+            @Valid @RequestBody WhatsappSettingsRequest req) {
+        return ResponseEntity.ok(whatsappResponse(settings.updateWhatsappMessage(req.getMessage())));
+    }
+
+    @DeleteMapping("/whatsapp")
+    @Operation(summary = "Reset the WhatsApp greeting to the built-in default")
+    public ResponseEntity<WhatsappSettingsResponse> resetWhatsapp() {
+        return ResponseEntity.ok(whatsappResponse(settings.resetWhatsappMessage()));
+    }
+
+    private WhatsappSettingsResponse whatsappResponse(String message) {
+        return new WhatsappSettingsResponse(
+                message,
+                SettingsService.DEFAULT_WHATSAPP_MESSAGE,
+                !SettingsService.DEFAULT_WHATSAPP_MESSAGE.equals(message),
+                WHATSAPP_PLACEHOLDERS);
     }
 
     private CirculationSettingsResponse toResponse(CirculationSettings s) {

@@ -98,4 +98,15 @@ public class Contact {
      */
     @Column(name = "is_no_circ", nullable = false)
     private boolean noCirc = false;
+
+    /**
+     * This number has a WhatsApp account behind it. Phone contacts only.
+     *
+     * <p>Recorded by hand rather than detected: there is no open way to ask WhatsApp whether
+     * a number is registered, so the app opens a wa.me link with a greeting prefilled and
+     * the user says whether a chat came up. It is somebody's observation, not a fact the
+     * system can verify or refresh — which is why nothing ever clears it automatically.
+     */
+    @Column(name = "has_whatsapp", nullable = false)
+    private boolean hasWhatsapp = false;
 }

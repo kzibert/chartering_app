@@ -8,6 +8,7 @@ import MainContactButton from './MainContactButton';
 import CircToggleButton from './CircToggleButton';
 import NoCircToggleButton from './NoCircToggleButton';
 import WorkingToggleButton from './WorkingToggleButton';
+import { WhatsappChatLink, WhatsappCheckButton } from './WhatsappButtons';
 import { useContactMutations } from '../api/hooks';
 import type { ContactResponse } from '../api/types';
 
@@ -31,9 +32,10 @@ export default function ContactLine({
   highlight?: string;
   /**
    * Gates every control that writes to the contact — main, circ, no-circ, not-working,
-   * edit, delete —
+   * the WhatsApp check, edit, delete —
    * so browsing a list stays read-only until the caller's Edit toggle is on. Add-to-list
-   * is deliberately not gated: it only builds the local email list.
+   * is deliberately not gated: it only builds the local email list. Neither is the WhatsApp
+   * chat link, which only opens a chat with a number already flagged.
    */
   editing?: boolean;
   /** Supply to show an edit button. The caller owns the form, so one drawer renders one. */
@@ -61,6 +63,9 @@ export default function ContactLine({
             <Tag color="red">no circ</Tag>
           </Tooltip>
         )}
+        {/* Outside the editing gate: reaching someone on WhatsApp is reading the contact,
+            not editing it, and this is the point of having flagged the number at all. */}
+        <WhatsappChatLink ct={ct} />
         {!ct.working && <Tag color="red">not working</Tag>}
         {ct.confirmed && <Tag color="success">confirmed</Tag>}
         {ct.banned && <Tag color="red">banned</Tag>}
@@ -68,6 +73,7 @@ export default function ContactLine({
         {editing && <CircToggleButton ct={ct} />}
         {editing && <NoCircToggleButton ct={ct} />}
         {editing && <WorkingToggleButton ct={ct} />}
+        {editing && <WhatsappCheckButton ct={ct} />}
         <AddToListButton ct={ct} />
         {editing && onEdit && (
           <Tooltip title="Edit contact">

@@ -168,6 +168,29 @@ public class ContactService {
         return mapper.toContactResponse(contactRepository.save(ct));
     }
 
+    /**
+     * Record that this number is (or is no longer) on WhatsApp.
+     *
+     * <p>Set by hand on purpose. Nothing here checks WhatsApp — no open API answers "is this
+     * number registered", so the UI opens a wa.me link with the configured greeting prefilled
+     * and the user reports what they saw. The flag is therefore an observation with a date on
+     * it only in the user's head; it is never inferred, refreshed or cleared automatically.
+     *
+     * <p>Email contacts are refused rather than silently ignored: an address can never be on
+     * WhatsApp, so the click can only be a mistake worth surfacing.
+     */
+    @Transactional
+    public ContactResponse setHasWhatsapp(Long id, boolean hasWhatsapp) {
+        Contact ct = find(id);
+        if (hasWhatsapp && !"phone".equalsIgnoreCase(ct.getContactKind())) {
+            throw new IllegalArgumentException(
+                    "Only phone contacts can be on WhatsApp — contact " + id
+                            + " is a " + ct.getContactKind() + ".");
+        }
+        ct.setHasWhatsapp(hasWhatsapp);
+        return mapper.toContactResponse(contactRepository.save(ct));
+    }
+
     private Contact find(Long id) {
         return contactRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Contact", id));

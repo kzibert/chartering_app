@@ -59,7 +59,8 @@ public class DtoMapper {
                 ct.getCompany() != null ? ct.getCompany().getName() : null,
                 ct.getContactKind(), ct.getContactValue(), ct.getNotes(),
                 ct.isConfirmed(), ct.getConfirmedAt(), ct.getConfirmedBy(), ct.getConfirmNotes(),
-                ct.isBanned(), ct.isLegacy(), ct.isMain(), ct.isWorking(), ct.isCirc(), ct.isNoCirc());
+                ct.isBanned(), ct.isLegacy(), ct.isMain(), ct.isWorking(), ct.isCirc(), ct.isNoCirc(),
+                ct.isHasWhatsapp());
     }
 
     public PersonResponse toPersonResponse(Person p) {

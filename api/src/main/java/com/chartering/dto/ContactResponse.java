@@ -30,5 +30,10 @@ public record ContactResponse(
          * flagged never to be circulated to. Distinct from {@code working}: the address is
          * fine and still the one to write to by hand, it is only bulk mail it is kept out of.
          */
-        boolean noCirc) {
+        boolean noCirc,
+        /**
+         * this number is on WhatsApp, as confirmed by hand from the wa.me check. Phone
+         * contacts only — see {@code ContactService#setHasWhatsapp}.
+         */
+        boolean hasWhatsapp) {
 }
