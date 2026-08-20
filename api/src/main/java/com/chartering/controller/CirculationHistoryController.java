@@ -3,6 +3,7 @@ package com.chartering.controller;
 import com.chartering.dto.CirculationMessageResponse;
 import com.chartering.dto.CirculationRunDetailResponse;
 import com.chartering.dto.CirculationRunResponse;
+import com.chartering.dto.CirculationTodayResponse;
 import com.chartering.dto.PageResponse;
 import com.chartering.service.CirculationHistoryService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -32,6 +33,16 @@ public class CirculationHistoryController {
     public ResponseEntity<PageResponse<CirculationRunResponse>> history(
             @PageableDefault(size = 20) Pageable pageable) {
         return ResponseEntity.ok(history.history(pageable));
+    }
+
+    @GetMapping("/today")
+    @Operation(summary = "How many circular emails have gone out today",
+            description = "Counted in the server's local day from each address's own send time, so "
+                    + "a circulation resumed the next morning lands its messages on the day they "
+                    + "were actually sent. Read it against the mailbox's daily cap: the pacing "
+                    + "rails protect the per-hour allowance, nothing protects the daily one.")
+    public ResponseEntity<CirculationTodayResponse> today() {
+        return ResponseEntity.ok(history.today());
     }
 
     @GetMapping("/{id}")

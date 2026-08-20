@@ -7,6 +7,7 @@ import type {
   CirculationMessage,
   CirculationRun,
   CirculationRunDetail,
+  CirculationToday,
   CompanyFilter,
   ContactResponse,
   PageParams,
@@ -123,6 +124,13 @@ export const circulationsApi = {
       .then((r) => r.data),
 
   remove: (id: number) => client.delete<void>(`/circulations/${id}`).then((r) => r.data),
+
+  /**
+   * How much has gone out today. Counted server-side, in the server's local day, from each
+   * address's own send time — so a run resumed this morning counts against today, not
+   * against the day it was started on.
+   */
+  today: () => client.get<CirculationToday>('/circulations/today').then((r) => r.data),
 };
 
 /**

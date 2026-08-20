@@ -15,6 +15,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -268,6 +269,27 @@ public class CirculationHistoryService {
     public PageResponse<CirculationRunResponse> history(Pageable pageable) {
         return PageResponse.from(runs.findAllByOrderByStartedAtDesc(pageable)
                 .map(CirculationHistoryService::toRunResponse));
+    }
+
+    /**
+     * What has actually gone out today. The pacing rails guard the mailbox's per-hour
+     * allowance and nothing guards the daily one — so this is the figure to read before
+     * starting another circular, since exceeding a provider's daily cap can suspend
+     * outgoing mail on the whole account.
+     *
+     * <p>Counted from each address's own send time rather than from the run counters: a run
+     * that started last night, or one resumed this morning, has to put its messages on the
+     * day they really left. "Today" is the server's local day — the number is read against
+     * a cap that is felt during working hours, not at 02:00 UTC.
+     */
+    @Transactional(readOnly = true)
+    public CirculationTodayResponse today() {
+        LocalDate day = LocalDate.now();
+        LocalDateTime from = day.atStartOfDay();
+        LocalDateTime until = from.plusDays(1);
+        return new CirculationTodayResponse(day,
+                recipients.countSentBetween(CirculationRunRecipient.SENT, from, until),
+                recipients.countRunsSendingBetween(CirculationRunRecipient.SENT, from, until));
     }
 
     @Transactional(readOnly = true)
