@@ -8,36 +8,28 @@ import com.chartering.dto.CampaignStatusResponse;
 import com.chartering.dto.CirculationRunResponse;
 import com.chartering.exception.MailNotConfiguredException;
 import com.chartering.repository.ContactRepository;
+import com.chartering.service.mail.CircularProvider;
+import com.chartering.service.mail.CircularSendException;
+import com.chartering.service.mail.CircularSender;
+import com.chartering.service.mail.SmtpCircularSender;
 import jakarta.annotation.PreDestroy;
-import jakarta.mail.Address;
-import jakarta.mail.Message;
-import jakarta.mail.MessagingException;
-import jakarta.mail.internet.InternetAddress;
-import jakarta.mail.internet.MimeBodyPart;
-import jakarta.mail.internet.MimeMessage;
-import jakarta.mail.internet.MimeMultipart;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.mail.MailAuthenticationException;
-import org.springframework.mail.MailException;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.stereotype.Service;
 
-import java.io.UnsupportedEncodingException;
-import java.util.Properties;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.regex.Pattern;
 
 /**
  * Sends a circular to a list of recipients, one message per recipient.
@@ -82,20 +74,28 @@ import java.util.regex.Pattern;
  *   <li>An API restart mid-send is treated as a pause, not a failure - see
  *       {@code CirculationHistoryService.closeInterruptedRuns}.</li>
  * </ul>
+ *
+ * <h2>Which flow actually sends</h2>
+ * <p>Nothing above depends on how a message leaves. A {@link CircularSender} - the user's
+ * own mailbox over SMTP, or the Brevo transactional API - is chosen from Settings and bound
+ * once at launch, and every rule here applies to both. That binding is deliberate: a
+ * provider switched half way through a campaign would otherwise send part of one circular
+ * from a personal mailbox and part of it through an ESP, with two different From identities
+ * arriving in the same list's inboxes. It also means a run paused under one provider and
+ * resumed under another simply finishes under the new one, as one circulation.
  */
 @Service
 @Slf4j
 public class EmailCampaignService {
 
-    /** A 5xx reply is a permanent refusal — retrying it wastes quota and looks worse. */
-    private static final Pattern PERMANENT_SMTP_ERROR = Pattern.compile("\\b5\\d\\d\\b");
     private static final long CANCEL_POLL_MS = 200;
     /** How long a shutdown waits for the worker to record the pause before killing it. */
     private static final long SHUTDOWN_GRACE_MS = 10_000;
 
-    private final JavaMailSender mailSender;
+    /** Every configured way of sending, by provider. Populated from the beans at startup. */
+    private final Map<CircularProvider, CircularSender> senders = new EnumMap<>(CircularProvider.class);
+    private final SmtpCircularSender smtp;
     private final MailCampaignProperties props;
-    private final MailTemplateService templates;
     private final CampaignLogService campaignLog;
     private final EmailFooterService footers;
     private final HtmlSanitizer sanitizer;
@@ -129,9 +129,9 @@ public class EmailCampaignService {
      */
     private volatile SettingsService.CirculationSettings activeSettings;
 
-    public EmailCampaignService(JavaMailSender mailSender,
+    public EmailCampaignService(List<CircularSender> availableSenders,
+                                SmtpCircularSender smtp,
                                 MailCampaignProperties props,
-                                MailTemplateService templates,
                                 CampaignLogService campaignLog,
                                 EmailFooterService footers,
                                 HtmlSanitizer sanitizer,
@@ -139,9 +139,12 @@ public class EmailCampaignService {
                                 CirculationHistoryService history,
                                 CirculationListService circulationLists,
                                 SettingsService settings) {
-        this.mailSender = mailSender;
+        availableSenders.forEach(s -> this.senders.put(s.provider(), s));
+        // Named separately as well as being in the map: the config endpoint reports the SMTP
+        // username whichever provider is sending, so the screen can show the mailbox the app
+        // would fall back to without having to ask which flow is active first.
+        this.smtp = smtp;
         this.props = props;
-        this.templates = templates;
         this.campaignLog = campaignLog;
         this.footers = footers;
         this.sanitizer = sanitizer;
@@ -259,11 +262,11 @@ public class EmailCampaignService {
 
         // Fail here rather than at message 1 of 200: a bad password should not leave a
         // half-sent campaign and a log full of identical auth errors behind it.
-        JavaMailSenderImpl sender = senderFor(cfg);
-        verifyConnection(sender);
+        CircularSender.Bound sender = bind(cfg);
 
         String carriedOver = campaignLog.beginRun(subject, recipients.size(),
                 cfg.minDelayMs(), cfg.maxDelayMs());
+        campaignLog.append("VIA    " + cfg.provider().label());
         if (batchCount > 1) {
             campaignLog.append("PLAN   %d recipient(s) over %d run(s) of up to %d, %s apart"
                     .formatted(recipients.size(), batchCount, cfg.maxRecipientsPerCampaign(),
@@ -289,8 +292,8 @@ public class EmailCampaignService {
             log.warn("Could not open the circulation history record", e);
         }
 
-        log.info("Campaign {}: {} recipient(s) over {} run(s), subject '{}' ({})",
-                verb, recipients.size(), batchCount, subject, carriedOver);
+        log.info("Campaign {} via {}: {} recipient(s) over {} run(s), subject '{}' ({})",
+                verb, cfg.provider().label(), recipients.size(), batchCount, subject, carriedOver);
 
         return submit(new Job(run, subject, composedHtml, recipients, cfg, sender,
                 0, 0, duplicates + dead, recipients.size()));
@@ -333,8 +336,7 @@ public class EmailCampaignService {
         }
 
         SettingsService.CirculationSettings cfg = settings.circulation();
-        JavaMailSenderImpl sender = senderFor(cfg);
-        verifyConnection(sender);
+        CircularSender.Bound sender = bind(cfg);
 
         int skipped = src.alreadySkipped() + dropped.size();
         // The run's total loses whoever will now never be mailed, so sent + failed can still
@@ -350,6 +352,7 @@ public class EmailCampaignService {
                 cfg.minDelayMs(), cfg.maxDelayMs());
         campaignLog.append("RESUME %d of %d already done - %d recipient(s) left"
                 .formatted(src.alreadySent() + src.alreadyFailed(), total, live.size()));
+        campaignLog.append("VIA    " + cfg.provider().label());
         if (batchCount > 1) {
             campaignLog.append("PLAN   %d recipient(s) over %d run(s) of up to %d, %s apart"
                     .formatted(live.size(), batchCount, cfg.maxRecipientsPerCampaign(),
@@ -474,27 +477,28 @@ public class EmailCampaignService {
                 ? previewRecipient(to)
                 : withEmail(req.getRecipients().get(0), to);
         SettingsService.CirculationSettings cfg = settings.circulation();
-        JavaMailSenderImpl sender = senderFor(cfg);
-        verifyConnection(sender);
-        // Composed the same way as a real send, footer included — that's the whole point of
-        // a test: seeing exactly what a recipient will get.
-        deliver(sample, "[TEST] " + req.getSubject(), composeBody(req), sender, cfg);
-        log.info("Test circular sent to {}", to);
+        CircularSender.Bound sender = bind(cfg);
+        // Composed and sent the same way as a real one, footer and provider included —
+        // that's the whole point of a test: seeing exactly what a recipient will get, by
+        // exactly the route the circular itself will take.
+        sender.send(sample, "[TEST] " + req.getSubject(), composeBody(req));
+        log.info("Test circular sent to {} via {}", to, cfg.provider().label());
     }
 
     public CampaignConfigResponse config() {
-        List<String> missing = missingSettings();
-        JavaMailSenderImpl impl = asImpl();
-        // Host, pacing and cap come from Settings; the credentials and identity still come
-        // from the environment, which is why they are read off different objects here.
+        // Provider, host, pacing and cap come from Settings; the credentials and identity
+        // still come from the environment, which is why they are read off different objects.
         SettingsService.CirculationSettings cfg = settings.circulation();
+        List<String> missing = missingSettings(cfg);
         return new CampaignConfigResponse(
                 props.isEnabled(),
                 props.isEnabled() && missing.isEmpty(),
                 missing,
+                cfg.provider().name(),
+                cfg.provider().label(),
                 cfg.smtpHost(),
                 cfg.smtpPort(),
-                impl == null ? null : impl.getUsername(),
+                smtp.username(),
                 cfg.fromAddress(),
                 cfg.fromName(),
                 props.getReplyTo(),
@@ -574,27 +578,29 @@ public class EmailCampaignService {
 
                 Attempted outcome = new Attempted();
                 try {
-                    sendWithRetries(r, job.subject(), job.composedHtml(), outcome, job.sender(), cfg);
+                    sendWithRetries(r, job.subject(), job.composedHtml(), outcome, job.sender());
                     sent++;
                     consecutiveFailures = 0;
                     campaignLog.append("SENT   %-40s %s".formatted(r.getEmail(), describe(r)));
                     recordSent(record, i, outcome.attempts);
-                } catch (MailAuthenticationException e) {
-                    // Credentials rejected mid-run: every remaining message would fail the same
-                    // way, and repeated auth failures are themselves a lockout trigger.
-                    failed++;
-                    finalState = "ABORTED";
-                    finalMessage = "SMTP authentication failed - campaign aborted. Check MAIL_USERNAME / MAIL_PASSWORD.";
-                    state = state.withError(rootMessage(e));
-                    campaignLog.append("ABORT  authentication rejected: " + rootMessage(e));
-                    recordFailed(record, i, outcome.attempts, rootMessage(e));
-                    break;
                 } catch (Exception e) {
                     failed++;
-                    consecutiveFailures++;
                     state = state.withError(rootMessage(e));
-                    campaignLog.append("FAILED %-40s %s".formatted(r.getEmail(), rootMessage(e)));
                     recordFailed(record, i, outcome.attempts, rootMessage(e));
+
+                    // Credentials rejected mid-run: every remaining message would fail the same
+                    // way, and repeated auth failures are themselves a lockout trigger. Whether
+                    // that arrived as an SMTP 535 or a Brevo 401 makes no difference here — the
+                    // sender has already said which of the three kinds of failure this is.
+                    if (e instanceof CircularSendException sendFailure && sendFailure.auth()) {
+                        finalState = "ABORTED";
+                        finalMessage = authAbortMessage(cfg.provider());
+                        campaignLog.append("ABORT  authentication rejected: " + rootMessage(e));
+                        break;
+                    }
+
+                    consecutiveFailures++;
+                    campaignLog.append("FAILED %-40s %s".formatted(r.getEmail(), rootMessage(e)));
 
                     if (consecutiveFailures >= props.getAbortAfterConsecutiveFailures()) {
                         finalState = "ABORTED";
@@ -675,20 +681,18 @@ public class EmailCampaignService {
     }
 
     private void sendWithRetries(CampaignRecipientRequest r, String subject, String composedHtml,
-                                 Attempted outcome, JavaMailSenderImpl sender,
-                                 SettingsService.CirculationSettings cfg) {
+                                 Attempted outcome, CircularSender.Bound sender) {
         int attempt = 0;
         long backoff = props.getRetryBackoffMs();
         while (true) {
             try {
                 outcome.attempts++;
-                deliver(r, subject, composedHtml, sender, cfg);
+                sender.send(r, subject, composedHtml);
                 return;
-            } catch (MailAuthenticationException e) {
-                throw e; // never retried — handled by the caller as a hard abort
-            } catch (MailException e) {
-                boolean permanent = PERMANENT_SMTP_ERROR.matcher(String.valueOf(rootMessage(e))).find();
-                if (permanent || attempt >= props.getMaxRetries()) {
+            } catch (CircularSendException e) {
+                // permanent() covers the auth case too: those are never retried, they are
+                // rethrown for the caller to turn into a hard abort.
+                if (e.permanent() || attempt >= props.getMaxRetries()) {
                     throw e;
                 }
                 attempt++;
@@ -699,42 +703,6 @@ public class EmailCampaignService {
                 }
                 backoff *= 2;
             }
-        }
-    }
-
-    /** Build and hand one personalised message to the transport. */
-    private void deliver(CampaignRecipientRequest r, String subject, String htmlTemplate,
-                         JavaMailSenderImpl sender, SettingsService.CirculationSettings cfg) {
-        MimeMessage mime = sender.createMimeMessage();
-        try {
-            mime.setFrom(new InternetAddress(cfg.fromAddress(), cfg.fromName(), "UTF-8"));
-            mime.setRecipient(Message.RecipientType.TO, new InternetAddress(r.getEmail().trim()));
-            mime.setSubject(templates.renderText(subject, r), "UTF-8");
-            if (isSet(props.getReplyTo())) {
-                mime.setReplyTo(new Address[]{new InternetAddress(props.getReplyTo().trim())});
-            }
-
-            String html = templates.renderHtml(htmlTemplate, r);
-            MimeBodyPart textPart = new MimeBodyPart();
-            textPart.setText(templates.htmlToText(html), "UTF-8");
-            MimeBodyPart htmlPart = new MimeBodyPart();
-            htmlPart.setContent(html, "text/html; charset=UTF-8");
-
-            // A bare multipart/alternative, built by hand rather than via MimeMessageHelper:
-            // the helper always nests mixed > related > alternative, and a multipart/mixed
-            // carrying no attachment is both wasteful and a mild spam signal. Text part first —
-            // alternative orders parts least- to most-preferred.
-            MimeMultipart alternative = new MimeMultipart("alternative");
-            alternative.addBodyPart(textPart);
-            alternative.addBodyPart(htmlPart);
-            mime.setContent(alternative);
-
-            if (isSet(props.getUnsubscribeMailto())) {
-                mime.setHeader("List-Unsubscribe", "<mailto:%s>".formatted(props.getUnsubscribeMailto().trim()));
-            }
-            sender.send(mime);
-        } catch (MessagingException | UnsupportedEncodingException e) {
-            throw new IllegalStateException("Could not build the message for " + r.getEmail() + ": " + e.getMessage(), e);
         }
     }
 
@@ -787,7 +755,7 @@ public class EmailCampaignService {
     private record Job(CirculationHistoryService.StartedRun record,
                        String subject, String composedHtml,
                        List<CampaignRecipientRequest> recipients,
-                       SettingsService.CirculationSettings cfg, JavaMailSenderImpl sender,
+                       SettingsService.CirculationSettings cfg, CircularSender.Bound sender,
                        int alreadySent, int alreadyFailed, int skipped, int total) {
     }
 
@@ -845,92 +813,53 @@ public class EmailCampaignService {
     private void requireConfigured() {
         if (!props.isEnabled()) {
             throw new MailNotConfiguredException(
-                    "Sending is disabled. Set MAIL_ENABLED=true once the SMTP credentials are in place.");
+                    "Sending is disabled. Set MAIL_ENABLED=true once the credentials are in place.");
         }
-        List<String> missing = missingSettings();
+        List<String> missing = missingSettings(settings.circulation());
         if (!missing.isEmpty()) {
-            throw new MailNotConfiguredException("Mail is not fully configured — missing: " + String.join(", ", missing));
+            throw new MailNotConfiguredException("Mail is not fully configured — missing: "
+                    + String.join(", ", missing));
         }
     }
 
-    private List<String> missingSettings() {
-        List<String> missing = new ArrayList<>();
-        JavaMailSenderImpl impl = asImpl();
-        // Host comes from Settings, which falls back to MAIL_HOST when it was never changed.
-        if (!isSet(settings.circulation().smtpHost())) {
-            missing.add("SMTP host (Settings, or MAIL_HOST)");
-        }
-        if (impl == null || !isSet(impl.getUsername())) {
-            missing.add("MAIL_USERNAME");
-        }
-        if (impl == null || !isSet(impl.getPassword())) {
-            missing.add("MAIL_PASSWORD");
-        }
-        if (!isSet(settings.circulation().fromAddress())) {
-            missing.add("From address (Settings, or MAIL_FROM)");
-        }
-        return missing;
-    }
-
-    private void verifyConnection(JavaMailSenderImpl impl) {
-        if (impl == null) {
-            return;
-        }
-        try {
-            impl.testConnection();
-        } catch (Exception e) {
-            throw new MailNotConfiguredException(
-                    "Could not connect to %s:%d — %s".formatted(impl.getHost(), impl.getPort(), rootMessage(e)));
-        }
-    }
-
-    private JavaMailSenderImpl asImpl() {
-        return mailSender instanceof JavaMailSenderImpl impl ? impl : null;
+    /** What the provider in force still needs before a send would even be attempted. */
+    private List<String> missingSettings(SettingsService.CirculationSettings cfg) {
+        return senderFor(cfg.provider()).missingSettings(cfg);
     }
 
     /**
-     * A sender pointed at the host/port currently configured in Settings, carrying the
-     * credentials and transport properties of the Spring-configured one.
-     *
-     * <p>A fresh instance rather than mutating the shared bean: the bean is a singleton, and
-     * reconfiguring it in place would make the host depend on whoever sent last.
-     *
-     * <p>When the port is changed, the TLS mode moves with it by convention — 465 is
-     * implicit SSL, anything else is STARTTLS — because the two are not independently
-     * meaningful and a port change alone would otherwise just fail to connect. Leaving the
-     * port at its configured value keeps whatever MAIL_SSL/MAIL_STARTTLS said, so an
-     * environment tuned by hand is never second-guessed.
+     * The sender for a provider. A provider with no bean behind it should be impossible -
+     * every enum constant has one - so an absent entry is a wiring fault, not a user error,
+     * and saying so plainly beats a NullPointerException three frames later.
      */
-    private JavaMailSenderImpl senderFor(SettingsService.CirculationSettings s) {
-        JavaMailSenderImpl base = asImpl();
-        if (base == null) {
-            return null;
+    private CircularSender senderFor(CircularProvider provider) {
+        CircularSender sender = senders.get(provider);
+        if (sender == null) {
+            throw new MailNotConfiguredException(
+                    "No sender is configured for " + provider.label() + ".");
         }
-        boolean unchanged = s.smtpPort() == base.getPort()
-                && s.smtpHost() != null && s.smtpHost().equalsIgnoreCase(base.getHost());
-        if (unchanged) {
-            return base;
-        }
+        return sender;
+    }
 
-        JavaMailSenderImpl out = new JavaMailSenderImpl();
-        out.setHost(s.smtpHost());
-        out.setPort(s.smtpPort());
-        out.setUsername(base.getUsername());
-        out.setPassword(base.getPassword());
-        out.setProtocol(base.getProtocol());
-        out.setDefaultEncoding(base.getDefaultEncoding());
+    /**
+     * Freeze the transport this run will use, and check it answers before anything is sent.
+     *
+     * <p>Both halves matter. Binding once is what stops a provider or host changed mid-send
+     * from splitting a circular across two transports; verifying up front is what turns a
+     * rejected credential into one error message instead of a half-sent campaign and a
+     * provider that has watched us fail to authenticate two hundred times.
+     */
+    private CircularSender.Bound bind(SettingsService.CirculationSettings cfg) {
+        CircularSender.Bound bound = senderFor(cfg.provider()).bind(cfg);
+        bound.verify();
+        return bound;
+    }
 
-        Properties p = new Properties();
-        p.putAll(base.getJavaMailProperties());
-        if (s.smtpPort() != base.getPort()) {
-            boolean implicitSsl = s.smtpPort() == 465;
-            p.setProperty("mail.smtp.ssl.enable", String.valueOf(implicitSsl));
-            p.setProperty("mail.smtp.starttls.enable", String.valueOf(!implicitSsl));
-        }
-        // Certificate trust names a host, so it has to follow the host it was set for.
-        p.setProperty("mail.smtp.ssl.trust", s.smtpHost());
-        out.setJavaMailProperties(p);
-        return out;
+    /** Wording for an aborted run, naming the credential the user actually has to go and fix. */
+    private static String authAbortMessage(CircularProvider provider) {
+        return provider == CircularProvider.BREVO
+                ? "Brevo rejected the API key - campaign aborted. Check BREVO_API_KEY."
+                : "SMTP authentication failed - campaign aborted. Check MAIL_USERNAME / MAIL_PASSWORD.";
     }
 
     /**
@@ -980,19 +909,12 @@ public class EmailCampaignService {
         return s != null && !s.isBlank();
     }
 
+    /**
+     * Shared with the senders, so the same failure reads the same way in the campaign log,
+     * in history, and in the status endpoint.
+     */
     private static String rootMessage(Throwable t) {
-        Throwable cur = t;
-        while (cur.getCause() != null && cur.getCause() != cur) {
-            cur = cur.getCause();
-        }
-        String msg = cur.getMessage();
-        if (msg == null || msg.isBlank()) {
-            return cur.getClass().getSimpleName();
-        }
-        String clean = msg.replaceAll("\\s+", " ").trim();
-        // Some exceptions carry a bare token as their message — UnknownHostException's is just
-        // the hostname, which reads as nonsense in a log. Qualify those with the exception type.
-        return clean.contains(" ") ? clean : cur.getClass().getSimpleName() + ": " + clean;
+        return CircularSendException.rootMessage(t);
     }
 
     /**

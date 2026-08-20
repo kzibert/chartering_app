@@ -15,6 +15,15 @@ public record CampaignConfigResponse(
         boolean ready,
         /** Human-readable names of the settings still missing, for the UI to display. */
         List<String> missingSettings,
+        /**
+         * Which flow sends circulars right now — {@code SMTP} or {@code BREVO}. Reported
+         * because it changes what the recipient sees and whose quota is being spent, and
+         * neither is visible from the compose screen otherwise.
+         */
+        String provider,
+        /** The same choice, worded for display: "Mailbox (SMTP)" or "Brevo API". */
+        String providerLabel,
+        /** Only meaningful under SMTP; kept in the payload so switching back shows the endpoint. */
         String smtpHost,
         int smtpPort,
         String username,

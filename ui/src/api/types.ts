@@ -389,10 +389,23 @@ export interface CampaignStatus {
   resumable: boolean;
 }
 
+/**
+ * How circulars leave. `SMTP` hands each message to the user's own mailbox — the circular
+ * arrives from a real person, and that mailbox's quota is what is being spent. `BREVO`
+ * posts it to Brevo's transactional API, which is faster and puts the provider's
+ * reputation on the line instead of the mailbox's.
+ */
+export type CircularProvider = 'SMTP' | 'BREVO';
+
 export interface CampaignConfig {
   enabled: boolean;
   ready: boolean;
   missingSettings?: string[];
+  /** Which flow is sending right now — shown on the Circulars tab beside the pacing. */
+  provider: CircularProvider;
+  /** The same choice, worded for display: "Mailbox (SMTP)" or "Brevo API". */
+  providerLabel: string;
+  /** Only meaningful under SMTP. */
   smtpHost?: string;
   smtpPort: number;
   username?: string;
@@ -437,6 +450,19 @@ export interface CirculationRun {
   startedAt: string;
   finishedAt?: string;
   message?: string;
+}
+
+/**
+ * The day's outgoing volume. The server counts it in *its* local day, so the figure does
+ * not change with the reader's browser clock.
+ */
+export interface CirculationToday {
+  /** The local day counted, so a tab left open overnight can see the counter roll over. */
+  date: string;
+  /** Addresses actually mailed today, across every circulation. */
+  sent: number;
+  /** How many circulations those messages came from — those that delivered, not those opened. */
+  circulations: number;
 }
 
 export interface CirculationRunRecipient {
@@ -495,10 +521,23 @@ export interface CirculationSettingsRequest {
 }
 
 export interface CirculationSettings extends CirculationSettingsRequest {
-  /** true when any value differs from the configured default */
+  /** Which flow sends circulars. Changed with settingsApi.setProvider, not by saving the form. */
+  provider: CircularProvider;
+  providerLabel: string;
+  /**
+   * Whether BREVO_API_KEY is present in the environment. The switch is still offered
+   * without it — the settings screen is where you would go to find out why it is missing —
+   * but the screen says plainly that a send would fail.
+   */
+  brevoConfigured: boolean;
+  /** true when any value differs from the configured default *for this provider* */
   customised: boolean;
-  /** what Reset restores — absent on the nested defaults block itself */
-  defaults?: CirculationSettingsRequest;
+  /**
+   * What Reset restores — absent on the nested defaults block itself. Provider-dependent:
+   * Brevo's pacing baseline is far faster than the mailbox's, because the two are
+   * protecting different things.
+   */
+  defaults?: CirculationSettings;
 }
 
 /* ---------------- circular templates & footers ---------------- */

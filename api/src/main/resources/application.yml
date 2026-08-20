@@ -10,6 +10,10 @@ spring:
     properties:
       hibernate:
         jdbc:
+          # Timestamps go to the database as UTC instants and come back in the JVM's zone
+          # (TZ, set on the container — see .env.example). The application itself works in
+          # local wall-clock time throughout; this is only the wire format, and keeping it
+          # absolute is what lets the display zone be changed without rewriting history.
           time_zone: UTC
 
   # SMTP transport for circulars. Defaults target Zoho's EU data centre on implicit
@@ -59,6 +63,24 @@ chartering:
     retry-backoff-ms: ${MAIL_RETRY_BACKOFF_MS:10000}
     abort-after-consecutive-failures: ${MAIL_ABORT_AFTER_FAILURES:5}
     log-file: ${MAIL_LOG_FILE:logs/campaign-current.log}
+
+  # The second circular flow: Brevo's transactional API instead of the mailbox over SMTP.
+  # Which of the two is used is a runtime setting ("Use Brevo for circs" on the Settings tab),
+  # not an environment variable — only the key lives here, because it is a credential.
+  #
+  # The pacing below is Brevo's own baseline, and it is much faster than the SMTP one on
+  # purpose: the mailbox rails exist to keep a personal account from being suspended, while
+  # Brevo is built to be sent through in bulk and only its daily plan allowance really binds.
+  # These are defaults, not limits — the Settings tab tunes them per provider.
+  brevo:
+    api-key: ${BREVO_API_KEY:}
+    base-url: ${BREVO_BASE_URL:https://api.brevo.com/v3}
+    connect-timeout-ms: ${BREVO_CONNECT_TIMEOUT_MS:10000}
+    read-timeout-ms: ${BREVO_READ_TIMEOUT_MS:30000}
+    min-delay-ms: ${BREVO_MIN_DELAY_MS:200}
+    max-delay-ms: ${BREVO_MAX_DELAY_MS:800}
+    max-recipients-per-campaign: ${BREVO_MAX_RECIPIENTS:500}
+    batch-pause-ms: ${BREVO_BATCH_PAUSE_MS:60000}
 
 ---
 spring:

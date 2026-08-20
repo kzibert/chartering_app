@@ -33,6 +33,7 @@ import {
   PauseCircleOutlined,
   PlayCircleOutlined,
   RedoOutlined,
+  MailOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { campaignsApi } from '../../api/campaigns';
@@ -213,6 +214,7 @@ export default function CircularsPage() {
     const id = setInterval(() => {
       qc.invalidateQueries({ queryKey: ['campaign', 'status'] });
       qc.invalidateQueries({ queryKey: ['campaign', 'log'] });
+      qc.invalidateQueries({ queryKey: ['circulations', 'today'] });
     }, 1500);
     return () => clearInterval(id);
   }, [running, qc]);
@@ -256,8 +258,26 @@ export default function CircularsPage() {
     queryFn: () => circulationsApi.history({ size: 50 }),
   });
   useEffect(() => {
-    if (!running) qc.invalidateQueries({ queryKey: ['circulations', 'history'] });
+    if (!running) {
+      qc.invalidateQueries({ queryKey: ['circulations', 'history'] });
+      qc.invalidateQueries({ queryKey: ['circulations', 'today'] });
+    }
   }, [running, qc]);
+
+  /**
+   * How much has already gone out today, across every circulation. The pacing rails hold a
+   * send inside the mailbox's per-hour allowance and nothing holds it inside the daily one,
+   * so this is the number to look at before starting another circular.
+   *
+   * Counted server-side in the server's local day: the answer must not depend on which
+   * machine has the tab open. Refetched on a running campaign by the polling effect above,
+   * so the figure climbs as the messages leave.
+   */
+  const todayQ = useQuery({
+    queryKey: ['circulations', 'today'],
+    queryFn: circulationsApi.today,
+  });
+  const sentToday = todayQ.data?.sent;
 
   const cfg = configQ.data;
   const recipients = useMemo(() => entries.map(toRecipient), [entries]);
@@ -360,6 +380,7 @@ export default function CircularsPage() {
     qc.invalidateQueries({ queryKey: ['campaign', 'log'] });
     qc.invalidateQueries({ queryKey: ['campaign', 'resumable'] });
     qc.invalidateQueries({ queryKey: ['circulations', 'history'] });
+    qc.invalidateQueries({ queryKey: ['circulations', 'today'] });
   };
 
   const resumeMut = useMutation({
@@ -400,15 +421,15 @@ export default function CircularsPage() {
           type="warning"
           showIcon
           message="Sending is switched off"
-          description="Set MAIL_ENABLED=true and the Zoho credentials in .env, then restart the api container. Everything else on this page still works — you can compose and preview now."
+          description="Set MAIL_ENABLED=true in .env, along with the credentials for whichever flow you use — the mailbox login, or BREVO_API_KEY — then restart the api container. Everything else on this page still works: you can compose and preview now."
         />
       )}
       {configQ.isSuccess && cfg?.enabled && !cfg.ready && (
         <Alert
           type="error"
           showIcon
-          message="Mail is not fully configured"
-          description={`Still missing: ${(cfg.missingSettings ?? []).join(', ')}`}
+          message={`${cfg.providerLabel} is not fully configured`}
+          description={`Still missing: ${(cfg.missingSettings ?? []).join(', ')}. Fix it in .env, or pick the other flow on the Settings tab.`}
         />
       )}
 
@@ -459,9 +480,61 @@ export default function CircularsPage() {
         title="Compose circular"
         extra={
           <Space size="small" wrap>
+            {/* Today's outgoing volume, first in the row because it is the one number to
+                check before pressing Send: the tags beside it describe the per-hour pacing,
+                and nothing in the app watches the mailbox's daily cap. */}
+            <Tooltip
+              title={
+                todayQ.data ? (
+                  <>
+                    {todayQ.data.sent} circular email{todayQ.data.sent === 1 ? '' : 's'}{' '}
+                    delivered since midnight ({todayQ.data.date}), over{' '}
+                    {todayQ.data.circulations} circulation
+                    {todayQ.data.circulations === 1 ? '' : 's'}. Counted in the server's local
+                    time. Check it against your mailbox's daily cap before sending another —
+                    the pacing above protects the per-hour allowance only.
+                  </>
+                ) : (
+                  "How many circular emails have gone out today, in the server's local time"
+                )
+              }
+            >
+              <Tag
+                icon={<MailOutlined />}
+                color={sentToday ? 'green' : 'default'}
+                style={{ marginInlineEnd: 0 }}
+              >
+                {sentToday ?? '—'} sent today
+              </Tag>
+            </Tooltip>
             {cfg && (
               <>
-                <Tag>{cfg.smtpHost}:{cfg.smtpPort}</Tag>
+                {/* Which flow is sending, first among the config tags: it decides what the
+                    recipient sees in their inbox and whose quota the circular spends, and
+                    nothing else on this page would give it away. */}
+                <Tooltip
+                  title={
+                    cfg.provider === 'BREVO'
+                      ? "Sent through Brevo's transactional API. Brevo does the delivering, so this " +
+                        'will not appear in your mailbox’s Sent folder, and bounces are recorded ' +
+                        'against the Brevo account rather than your own mailbox. Change it on the ' +
+                        'Settings tab.'
+                      : 'Sent one at a time from your own mailbox over SMTP, as if written by hand. ' +
+                        "Your mailbox’s quota and reputation are what is being spent. Change it " +
+                        'on the Settings tab.'
+                  }
+                >
+                  <Tag
+                    icon={<SendOutlined />}
+                    color={cfg.provider === 'BREVO' ? 'purple' : 'blue'}
+                    style={{ marginInlineEnd: 0 }}
+                  >
+                    via {cfg.providerLabel}
+                  </Tag>
+                </Tooltip>
+                {cfg.provider === 'SMTP' && (
+                  <Tag>{cfg.smtpHost}:{cfg.smtpPort}</Tag>
+                )}
                 <Tag color="blue">1 email every {delayRange} (random)</Tag>
                 <Tag>
                   max {cfg.maxRecipientsPerCampaign} per run

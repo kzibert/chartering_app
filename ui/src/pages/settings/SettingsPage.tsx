@@ -4,6 +4,7 @@ import {
   App,
   Button,
   Card,
+  Checkbox,
   Col,
   Form,
   Input,
@@ -99,6 +100,19 @@ export default function SettingsPage() {
     },
   });
 
+  // Saved on its own the moment it is ticked, rather than waiting for the form's Save.
+  // The pacing fields below belong to whichever provider is in force, so the switch has to
+  // land first and the form redraw with the new provider's numbers — a single Save would
+  // otherwise write the mailbox's three-second gap against Brevo, or vice versa.
+  const setProvider = useMutation({
+    mutationFn: settingsApi.setProvider,
+    onSuccess: (next) => {
+      message.success(`Circulars will be sent via ${next.providerLabel}`);
+      invalidate();
+    },
+  });
+
+  const usingBrevo = settings?.provider === 'BREVO';
   const d = settings?.defaults;
   const defaultHint = (label: string, value: string | number) => (
     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -111,7 +125,70 @@ export default function SettingsPage() {
       <Card
         title={
           <Space>
+            How circulars are sent
+            <Tag color={usingBrevo ? 'purple' : 'blue'}>
+              {settings?.providerLabel ?? '—'}
+            </Tag>
+          </Space>
+        }
+        loading={query.isLoading}
+      >
+        <Checkbox
+          checked={!!usingBrevo}
+          disabled={setProvider.isPending || query.isLoading}
+          onChange={(e) => setProvider.mutate(e.target.checked)}
+        >
+          Use Brevo for circs
+        </Checkbox>
+        <Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>
+          {usingBrevo ? (
+            <>
+              Circulars go out through Brevo's transactional API. Brevo owns the delivery, so
+              the same list goes out in minutes rather than an hour and a bad address costs a
+              bounce on the Brevo account rather than a strike against your own mailbox — but
+              the mail no longer leaves your mailbox, so it will not appear in its Sent
+              folder and replies come back only because of the From address. That address has
+              to be verified as a sender in Brevo, or Brevo refuses the message.
+            </>
+          ) : (
+            <>
+              Circulars are sent one at a time from your own mailbox over SMTP, exactly as if
+              you had written them by hand — best for landing in a broker's inbox, and replies
+              go where you expect. The cost is that your mailbox's quota and reputation are
+              what is being spent, which is why the pacing below is deliberately slow.
+            </>
+          )}
+        </Typography.Paragraph>
+        {usingBrevo && settings && !settings.brevoConfigured && (
+          <Alert
+            type="error"
+            showIcon
+            style={{ marginTop: 12 }}
+            message="No Brevo API key"
+            description={
+              <>
+                Brevo is selected but <Typography.Text code>BREVO_API_KEY</Typography.Text> is
+                not set, so sending will fail on the first message. Put the key in{' '}
+                <Typography.Text code>.env</Typography.Text> and restart the api container, or
+                untick the box to go back to sending from your mailbox.
+              </>
+            }
+          />
+        )}
+        {!usingBrevo && settings && settings.brevoConfigured && (
+          <Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>
+            A Brevo API key is configured, so the switch is ready whenever you want it.
+          </Typography.Paragraph>
+        )}
+      </Card>
+
+      <Card
+        title={
+          <Space>
             Circulations
+            <Tag color={usingBrevo ? 'purple' : 'blue'}>
+              {settings?.providerLabel ?? '—'}
+            </Tag>
             {settings?.customised ? (
               <Tag color="blue">customised</Tag>
             ) : (
@@ -164,8 +241,9 @@ export default function SettingsPage() {
                 ]}
                 extra={
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    Must be the authenticated mailbox or one of its verified aliases, or the
-                    provider will refuse the message.
+                    {usingBrevo
+                      ? 'Must be verified as a sender in Brevo, or Brevo will refuse the message.'
+                      : 'Must be the authenticated mailbox or one of its verified aliases, or the provider will refuse the message.'}
                     {d?.fromAddress ? ` Default: ${d.fromAddress}` : ''}
                   </Typography.Text>
                 }
@@ -175,13 +253,21 @@ export default function SettingsPage() {
             </Col>
           </Row>
 
+          {/* Kept on screen under Brevo rather than hidden: they are still what the mailbox
+              flow will use the moment the box is unticked, and a field that vanishes is a
+              field the user assumes was lost. */}
           <Row gutter={16}>
             <Col xs={24} md={12}>
               <Form.Item
                 name="smtpHost"
                 label="SMTP host"
                 rules={[{ required: true, message: 'A host is required' }]}
-                extra={d && defaultHint('Default', d.smtpHost)}
+                extra={
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {usingBrevo ? 'Unused while Brevo is selected. ' : ''}
+                    {d ? `Default: ${d.smtpHost}` : ''}
+                  </Typography.Text>
+                }
               >
                 <Input placeholder="smtp.zoho.eu" />
               </Form.Item>
@@ -194,6 +280,7 @@ export default function SettingsPage() {
                 extra={
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                     465 uses implicit SSL, anything else uses STARTTLS.
+                    {usingBrevo ? ' Unused while Brevo is selected.' : ''}
                     {d ? ` Default: ${d.smtpPort}` : ''}
                   </Typography.Text>
                 }
@@ -273,21 +360,37 @@ export default function SettingsPage() {
               they are spaced, so check the plan before sending a list that large. Changes
               apply to the next circulation you start; one already sending keeps the pacing
               and run size it began with.
+              <br />
+              <br />
+              These values belong to <b>{settings?.providerLabel ?? 'the current provider'}</b>{' '}
+              and are stored separately from the other flow's. Ticking or unticking the box
+              above swaps them, so each provider keeps its own tuning and starts from a
+              baseline that suits it —{' '}
+              {usingBrevo
+                ? 'Brevo is built for bulk and only its daily plan allowance really binds, so its defaults are much faster.'
+                : 'a personal mailbox can be suspended for exceeding its hourly cap, so its defaults are deliberately slow.'}{' '}
+              Reset covers only the provider on screen.
             </>
           }
         />
       </Card>
 
       <Card title="Mail credentials">
-        <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+        <Typography.Paragraph type="secondary">
           The mailbox login — <Typography.Text code>MAIL_USERNAME</Typography.Text> and{' '}
-          <Typography.Text code>MAIL_PASSWORD</Typography.Text> — plus{' '}
-          <Typography.Text code>MAIL_REPLY_TO</Typography.Text> stay in{' '}
+          <Typography.Text code>MAIL_PASSWORD</Typography.Text> — the Brevo key,{' '}
+          <Typography.Text code>BREVO_API_KEY</Typography.Text>, and{' '}
+          <Typography.Text code>MAIL_REPLY_TO</Typography.Text> all stay in{' '}
           <Typography.Text code>.env</Typography.Text> and are deliberately not editable here:
           these settings are stored in the database and served to the browser, which is the
-          wrong place for a mailbox password. Change them there and restart the api container.
-          The From identity above is editable because it is not a secret — but the provider
-          still checks it against the authenticated account.
+          wrong place for a mailbox password or an API key with full send rights. Change them
+          there and restart the api container. The From identity above is editable because it
+          is not a secret — but the provider still checks it, against the authenticated
+          mailbox under SMTP and against your verified senders under Brevo.
+        </Typography.Paragraph>
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          <Typography.Text code>MAIL_ENABLED</Typography.Text> is the master switch and covers
+          both flows: left false, nothing is sent whichever box is ticked.
         </Typography.Paragraph>
       </Card>
     </Space>

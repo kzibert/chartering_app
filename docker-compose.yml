@@ -15,6 +15,8 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
+      # Local wall-clock time everywhere, so psql output and the API agree on what "today" is.
+      TZ: ${TZ:-Europe/Warsaw}
       POSTGRES_USER: ${POSTGRES_USER:-chartering_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
       POSTGRES_DB: ${POSTGRES_DB:-chartering}
@@ -38,6 +40,10 @@ services:
         condition: service_healthy
     environment:
       SPRING_PROFILES_ACTIVE: docker
+      # The zone the API treats as local. Everything it timestamps — circulation history,
+      # the campaign log — and every "today" it counts is wall-clock time in this zone; a
+      # container with no TZ would run on UTC and roll the day over at the wrong hour.
+      TZ: ${TZ:-Europe/Warsaw}
       # Circulars / SMTP. All optional: with MAIL_ENABLED unset the app starts normally and
       # the Circulars tab explains what is missing instead of offering a Send button.
       # Set these in .env (see .env.example) — never commit real credentials.
@@ -59,6 +65,15 @@ services:
       MAIL_MAX_RETRIES: ${MAIL_MAX_RETRIES:-2}
       MAIL_RETRY_BACKOFF_MS: ${MAIL_RETRY_BACKOFF_MS:-10000}
       MAIL_ABORT_AFTER_FAILURES: ${MAIL_ABORT_AFTER_FAILURES:-5}
+      # The other circular flow: Brevo's transactional API. Which of the two is used is a
+      # runtime setting ("Use Brevo for circs" on the Settings tab), so only the key and
+      # Brevo's own pacing baseline come from the environment. An empty key just means the
+      # Settings tab has nothing to switch to.
+      BREVO_API_KEY: ${BREVO_API_KEY:-}
+      BREVO_MIN_DELAY_MS: ${BREVO_MIN_DELAY_MS:-200}
+      BREVO_MAX_DELAY_MS: ${BREVO_MAX_DELAY_MS:-800}
+      BREVO_MAX_RECIPIENTS: ${BREVO_MAX_RECIPIENTS:-500}
+      BREVO_BATCH_PAUSE_MS: ${BREVO_BATCH_PAUSE_MS:-60000}
     ports:
       - "${API_PORT:-8081}:8081"
     volumes:

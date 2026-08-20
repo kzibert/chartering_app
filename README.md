@@ -39,6 +39,17 @@ docker compose down -v     # stop + wipe DB; next `up` re-seeds from the dump
 
 Override credentials/ports by copying `.env.example` to `.env`.
 
+**Time is local, not UTC.** Both containers run on `TZ` (default `Europe/Warsaw`), so every
+timestamp the app shows — circulation history, the campaign log, the day counter on the
+Circulars tab — is wall-clock time where the desk is. Timestamps are stored as absolute
+instants, so changing `TZ` re-reads existing history in the new zone rather than shifting it:
+
+```bash
+# in .env
+TZ=Europe/Athens
+docker compose up -d --force-recreate api db
+```
+
 ## Layout
 
 ```
@@ -78,13 +89,53 @@ docker compose up -d --force-recreate api
 ```
 
 Until `MAIL_ENABLED=true` and the credentials are present, the tab still composes and
-previews; it just refuses to send and shows which settings are missing.
+previews; it just refuses to send and shows which settings are missing. `MAIL_ENABLED` is the
+master switch for both flows below.
 
-**Zoho notes.** `MAIL_USERNAME` is the full mailbox address, and `MAIL_PASSWORD` must be an
-app-specific password (Zoho → Security → App Passwords) whenever two-factor auth is on the
-account — the normal login password is rejected over SMTP. `MAIL_FROM` has to be the
+### Two ways to send
+
+A circular can leave by either of two routes, and the choice is a **runtime setting** — the
+*Use Brevo for circs* checkbox on the Settings tab — not an environment variable. The Circulars
+tab shows which one is in force as the first of its config tags (`via Mailbox (SMTP)` /
+`via Brevo API`), because it decides what the recipient sees and whose quota is being spent, and
+nothing else on that screen would give it away.
+
+| | **Mailbox (SMTP)** — the original flow | **Brevo API** |
+|---|---|---|
+| How it leaves | one SMTP message per recipient from your own mailbox | one `POST /v3/smtp/email` per recipient |
+| Appears in your Sent folder | yes | no — Brevo does the delivering |
+| Whose reputation is at stake | your mailbox's | the Brevo account's |
+| A bounce costs | a strike against the mailbox | a bounce record in Brevo |
+| Realistic pace | ~11 min per 100 recipients | ~1 min per 100 recipients |
+| Credential | `MAIL_USERNAME` / `MAIL_PASSWORD` | `BREVO_API_KEY` |
+
+Everything *around* the send is identical: pacing, retries, the circuit breaker, the circulation
+history, pause/resume/restart, the campaign log, and the mail merge. Only the transport differs,
+so a circulation is recorded the same way whichever route it took — and a run paused under one
+provider simply finishes under whichever is selected when it is resumed.
+
+The **From identity is shared**: both flows send as the address on the Settings tab, so
+recipients see one sender either way.
+
+**Zoho notes (SMTP flow).** `MAIL_USERNAME` is the full mailbox address, and `MAIL_PASSWORD`
+must be an app-specific password (Zoho → Security → App Passwords) whenever two-factor auth is
+on the account — the normal login password is rejected over SMTP. `MAIL_FROM` has to be the
 authenticated account or a verified alias, or Zoho refuses the message. SMTP access must be
 enabled under Mail Settings → Mail Accounts.
+
+**Brevo notes.** Two one-off steps in Brevo before the checkbox is usable:
+
+1. *SMTP & API → API Keys* → generate a **v3** key and put it in `.env` as `BREVO_API_KEY`.
+2. *Senders, Domains & Dedicated IPs* → **verify the From address**. Brevo refuses anything
+   else, and it is the Settings-tab From that is used. An unverified sender shows up as a
+   `400` naming the address, recorded against that recipient like any other permanent failure.
+
+The key is checked against `GET /v3/account` before the first message of every run, so a wrong
+or revoked key is one error on screen rather than 200 identical failures. Per-message delivery
+logs, bounces and blocks live in Brevo's own dashboard; the app records only what it was told at
+send time, exactly as it does for SMTP. Errors map onto the same three outcomes the SMTP flow
+uses: `401`/`403` aborts the run, `429` and `5xx` retry with backoff, any other `4xx` is
+permanent and skips the address.
 
 ### What protects the sending mailbox
 
@@ -97,7 +148,7 @@ enabled under Mail Settings → Mail Accounts.
 | Transient (4xx) failures retried with doubling backoff; permanent (5xx) never retried | `MAIL_MAX_RETRIES`, `MAIL_RETRY_BACKOFF_MS` |
 | Consecutive failures abort the run, so a throttle doesn't escalate into a block | `MAIL_ABORT_AFTER_FAILURES` |
 | Auth rejection aborts immediately instead of retrying a bad password 200 times | always on |
-| SMTP reachability checked before the first message | always on |
+| Provider reachability checked before the first message (SMTP connect, or Brevo `GET /v3/account`) | always on |
 | `List-Unsubscribe` header, real `From` display name, `Reply-To` | `MAIL_UNSUBSCRIBE`, `MAIL_REPLY_TO`; From is on the Settings tab |
 | `multipart/alternative` with a generated plain-text part | always on |
 | Per-recipient mail merge, so no two messages are byte-identical | `{{greeting}}`, `{{name}}`, `{{title}}`, `{{company}}`, `{{email}}` |
@@ -118,6 +169,13 @@ What splitting buys is a smaller burst, which is what per-hour allowances measur
 fit a campaign inside a **daily** cap that is smaller than the campaign: 300 messages count as
 300 whatever their spacing, and exceeding a plan's daily limit can suspend outgoing mail on the
 account. That total is shown before sending, on the Send confirmation and in the plan banner.
+
+Nothing in the app enforces a daily cap, so the Circulars tab carries a **`N sent today`**
+counter beside the pacing tags — every circular email delivered since local midnight, across
+every circulation, climbing live while a campaign runs. It counts each address by its own send
+time, not by the run it belongs to, so a circulation started last night and resumed this morning
+puts its messages on the day they actually left. Read it against your plan's daily limit before
+starting another circular.
 
 ### Templates and footers
 
@@ -263,18 +321,29 @@ Endpoints: `POST /api/v1/campaigns/current/pause`, `GET /campaigns/resumable`,
 The **Settings** tab (bottom of the sidebar) edits the circulation knobs at runtime, stored in
 `app_settings` (`db/app_settings.sql`):
 
-| Setting | Default |
-|---|---|
-| From name / address | `Maritella Chartering Desk` / `desk@example.com` |
-| SMTP host / port | `smtp.zoho.eu` / `465` |
-| Gap between messages (random within the range) | 3–10s |
-| Max recipients per run | 200 |
-| Pause between runs of a split circulation | 15 min |
+| Setting | Default (SMTP) | Default (Brevo) |
+|---|---|---|
+| Use Brevo for circs | off | — |
+| From name / address | `Maritella Chartering Desk` / `desk@example.com` | same |
+| SMTP host / port | `smtp.zoho.eu` / `465` | unused |
+| Gap between messages (random within the range) | 3–10s | 0.2–0.8s |
+| Max recipients per run | 200 | 500 |
+| Pause between runs of a split circulation | 15 min | 1 min |
 
 Only values you actually change are stored. An absent key falls through to `application.yml` and
 therefore to the `.env` variables, so those stay meaningful as the baseline for a fresh
 deployment and **Reset to defaults** is simply a delete. A row holding an unreadable value falls
 back to the default rather than breaking a send.
+
+**Pacing is stored per provider.** One set of knobs on screen, but two sets of values behind
+them, because three seconds between messages is prudent through a personal mailbox and merely
+wasteful through an ESP: the mailbox rails exist to stop an account being suspended for
+exceeding its hourly cap, while Brevo absorbs the rate itself and only its *daily* plan
+allowance really binds. So ticking the box swaps the pacing to something appropriate straight
+away, and unticking it hands the mailbox flow back exactly the numbers it had — nothing is
+overwritten, and **Reset to defaults** covers only the provider on screen. The SMTP flow keeps
+the original unprefixed `app_settings` keys, so an installation tuned before this feature
+existed carries its settings forward with no migration.
 
 Changes apply to the **next** circulation started; a run already in flight keeps the pacing and
 cap it began with, the same rule the footer follows. Changing the port moves the TLS mode with
@@ -284,12 +353,19 @@ would otherwise just fail to connect; leaving the port alone keeps whatever `MAI
 
 The From identity is editable because it is not a secret, but it is not free either: Zoho (like
 every provider) refuses a From that is not the authenticated mailbox or one of its verified
-aliases, so changing it to an unverified address will make every send fail.
+aliases, and Brevo refuses one that is not a verified sender on the account — so changing it to
+an unverified address will make every send fail.
 
-**Credentials are not settings.** `MAIL_USERNAME`, `MAIL_PASSWORD` and `MAIL_REPLY_TO` stay in
-`.env`: this table is served to the browser, which is the wrong place for a mailbox password.
+**Credentials are not settings.** `MAIL_USERNAME`, `MAIL_PASSWORD`, `BREVO_API_KEY` and
+`MAIL_REPLY_TO` stay in `.env`: this table is served to the browser, which is the wrong place
+for a mailbox password or an API key with full send rights. The Settings tab does report
+*whether* a Brevo key is present, so a checkbox that could not work says so before it is used.
 
-Endpoints: `GET /api/v1/settings/circulation`, `PUT` to change, `DELETE` to reset.
+Endpoints: `GET /api/v1/settings/circulation`, `PUT` to change, `PUT /provider` to switch flows,
+`DELETE` to reset. The provider is its own call rather than a field on the form: the pacing in
+the form belongs to whichever provider is in force, so the switch has to land first and the form
+redraw with the new values — one combined save would write the old provider's numbers against
+the new one.
 
 ### The campaign log
 
