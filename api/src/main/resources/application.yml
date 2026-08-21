@@ -100,6 +100,7 @@ chartering:
     base-url: ${BREVO_BASE_URL:https://api.brevo.com/v3}
     connect-timeout-ms: ${BREVO_CONNECT_TIMEOUT_MS:10000}
     read-timeout-ms: ${BREVO_READ_TIMEOUT_MS:30000}
+    daily-limit: ${BREVO_DAILY_LIMIT:300}
     min-delay-ms: ${BREVO_MIN_DELAY_MS:200}
     max-delay-ms: ${BREVO_MAX_DELAY_MS:800}
     max-recipients-per-campaign: ${BREVO_MAX_RECIPIENTS:500}

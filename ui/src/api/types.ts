@@ -478,11 +478,22 @@ export interface CirculationRun {
  * rather than shown as 0, which would read as "nothing left".
  */
 export interface BrevoUsage {
-  /** Messages Brevo accepted today, across the whole account. */
+  /**
+   * Messages Brevo accepted today, across the whole account.
+   *
+   * An after-the-fact report, so it trails a running campaign by minutes, and it counts
+   * acceptance rather than spend. Read it as "how has today gone", never as an input to
+   * arithmetic against `remaining` — that is the mistake `dailyLimit` used to make.
+   */
   sent?: number;
-  /** What is left of the daily allowance; absent on a plan with no daily cap. */
+  /**
+   * Of `sent`, how many were suppressed rather than sent. They cost no allowance, so they are
+   * the usual reason `sent` runs ahead of `dailyLimit - remaining`.
+   */
+  blocked?: number;
+  /** What is left of the daily allowance; absent on a plan with no daily cap. Live and exact. */
   remaining?: number;
-  /** The plan's ceiling — derived as sent + remaining, since Brevo publishes only the remainder. */
+  /** The plan's ceiling, from `BREVO_DAILY_LIMIT`. Absent on a plan with no daily cap. */
   dailyLimit?: number;
   /** Why the figures are missing, when Brevo could not be reached. */
   error?: string;

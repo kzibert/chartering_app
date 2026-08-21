@@ -44,6 +44,23 @@ public class BrevoProperties {
      */
     private int readTimeoutMs = 30_000;
 
+    /**
+     * The plan's daily send ceiling, used as the denominator of the "left today" figure.
+     *
+     * <p>Configured rather than derived. Brevo publishes only the remainder of the allowance,
+     * never the allowance itself, and the obvious reconstruction — today's statistics plus
+     * what is left — does not hold: the statistics report counts every message Brevo
+     * <em>accepted</em>, while the allowance is spent only by the ones it actually
+     * <em>sends</em>, so a blocked or invalid address inflates the total by one each. The
+     * report is also eventually consistent, and lags by minutes mid-campaign, which made the
+     * derived ceiling drift by tens between one refresh and the next.
+     *
+     * <p>300 is the free tier. Change it here when the plan changes; a value of zero or less
+     * means "this plan has no daily ceiling", and the quota figure is then hidden rather than
+     * shown against a number that does not apply.
+     */
+    private int dailyLimit = 300;
+
     // ---- pacing baseline while Brevo is the provider (see the class note above) ----
 
     /** Shortest gap between two messages. Still non-zero: bursts are what trip rate limits. */

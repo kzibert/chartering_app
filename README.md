@@ -197,14 +197,31 @@ on that key's account — a campaign launched from Brevo's own dashboard, anothe
 test send from this app (which deliberately writes no history) — and it is Brevo's number, not
 this app's, that the cap is enforced against. A purely local tally would read "plenty left" right
 up to the send Brevo refuses, which is exactly the failure this is meant to prevent. So both are
-shown: `viaBrevo` is what this app sent, `brevo.sent` is what the account spent.
+shown: `viaBrevo` is what this app sent, `brevo.remaining` is what the account has left.
 
-**The 300/day ceiling is derived, not hardcoded.** Brevo publishes only the remainder, so the
-limit is read back as `sent + remaining` — which stays correct on a paid plan, and if the free
-tier's allowance ever changes. A plan carrying purchased credits rather than a daily ceiling
-reports no `remaining` at all, and the panel says so instead of inventing one. Brevo is asked at
-most twice every 30 seconds however hard the tab polls; a reporting call that cannot reach Brevo
-shows the reason and leaves the mailbox half of the figure untouched.
+**The ceiling is configured (`BREVO_DAILY_LIMIT`, default 300), and deliberately not derived.**
+Brevo publishes only what is left of the allowance, never the allowance itself, so the ceiling
+was originally reconstructed as `sent + remaining`. That was wrong twice over, and visibly so:
+
+- **The two figures count different events.** `remaining` falls only when Brevo *sends*;
+  `requests` on the statistics report counts everything Brevo *accepted*, blocked and invalid
+  addresses included, and those spend no allowance. One blocked recipient made a 300/day plan
+  report a ceiling of 301.
+- **The statistics half lags.** That report is aggregated after the fact and trails a running
+  campaign by minutes, while `remaining` is live. Mid-send the pair read 136 + 122, so the same
+  300/day plan reported a ceiling of 258 — a denominator drifting by tens between refreshes,
+  taking the progress bar and the "% of Brevo's day used" figure with it.
+
+So the two are shown side by side and never combined. `remaining` drives the quota — `used` is
+`dailyLimit - remaining`, clamped at zero so a plan upgrade that has not reached the setting yet
+reads as a full day rather than a negative one — and the report's `sent`/`blocked` are quoted
+separately as "what Brevo says about today", with the lag stated. Set `BREVO_DAILY_LIMIT` to 0 on
+a plan billed by purchased credits: it has no daily cap, `remaining` comes back absent, and the
+panel says so rather than inventing a fraction. If Brevo ever reports more left than the setting
+allows, the plan has outgrown the config and the server says so in the log, once a day.
+
+Brevo is asked at most twice every 30 seconds however hard the tab polls; a reporting call that
+cannot reach Brevo shows the reason and leaves the mailbox half of the figure untouched.
 
 Which flow each message left by is recorded **per recipient**, not per run (`db/circulation_provider.sql`).
 A circulation paused under the mailbox flow and resumed after the switch genuinely left by two

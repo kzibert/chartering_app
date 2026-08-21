@@ -17,13 +17,18 @@ import com.fasterxml.jackson.annotation.JsonInclude;
  * defaulted to zero, which would read as "nothing left".
  *
  * @param sent       messages Brevo accepted today, across the whole account
+ * @param blocked    of those, how many were suppressed rather than sent. They spend no
+ *                   allowance, so they are the usual reason {@code sent} runs ahead of
+ *                   {@code dailyLimit - remaining}; shown only to explain that gap
  * @param remaining  what is left of the daily allowance; null on a plan with no daily cap
- * @param dailyLimit the plan's ceiling. Brevo publishes only the remainder, so this is
- *                   {@code sent + remaining} — derived rather than hardcoded to 300, so it
- *                   stays right on a paid plan and if the free tier ever changes
+ * @param dailyLimit the plan's ceiling, from {@code BREVO_DAILY_LIMIT}. Brevo publishes only
+ *                   the remainder, and the obvious reconstruction of the rest —
+ *                   {@code sent + remaining} — is not sound: the two count different events
+ *                   and the statistics half lags mid-campaign, so the "ceiling" drifted
  * @param error      why the figures are absent, when Brevo could not be reached. Present
  *                   only alongside null figures — a reason to show instead of numbers
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public record BrevoUsageResponse(Integer sent, Integer remaining, Integer dailyLimit, String error) {
+public record BrevoUsageResponse(Integer sent, Integer blocked, Integer remaining,
+                                 Integer dailyLimit, String error) {
 }

@@ -92,6 +92,7 @@ services:
       # Brevo's own pacing baseline come from the environment. An empty key just means the
       # Settings tab has nothing to switch to.
       BREVO_API_KEY: ${BREVO_API_KEY:-}
+      BREVO_DAILY_LIMIT: ${BREVO_DAILY_LIMIT:-300}
       BREVO_MIN_DELAY_MS: ${BREVO_MIN_DELAY_MS:-200}
       BREVO_MAX_DELAY_MS: ${BREVO_MAX_DELAY_MS:-800}
       BREVO_MAX_RECIPIENTS: ${BREVO_MAX_RECIPIENTS:-500}

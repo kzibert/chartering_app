@@ -330,8 +330,8 @@ public class CirculationHistoryService {
         return new CirculationTodayResponse(day, sent,
                 recipients.countRunsSendingBetween(CirculationRunRecipient.SENT, from, until),
                 viaMailbox, viaBrevo,
-                usage.configured() ? new BrevoUsageResponse(
-                        usage.sent(), usage.remaining(), usage.dailyLimit(), usage.error()) : null);
+                usage.configured() ? new BrevoUsageResponse(usage.sent(), usage.blocked(),
+                        usage.remaining(), usage.dailyLimit(), usage.error()) : null);
     }
 
     /**

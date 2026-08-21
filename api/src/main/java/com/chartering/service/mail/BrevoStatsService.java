@@ -25,6 +25,12 @@ import java.util.concurrent.atomic.AtomicReference;
  * therefore say "you have plenty left" right up until the send that gets refused. Brevo's own
  * figures are the ones the daily cap is actually enforced against.
  *
+ * <p>Two figures come back and they are deliberately not combined. The remainder is live and
+ * authoritative; the day's statistics are an after-the-fact report that counts accepted
+ * messages, including ones that cost nothing, and lags a running campaign by minutes. They
+ * answer different questions and are shown as two numbers, against a ceiling that is
+ * configured — see {@link BrevoProperties#getDailyLimit()} for why deriving it did not work.
+ *
  * <p>The mailbox flow has no equivalent: SMTP offers no way to ask "how many have I sent
  * today", which is exactly why the local day counter exists in the first place. So the two
  * halves of the breakdown come from different places by necessity, not by oversight.
@@ -51,6 +57,9 @@ public class BrevoStatsService {
 
     private final AtomicReference<Cached> cache = new AtomicReference<>();
 
+    /** Last day a stale {@code daily-limit} was complained about; see {@code ceilingFor}. */
+    private final AtomicReference<LocalDate> warnedAbout = new AtomicReference<>();
+
     /**
      * Today's Brevo figures, or empty when Brevo is not configured.
      *
@@ -75,29 +84,60 @@ public class BrevoStatsService {
     private BrevoUsage fetch(LocalDate day) {
         try {
             RestClient client = newClient();
-            Integer sent = sentOn(client, day);
+            Report report = reportFor(client, day);
             Integer remaining = remainingToday(client);
-            // The plan's ceiling is not published as a number anywhere in the API — only what
-            // is left of it — so it is reconstructed from the two figures that are. Doing it
-            // this way rather than hardcoding 300 means it stays right on a paid plan, and
-            // stays right if the free tier's allowance ever changes.
-            Integer dailyLimit = sent != null && remaining != null ? sent + remaining : null;
-            return new BrevoUsage(true, sent, remaining, dailyLimit, null);
+            return new BrevoUsage(true, report.requests(), report.blocked(), remaining,
+                    ceilingFor(remaining, day), null);
         } catch (RuntimeException e) {
             String why = CircularSendException.rootMessage(e);
             log.warn("Could not read Brevo usage: {}", why);
-            return new BrevoUsage(true, null, null, null, why);
+            return new BrevoUsage(true, null, null, null, null, why);
         }
     }
 
     /**
-     * Messages Brevo accepted today, from its own aggregated report.
+     * The plan's daily ceiling, or null when there is no meaningful one to quote.
+     *
+     * <p>Read from configuration rather than reconstructed from the two figures Brevo does
+     * publish. That reconstruction — today's statistics plus what is left — looked sound and
+     * was not: {@code requests} counts what Brevo accepted and the allowance is spent by what
+     * it sends, so every blocked address added one to the "ceiling", and the report's lag
+     * moved it by tens mid-campaign. A denominator that drifts is worse than no denominator.
+     *
+     * <p>Null when the account reports no remainder — a plan on purchased credits has no
+     * daily cap, and a ceiling without a remainder is half of a fraction. Null too when the
+     * configured limit is zero or less, which is how that plan says so explicitly.
+     */
+    private Integer ceilingFor(Integer remaining, LocalDate day) {
+        int limit = brevo.getDailyLimit();
+        if (remaining == null || limit <= 0) {
+            return null;
+        }
+        // Only reachable when the plan has grown past what is configured, since the remainder
+        // is Brevo's own and the ceiling is ours. Warned once a day rather than on every cache
+        // miss: it is a standing misconfiguration, not an event.
+        if (remaining > limit && !day.equals(warnedAbout.getAndSet(day))) {
+            log.warn("Brevo reports {} sends left today but chartering.brevo.daily-limit is {}"
+                    + " — set BREVO_DAILY_LIMIT to this plan's real daily allowance.", remaining, limit);
+        }
+        return limit;
+    }
+
+    /**
+     * Today's aggregated report, as Brevo tells it.
      *
      * <p>{@code requests} rather than {@code delivered}: the allowance is spent when Brevo
      * takes the message, not when the recipient's server accepts it, so a bounce still counts
-     * against the day. Counting deliveries would quietly overstate what is left.
+     * against the day. Counting deliveries would quietly understate what has been used.
+     *
+     * <p>It is not the same quantity as the spent allowance, though, which is why this figure
+     * is reported beside the remainder and never used to compute it. {@code blocked} comes
+     * back alongside for exactly that reason: a suppressed address is counted as a request
+     * here but costs nothing, and it is the usual explanation when the two disagree by a
+     * little. The report is also aggregated after the fact and trails a running campaign by
+     * minutes — fine for "how has today gone", useless as an input to arithmetic.
      */
-    private Integer sentOn(RestClient client, LocalDate day) {
+    private Report reportFor(RestClient client, LocalDate day) {
         String iso = day.toString();
         AggregatedReport report = client.get()
                 .uri(builder -> builder.path("/smtp/statistics/aggregatedReport")
@@ -109,7 +149,11 @@ public class BrevoStatsService {
                     throw new IllegalStateException("statistics: " + BrevoCircularSender.describe(res));
                 })
                 .body(AggregatedReport.class);
-        return report == null ? null : report.requests();
+        return report == null ? new Report(null, null) : new Report(report.requests(), report.blocked());
+    }
+
+    /** The two figures from the day's report that the panel has a use for. */
+    private record Report(Integer requests, Integer blocked) {
     }
 
     /**
@@ -157,15 +201,17 @@ public class BrevoStatsService {
      *
      * @param configured false when no API key is set, in which case nothing else is populated
      * @param sent       messages Brevo accepted today, from every source on the account
+     * @param blocked    of those, how many were suppressed rather than sent — they cost no
+     *                   allowance, so they are why {@code sent} can exceed what the day spent
      * @param remaining  what is left of the daily allowance; null on a plan with no daily cap
-     * @param dailyLimit sent + remaining; null whenever either half is
+     * @param dailyLimit the plan's ceiling, from configuration; null when there is no daily cap
      * @param error      why the figures are missing, when Brevo could not be reached
      */
-    public record BrevoUsage(boolean configured, Integer sent, Integer remaining,
+    public record BrevoUsage(boolean configured, Integer sent, Integer blocked, Integer remaining,
                              Integer dailyLimit, String error) {
 
         static BrevoUsage notConfigured() {
-            return new BrevoUsage(false, null, null, null, null);
+            return new BrevoUsage(false, null, null, null, null, null);
         }
 
         /** True when there are real numbers to show, as opposed to a reason there are none. */
@@ -177,7 +223,7 @@ public class BrevoStatsService {
     // ---------------------------------------------------------------- wire types
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    private record AggregatedReport(Integer requests, Integer delivered) {
+    private record AggregatedReport(Integer requests, Integer delivered, Integer blocked) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
