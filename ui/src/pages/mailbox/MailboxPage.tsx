@@ -209,17 +209,25 @@ export default function MailboxPage() {
       dataIndex: 'subject',
       render: (_: string, m) => (
         <div style={{ minWidth: 0 }}>
-          <Space size={6} style={{ maxWidth: '100%' }}>
+          {/* A flex row rather than a Space: the dot and the clip are fixed, the subject is
+              the part that has to give way, and it only gives way if it is the flex item
+              itself that may shrink to nothing. Wrapped in anything, a subject with no
+              spaces in it keeps its full width and runs out over the Company column. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
             {!m.read && <Badge status="processing" />}
-            <span style={CLAMP}>
-              <Typography.Text strong={!m.read}>{m.subject || '(no subject)'}</Typography.Text>
-            </span>
+            <Typography.Text
+              strong={!m.read}
+              ellipsis={{ tooltip: m.subject || undefined }}
+              style={{ flex: 1, minWidth: 0 }}
+            >
+              {m.subject || '(no subject)'}
+            </Typography.Text>
             {m.hasAttachments && (
               <Tooltip title="Has attachments — the app records their names, not the files">
-                <PaperClipOutlined style={{ color: '#8c8c8c' }} />
+                <PaperClipOutlined style={{ color: '#8c8c8c', flex: 'none' }} />
               </Tooltip>
             )}
-          </Space>
+          </div>
           {m.snippet && (
             <div style={{ ...CLAMP, fontSize: 12, color: '#8c8c8c' }}>{m.snippet}</div>
           )}
@@ -232,27 +240,33 @@ export default function MailboxPage() {
       width: 200,
       render: (_: string, m) =>
         m.companyId ? (
-          <Space size={4}>
+          // A link rather than a link-shaped Button, for the same reason the subject is not
+          // a Space: a Button will not let its label be cut, so a shipowner with a long
+          // registered name lays itself across the Folder and Received columns.
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
             {/* Straight through to the company: the whole point of syncing the mail here
                 rather than reading it in a mail client. */}
-            <Button
-              type="link"
-              size="small"
-              icon={<BankOutlined />}
-              style={{ paddingInline: 0 }}
-              onClick={(e) => {
-                e.stopPropagation();
-                setCompanyId(m.companyId);
-              }}
-            >
-              {m.companyName}
-            </Button>
+            <BankOutlined style={{ color: '#1677ff', flex: 'none' }} />
+            <Tooltip title={m.companyName}>
+              <Typography.Link
+                ellipsis
+                style={{ flex: 1, minWidth: 0 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCompanyId(m.companyId);
+                }}
+              >
+                {m.companyName}
+              </Typography.Link>
+            </Tooltip>
             {m.linkManual && (
               <Tooltip title="Linked by hand — automatic re-linking will not change it">
-                <Tag color="blue">manual</Tag>
+                <Tag color="blue" style={{ flex: 'none', marginInlineEnd: 0 }}>
+                  manual
+                </Tag>
               </Tooltip>
             )}
-          </Space>
+          </div>
         ) : (
           <Typography.Text type="secondary">unknown sender</Typography.Text>
         ),

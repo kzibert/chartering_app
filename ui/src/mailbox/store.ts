@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { mailFoldersApi, mailRulesApi, mailboxApi } from '../api/mailbox';
 import type {
@@ -44,13 +45,47 @@ export const useMailMessages = (filter: MailboxFilter) =>
     placeholderData: (prev) => prev,
   });
 
-/** One message with its body. Marking it read is the server's default on open. */
-export const useMailMessage = (id?: number) =>
-  useQuery({
+/**
+ * One message with its body, and the one query that also writes: the server marks a message
+ * read as it hands it over.
+ *
+ * <p>That has two consequences the drawer alone cannot handle.
+ *
+ * <p>The first is that only the fetch that *opens* the message may mark it. The others must
+ * not: a move, a link, and the user's own "Mark unread" all invalidate the whole prefix, and
+ * a refetch that marked the message read again would undo the last of those a moment after
+ * they asked for it. What tells the two apart is this ref rather than whether the message is
+ * still in the cache — a message read a minute ago is, and opening it again after marking it
+ * unread has to mark it read again, which is exactly how it is noticed that it does not.
+ *
+ * <p>The second is that everything else on the tab is a fetch out of date the moment the
+ * drawer opens — the row still bold with its unread dot, the rail still counting it, the
+ * banner still one unread too high — so the opening fetch refreshes its siblings the way a
+ * mutation would. Everything under the prefix except the message itself, which would only
+ * refetch itself in a loop.
+ */
+export function useMailMessage(id?: number) {
+  const qc = useQueryClient();
+  /** The message whose opening fetch has already gone out; cleared when the drawer closes. */
+  const opened = useRef<number>();
+  useEffect(() => {
+    if (id == null) opened.current = undefined;
+  }, [id]);
+
+  return useQuery({
     queryKey: mailboxKeys.message(id ?? 0),
-    queryFn: () => mailboxApi.get(id!),
+    queryFn: async () => {
+      const opening = opened.current !== id;
+      opened.current = id;
+      const detail = await mailboxApi.get(id!, opening);
+      if (opening) {
+        qc.invalidateQueries({ queryKey: KEY, predicate: (q) => q.queryKey[1] !== 'message' });
+      }
+      return detail;
+    },
     enabled: id != null,
   });
+}
 
 export const useMailFolders = () =>
   useQuery({ queryKey: mailboxKeys.folders, queryFn: mailFoldersApi.list });

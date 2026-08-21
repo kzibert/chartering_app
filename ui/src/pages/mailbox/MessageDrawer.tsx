@@ -5,6 +5,7 @@ import {
   Descriptions,
   Drawer,
   Dropdown,
+  Popconfirm,
   Space,
   Spin,
   Tag,
@@ -77,13 +78,35 @@ export default function MessageDrawer({ messageId, onClose, onOpenCompany }: Pro
         onClose={onClose}
         width={860}
         destroyOnClose
+        // The header is one flex row of subject and buttons, and the buttons are the fixed
+        // half of it: the subject has to be the part that gives way. Clamping it at a fixed
+        // width does not do that — it still claims that width whatever the buttons need
+        // beside it, and runs straight over them — so it takes whatever they leave and
+        // wraps onto a second line, which for the mail this desk reads is usually the whole
+        // subject. Past two lines it is cut, and the tooltip carries the rest.
+        //
+        // `width: 0` is what makes it give way. Drawer wraps this in an element of its own
+        // that antd leaves at min-width:auto, so the header can otherwise only shrink to
+        // the widest word inside it — and these subjects carry 60-character report ids.
+        // Declaring the text zero-wide and letting flex-grow size it keeps the subject out
+        // of that measurement entirely.
         title={
-          <Space size={8}>
-            <MailOutlined />
-            <Typography.Text strong ellipsis style={{ maxWidth: 640 }}>
-              {m?.subject || '(no subject)'}
-            </Typography.Text>
-          </Space>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, minWidth: 0 }}>
+            <MailOutlined style={{ marginTop: 5 }} />
+            {/* The box that gives way is this one, not the text: a clamped paragraph is
+                laid out as a -webkit-box, and a flex item is blockified — which throws the
+                clamp away and leaves the second line half empty. Paragraph rather than
+                Text, because only the block one clamps by line count at all. */}
+            <div style={{ flex: 1, width: 0 }}>
+              <Typography.Paragraph
+                strong
+                ellipsis={{ rows: 2, tooltip: m?.subject || undefined }}
+                style={{ margin: 0, overflowWrap: 'anywhere' }}
+              >
+                {m?.subject || '(no subject)'}
+              </Typography.Paragraph>
+            </div>
+          </div>
         }
         extra={
           m && (
@@ -113,15 +136,19 @@ export default function MessageDrawer({ messageId, onClose, onOpenCompany }: Pro
                   >
                     {m.companyName}
                   </Button>
-                  <Tooltip title="Detach from this company">
-                    <Button
-                      size="small"
-                      icon={<DisconnectOutlined />}
-                      onClick={() =>
-                        unlink.mutate(m.id, { onSuccess: () => toast.success('Link removed') })
-                      }
-                    />
-                  </Tooltip>
+                  {/* No Tooltip around the trigger: nesting one inside Popconfirm makes the
+                      two popups fight over it. The confirm text names the company instead,
+                      which is what the bare icon was leaning on the tooltip to say. */}
+                  <Popconfirm
+                    title={`Detach this message from ${m.companyName}?`}
+                    description="The sender goes back to the automatic matcher, so a later re-link may attach it again. Nothing is deleted."
+                    okText="Detach"
+                    onConfirm={() =>
+                      unlink.mutate(m.id, { onSuccess: () => toast.success('Link removed') })
+                    }
+                  >
+                    <Button size="small" icon={<DisconnectOutlined />} />
+                  </Popconfirm>
                 </Space.Compact>
               ) : (
                 <Button size="small" icon={<LinkOutlined />} onClick={() => setLinkOpen(true)}>
@@ -173,8 +200,13 @@ export default function MessageDrawer({ messageId, onClose, onOpenCompany }: Pro
                     <Tooltip title="Names only — the files themselves stay in the mailbox and are not stored here">
                       <PaperClipOutlined />
                     </Tooltip>
+                    {/* Report attachments arrive named as one 120-character word. A Tag
+                        does not wrap on its own, so without the break it carries the whole
+                        drawer out past its own edge. */}
                     {data.attachmentNames.split(', ').map((name) => (
-                      <Tag key={name}>{name}</Tag>
+                      <Tag key={name} style={{ whiteSpace: 'normal', wordBreak: 'break-all' }}>
+                        {name}
+                      </Tag>
                     ))}
                   </Space>
                 </Descriptions.Item>
