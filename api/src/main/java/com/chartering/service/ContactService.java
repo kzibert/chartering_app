@@ -191,6 +191,42 @@ public class ContactService {
         return mapper.toContactResponse(contactRepository.save(ct));
     }
 
+    /**
+     * Refile an address under a different person, or under the company itself.
+     *
+     * <p>Its own operation rather than a {@code PUT} with the whole contact, because moving
+     * one is exactly when the caller has the least reason to be re-sending every other field.
+     * A drag that also had to carry the notes, the greeting and the kind is a drag that can
+     * silently blank one of them; this endpoint cannot, because it is not given them.
+     *
+     * <p>The {@code main} flag survives a move between people at the same company, and that is
+     * deliberate: main answers "which address reaches this company", which does not change
+     * because the address moved desks. Moving to a <em>different</em> company surrenders it —
+     * the target may already have a main of that kind, and the unique index would refuse.
+     *
+     * @param personId  who to file it under, or null for the company itself
+     * @param companyId the company; null only ever makes sense alongside a person
+     */
+    @Transactional
+    public ContactResponse assign(Long id, Long personId, Long companyId) {
+        if (personId == null && companyId == null) {
+            throw new IllegalArgumentException(
+                    "A contact must belong to a person or to a company. Leave the person "
+                            + "empty for an address that belongs to the company itself.");
+        }
+        Contact ct = find(id);
+        Person person = resolvePerson(personId);
+        Company company = resolveCompany(companyId);
+        Long oldCompanyId = ct.getCompany() != null ? ct.getCompany().getId() : null;
+        Long newCompanyId = company != null ? company.getId() : null;
+        if (ct.isMain() && !Objects.equals(oldCompanyId, newCompanyId)) {
+            ct.setMain(false);
+        }
+        ct.setPerson(person);
+        ct.setCompany(company);
+        return mapper.toContactResponse(contactRepository.save(ct));
+    }
+
     private Contact find(Long id) {
         return contactRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Contact", id));

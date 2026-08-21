@@ -33,6 +33,16 @@ export const contactsApi = {
       .patch<ContactResponse>(`/contacts/${id}/ban`, {}, { params: { banned } })
       .then((r) => r.data),
 
+  /**
+   * Refile a contact under a different person, or under the company itself when `personId`
+   * is omitted. Only the two links move — value, kind, notes, greeting and every flag stay
+   * as they are, which is why this is not the full update.
+   */
+  assign: (id: number, personId: number | undefined, companyId: number | undefined) =>
+    client
+      .patch<ContactResponse>(`/contacts/${id}/assign`, {}, { params: { personId, companyId } })
+      .then((r) => r.data),
+
   setMain: (id: number, main: boolean) =>
     client
       .patch<ContactResponse>(`/contacts/${id}/main`, {}, { params: { main } })

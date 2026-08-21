@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Button,
-  Collapse,
   Drawer,
   List,
   Popconfirm,
@@ -15,8 +14,6 @@ import {
   Typography,
 } from 'antd';
 import {
-  DeleteOutlined,
-  EditOutlined,
   LinkOutlined,
   PlusOutlined,
   SwapOutlined,
@@ -28,17 +25,15 @@ import {
   useCompanyVessels,
   useCompanyMutations,
   useContactMutations,
-  usePeople,
-  usePersonMutations,
   useVesselMutations,
 } from '../../api/hooks';
 import ConfirmTag from '../../components/ConfirmTag';
 import ContactLine from '../../components/ContactLine';
+import { ContactRowExpansion } from '../../components/ContactRowExpansion';
+import CompanyPeopleTab from './CompanyPeopleTab';
 import VesselRoleTag, { ROLE_OPTIONS } from '../../components/VesselRoleTag';
 import EditToolbar, { useEditMode } from '../../components/EditToolbar';
 import BanButton from '../../components/BanButton';
-import GreetingName from '../../components/GreetingName';
-import LeftCompanyButton from '../../components/LeftCompanyButton';
 import VesselDrawer from '../vessels/VesselDrawer';
 import VesselForm from '../vessels/VesselForm';
 import { LinkVesselModal } from '../vessels/VesselOwnerModals';
@@ -365,192 +360,22 @@ function CompanyContactsTab({
           Add contact
         </Button>
       </EditToolbar>
-      <List
-        size="small"
-        loading={isLoading}
-        dataSource={data ?? []}
-        locale={{ emptyText: 'No contacts' }}
-        renderItem={(ct) => (
-          <ContactLine
-            ct={ct}
-            editing={editMode}
-            onEdit={onEditContact}
-            onDelete={(target) => remove.mutate(target.id)}
-          />
-        )}
-      />
-    </>
-  );
-}
-
-/** People at the company: name + copiable greeting shown compactly, click to expand contacts. */
-function CompanyPeopleTab({
-  id,
-  onAddPerson,
-  onEditPerson,
-  onAddContact,
-  onEditContact,
-}: {
-  id: number;
-  onAddPerson: () => void;
-  onEditPerson: (p: PersonResponse) => void;
-  onAddContact: (personId: number) => void;
-  onEditContact: (ct: ContactResponse) => void;
-}) {
-  const { data: people, isLoading: loadingPeople } = usePeople(id);
-  const { data: contacts, isLoading: loadingContacts } = useCompanyContacts(id);
-  const { remove: removePerson } = usePersonMutations();
-  const { remove: removeContact } = useContactMutations();
-  const [editMode, setEditMode] = useEditMode(id);
-
-  const byPerson = new Map<number, ContactResponse[]>();
-  // Addresses on the company and on nobody — chartering@, ops@, the switchboard. They have
-  // no person to sit under, and dropping them here is how one goes missing: the row is on
-  // the Contacts tab, but this is the tab somebody opens to ask "who do we know there".
-  const companyWide: ContactResponse[] = [];
-  (contacts ?? []).forEach((ct) => {
-    if (ct.personId == null) {
-      companyWide.push(ct);
-      return;
-    }
-    const list = byPerson.get(ct.personId) ?? [];
-    list.push(ct);
-    byPerson.set(ct.personId, list);
-  });
-
-  return (
-    <>
-      <EditToolbar editing={editMode} onToggle={setEditMode}>
-        <Button size="small" icon={<PlusOutlined />} onClick={onAddPerson}>
-          Add person
-        </Button>
-      </EditToolbar>
-      {loadingPeople || loadingContacts ? (
-        <Spin />
-      ) : (
-        <>
-          {companyWide.length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <Space size={4} style={{ marginBottom: 4 }}>
-                <strong>The company itself</strong>
-                <Tooltip title="Addresses and numbers that belong to the company rather than to any one person — a chartering@ or ops@ desk. Circulars to them open with a general greeting unless the contact carries its own.">
-                  <Typography.Text type="secondary">
-                    {companyWide.length} contact{companyWide.length === 1 ? '' : 's'}
-                  </Typography.Text>
-                </Tooltip>
-              </Space>
-              <List
-                size="small"
-                dataSource={companyWide}
-                renderItem={(ct) => (
-                  <ContactLine
-                    ct={ct}
-                    editing={editMode}
-                    onEdit={onEditContact}
-                    onDelete={(target) => removeContact.mutate(target.id)}
-                  />
-                )}
-              />
-            </div>
+      <ContactRowExpansion>
+        <List
+          size="small"
+          loading={isLoading}
+          dataSource={data ?? []}
+          locale={{ emptyText: 'No contacts' }}
+          renderItem={(ct) => (
+            <ContactLine
+              ct={ct}
+              editing={editMode}
+              onEdit={onEditContact}
+              onDelete={(target) => remove.mutate(target.id)}
+            />
           )}
-          {!people || people.length === 0 ? (
-            <Typography.Text type="secondary">No people.</Typography.Text>
-          ) : (
-        <Collapse
-          accordion
-          // Expanding a panel is how you look at a person here, so that is what the
-          // dashboard's trail records. Collapsing yields no key and records nothing.
-          onChange={(key) => {
-            const openId = Number(Array.isArray(key) ? key[0] : key);
-            const p = people.find((x) => x.id === openId);
-            if (p) {
-              recordRecent({
-                kind: 'person',
-                id: p.id,
-                title: p.fullName,
-                subtitle: p.companyName,
-                companyId: p.companyId,
-              });
-            }
-          }}
-          items={people.map((p) => {
-            const personContacts = byPerson.get(p.id) ?? [];
-            return {
-              key: String(p.id),
-              label: (
-                <Space wrap>
-                  <strong>{p.fullName}</strong>
-                  {p.hasLeft && (
-                    <Tooltip title="No longer works here. Every address and number of theirs is out of circulations — left out of collection, and skipped at send time even when already on a list.">
-                      <Tag color="red">left</Tag>
-                    </Tooltip>
-                  )}
-                  <GreetingName title={p.title} name={p.greetingName} type="success" />
-                  <Typography.Text type="secondary">
-                    {personContacts.length} contact{personContacts.length === 1 ? '' : 's'}
-                  </Typography.Text>
-                  {editMode && (
-                    // The label is the Collapse's own toggle, and the confirm popup is a
-                    // React child of this span — without stopping propagation here, both
-                    // the buttons and their confirmations would expand/collapse the panel.
-                    <span onClick={(e) => e.stopPropagation()}>
-                      <Space size={4}>
-                        <Tooltip title="Edit person">
-                          <Button
-                            size="small"
-                            aria-label={`Edit ${p.fullName}`}
-                            icon={<EditOutlined />}
-                            onClick={() => onEditPerson(p)}
-                          />
-                        </Tooltip>
-                        <Tooltip title="Add contact for this person">
-                          <Button
-                            size="small"
-                            aria-label={`Add contact for ${p.fullName}`}
-                            icon={<PlusOutlined />}
-                            onClick={() => onAddContact(p.id)}
-                          />
-                        </Tooltip>
-                        <LeftCompanyButton p={p} />
-                        <Popconfirm
-                          title="Delete this person?"
-                          onConfirm={() => removePerson.mutate(p.id)}
-                        >
-                          <Button
-                            size="small"
-                            danger
-                            aria-label={`Delete ${p.fullName}`}
-                            icon={<DeleteOutlined />}
-                          />
-                        </Popconfirm>
-                      </Space>
-                    </span>
-                  )}
-                </Space>
-              ),
-              children: personContacts.length ? (
-                <List
-                  size="small"
-                  dataSource={personContacts}
-                  renderItem={(ct) => (
-                    <ContactLine
-                      ct={ct}
-                      showGreeting={false}
-                      editing={editMode}
-                      onEdit={onEditContact}
-                      onDelete={(target) => removeContact.mutate(target.id)}
-                    />
-                  )}
-                />
-              ) : (
-                <Typography.Text type="secondary">No contacts</Typography.Text>
-              ),
-            };
-          })}
         />
-          )}
-        </>
-      )}
+      </ContactRowExpansion>
     </>
   );
 }

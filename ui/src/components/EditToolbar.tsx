@@ -24,10 +24,17 @@ export function useEditMode(resetKey: unknown) {
 export default function EditToolbar({
   editing,
   onToggle,
+  extra,
   children,
 }: {
   editing: boolean;
   onToggle: (on: boolean) => void;
+  /**
+   * Controls shown in both modes, sharing the toolbar's row. For things that only change
+   * how the list is displayed — expand all, collapse all — which are as useful while
+   * browsing as while editing and would look stranded on a row of their own.
+   */
+  extra?: ReactNode;
   /** Controls shown only while editing — typically the "Add …" button(s). */
   children?: ReactNode;
 }) {
@@ -42,6 +49,7 @@ export default function EditToolbar({
         {editing ? 'Done' : 'Edit'}
       </Button>
       {editing && children}
+      {extra}
     </Space>
   );
 }

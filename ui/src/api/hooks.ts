@@ -224,6 +224,13 @@ export function useContactMutations() {
     mutationFn: (id: number) => contactsApi.remove(id),
     onSuccess: () => invalidate(...touched),
   });
+  // Moving a contact between people also changes who the People tab groups it under, and
+  // 'people' is not in `touched` — a move without this leaves the row under its old owner.
+  const assign = useMutation({
+    mutationFn: (v: { id: number; personId?: number; companyId?: number }) =>
+      contactsApi.assign(v.id, v.personId, v.companyId),
+    onSuccess: () => invalidate(...touched, 'people', 'person'),
+  });
   const confirm = useMutation({
     mutationFn: (v: { id: number; confirmed: boolean; body?: ConfirmRequest }) =>
       contactsApi.confirm(v.id, v.confirmed, v.body),
@@ -264,6 +271,7 @@ export function useContactMutations() {
     onSuccess: () => invalidate('contacts', 'company', 'vessel', 'people'),
   });
   return {
-    create, update, remove, confirm, ban, setMain, setCirc, setNoCirc, setWorking, setHasWhatsapp,
+    create, update, remove, assign, confirm, ban,
+    setMain, setCirc, setNoCirc, setWorking, setHasWhatsapp,
   };
 }

@@ -3,6 +3,7 @@ package com.chartering.controller;
 import com.chartering.dto.*;
 import com.chartering.service.ContactService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -106,6 +107,22 @@ public class ContactController {
             @PathVariable Long id,
             @RequestParam(defaultValue = "true") boolean circ) {
         return ResponseEntity.ok(contactService.setCirc(id, circ));
+    }
+
+    @PatchMapping("/{id}/assign")
+    @Operation(summary = "Refile a contact under a different person, or under the company itself",
+            description = "Omit personId to make it company-wide — an address that belongs to "
+                    + "the desk rather than to anybody, greeted generally unless it carries its "
+                    + "own greeting. Only the two links change: the value, kind, notes, greeting "
+                    + "and every flag are left exactly as they are, which is why this is not a "
+                    + "PUT. Backs the drag-and-drop on the company drawer's People tab. At least "
+                    + "one of personId and companyId must be given.")
+    public ResponseEntity<ContactResponse> assign(
+            @PathVariable Long id,
+            @Parameter(description = "Who to file it under; omit for the company itself")
+            @RequestParam(required = false) Long personId,
+            @RequestParam(required = false) Long companyId) {
+        return ResponseEntity.ok(contactService.assign(id, personId, companyId));
     }
 
     @PatchMapping("/{id}/no-circ")
