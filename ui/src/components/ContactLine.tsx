@@ -12,8 +12,8 @@ import { WhatsappChatLink, WhatsappCheckButton } from './WhatsappButtons';
 import { useContactMutations } from '../api/hooks';
 import type { ContactResponse } from '../api/types';
 
-/** What a greeting-less address is merged with — MailTemplateService.GREETING_FALLBACK. */
-const GENERAL_GREETING = 'Sirs';
+/** How a greeting-less address is opened — MailTemplateService.NEUTRAL_SALUTATION. */
+const NEUTRAL_SALUTATION = 'Good day';
 
 /**
  * One email/phone line with copy buttons. When `showGreeting` is set (default),
@@ -21,9 +21,9 @@ const GENERAL_GREETING = 'Sirs';
  * grouped by person (company Contacts tab, vessel owner contacts).
  *
  * A company-wide address (on a company, on nobody) is labelled as such and shows the
- * general greeting it will actually be merged with, rather than the blank that a missing
- * greeting would otherwise leave. Reading a row should never require knowing that an
- * absent field means "Sirs".
+ * opener it will actually be merged with, rather than the blank that a missing greeting
+ * would otherwise leave. Reading a row should never require knowing what an absent field
+ * turns into.
  */
 export default function ContactLine({
   ct,
@@ -61,12 +61,12 @@ export default function ContactLine({
           <Tooltip
             title={
               ct.greetingName
-                ? `Belongs to ${ct.companyName ?? 'the company'} itself, not to a person. Circulars to it open "Dear ${ct.greetingName}".`
-                : `Belongs to ${ct.companyName ?? 'the company'} itself, not to a person. Circulars to it open "Dear ${GENERAL_GREETING}" — edit the contact to greet it differently.`
+                ? `Belongs to ${ct.companyName ?? 'the company'} itself, not to a person. Circulars to it open "Dear ${ct.greetingName},".`
+                : `Belongs to ${ct.companyName ?? 'the company'} itself, not to a person. Circulars to it open "${NEUTRAL_SALUTATION}," — which commits to no number, gender or role. Edit the contact to open with something else.`
             }
           >
             <Tag color="cyan">
-              company-wide{!ct.greetingName && ` · ${GENERAL_GREETING}`}
+              company-wide{!ct.greetingName && ` · ${NEUTRAL_SALUTATION}`}
             </Tag>
           </Tooltip>
         )}

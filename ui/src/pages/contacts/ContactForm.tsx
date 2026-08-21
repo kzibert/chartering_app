@@ -18,8 +18,8 @@ interface Props {
   onClose: () => void;
 }
 
-/** What a company-wide address is greeted with when nothing is typed — see MailTemplateService. */
-const GENERAL_GREETING = 'Sirs';
+/** How an address with no greeting is opened — MailTemplateService.NEUTRAL_SALUTATION. */
+const NEUTRAL_SALUTATION = 'Good day';
 
 export default function ContactForm({ open, editing, defaults, onClose }: Props) {
   const [form] = Form.useForm<ContactRequest>();
@@ -126,11 +126,11 @@ export default function ContactForm({ open, editing, defaults, onClose }: Props)
         <Form.Item
           name="greetingName"
           label="Greeting"
-          tooltip={`What {{greeting}} becomes in a circular to this address. Leave blank to use the person's greeting, or the general "${GENERAL_GREETING}" when there is no person.`}
+          tooltip={`The name a circular to this address opens with. Leave blank to use the person's greeting, or the general "${NEUTRAL_SALUTATION}," when there is no person.`}
           extra={
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {companyWide
-                ? `Blank greets this address as "${GENERAL_GREETING}", which is usually right for a desk rather than a person. Fill it in to open with something else — "Chartering Team", or whoever reads the inbox.`
+                ? `Blank opens with "${NEUTRAL_SALUTATION}," — no number, no gender, no assumed role, so it reads the same to an owner, a charterer, a broker or an agent, and to one person or a whole desk. Fill this in only if you want a name after "Dear".`
                 : "Blank uses the person's own greeting. Fill it in only to greet this particular address differently."}
             </Typography.Text>
           }
@@ -139,7 +139,7 @@ export default function ContactForm({ open, editing, defaults, onClose }: Props)
             allowClear
             maxLength={120}
             placeholder={
-              companyWide ? `${GENERAL_GREETING} (general)` : editing?.greetingName ?? "the person's greeting"
+              companyWide ? `${NEUTRAL_SALUTATION}, (no name)` : editing?.greetingName ?? "the person's greeting"
             }
           />
         </Form.Item>

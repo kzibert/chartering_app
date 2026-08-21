@@ -61,6 +61,8 @@ function warn(digits: string): string | null {
 
 const TOKEN = /\{\{\s*(\w+)\s*\}\}/g;
 const GREETING_FALLBACK = 'Sirs';
+/** The opener for a number with no name on file — see MailTemplateService.salutation. */
+const NEUTRAL_SALUTATION = 'Good day';
 
 /**
  * Substitute `{{greeting}}` and friends from the contact on the row.
@@ -74,6 +76,10 @@ const GREETING_FALLBACK = 'Sirs';
 export function renderWhatsappMessage(template: string, ct: ContactResponse): string {
   return template.replace(TOKEN, (whole, key: string) => {
     switch (key.toLowerCase()) {
+      case 'salutation': {
+        const name = firstNonBlank(ct.greetingName, ct.personName);
+        return name ? `Dear ${name}` : NEUTRAL_SALUTATION;
+      }
       case 'greeting':
         return firstNonBlank(ct.greetingName, ct.personName) || GREETING_FALLBACK;
       case 'name':

@@ -60,7 +60,7 @@ const DRAFT_KEY = 'chartering.circularDraft.v1';
 const DISMISSED_KEY = 'chartering.dismissedResumable.v1';
 
 const DEFAULT_BODY =
-  '<p>Dear {{greeting}},</p><p><br></p><p>Please find below our current position list.</p>' +
+  '<p>{{salutation}},</p><p><br></p><p>Please find below our current position list.</p>' +
   '<p><br></p><p>Best regards,<br>Chartering Desk</p>';
 
 /** Terminal states get a colour so the outcome is readable at a glance. */
@@ -109,6 +109,12 @@ function renderPreview(html: string, r?: CampaignRecipient): string {
     vals.find((v) => v && v.trim())?.trim() ?? '';
   return html.replace(/\{\{\s*(\w+)\s*\}\}/g, (whole, key: string) => {
     switch (key.toLowerCase()) {
+      // The whole opener, so the "Dear" only exists when a name does. See
+      // MailTemplateService.salutation for why a fill-in-the-blank greeting cannot work.
+      case 'salutation': {
+        const name = firstNonBlank(r?.greetingName, r?.personName);
+        return esc(name ? `Dear ${name}` : 'Good day');
+      }
       case 'greeting':
         return esc(firstNonBlank(r?.greetingName, r?.personName, 'Sirs'));
       case 'name':

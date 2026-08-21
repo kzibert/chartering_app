@@ -156,7 +156,7 @@ permanent and skips the address.
 | Provider reachability checked before the first message (SMTP connect, or Brevo `GET /v3/account`) | always on |
 | `List-Unsubscribe` header, real `From` display name, `Reply-To` | `MAIL_UNSUBSCRIBE`, `MAIL_REPLY_TO`; From is on the Settings tab |
 | `multipart/alternative` with a generated plain-text part | always on |
-| Per-recipient mail merge, so no two messages are byte-identical | `{{greeting}}`, `{{name}}`, `{{title}}`, `{{company}}`, `{{email}}` |
+| Per-recipient mail merge, so no two messages are byte-identical | `{{salutation}}`, `{{greeting}}`, `{{name}}`, `{{title}}`, `{{company}}`, `{{email}}` |
 
 Only one campaign runs at a time process-wide — a second start returns `409`. Two concurrent
 runs would each honour the throttle while together doubling the real send rate.
@@ -322,7 +322,38 @@ Precedence, applied wherever a contact becomes a recipient:
 | `contacts.greeting_name` | set by hand on the address — wins whenever present |
 | `people.greeting_name` | the person's own, for an ordinary person-linked address |
 | `people.full_name` | a person with no greeting on file |
-| `Sirs` | nothing else — the general greeting |
+| *(none)* | nothing else — `{{salutation}}` then opens generally; see below |
+
+#### `{{salutation}}` — why the opener is a placeholder, not a word
+
+`Dear {{greeting}},` cannot be made to work for everyone, and the reason is grammatical
+rather than a matter of choosing a better word. Whatever fills that blank has to be a noun,
+and every noun that fits commits to something the sender does not know:
+
+| Fill | Fails because |
+|---|---|
+| `Dear Sirs` | misgenders — the book has 38 people titled Ms./Mrs./Miss, and 3.4k greetings besides |
+| `Dear Sir or Madam` | singular, at a `chartering@` inbox three people read |
+| `Dear All` | plural, at one unnamed broker |
+| `Dear Colleagues` / `Dear Partners` | assumes a relationship that an owner, charterer, broker and agent do not share |
+
+`{{salutation}}` removes the blank instead of filling it. It renders the **whole** opening
+line — `Dear Michael` when a name is known, `Good day` when none is — so the word "Dear"
+only exists when there is a name for it to attach to:
+
+```
+{{salutation}},        ->  Dear Michael,      (named person)
+                       ->  Good day,          (company-wide desk, or no greeting on file)
+```
+
+`Good day` is the one opener that commits to no number, no gender and no relationship at
+once, and it is already this app's own register — the WhatsApp message has defaulted to
+`Good day, {{greeting}}` since that feature landed.
+
+No title is added: the template in use sends `Dear Levent`, not `Dear Capt. Levent`, and
+`{{salutation}}` does not quietly change the tone of every named circular. `{{title}}` is
+still there for anyone who wants it. `{{greeting}}` is unchanged and still falls back to
+`Sirs` — it is the *name-only* placeholder, for use mid-sentence rather than as an opener.
 
 The override is **not** restricted to company-wide rows. One shared mailbox read by two people can
 want a different greeting from the person it is filed under, and a person's greeting is only ever a
@@ -532,7 +563,7 @@ still opens the link — you are about to look at the result in WhatsApp anyway,
 check than any rule here, and refusing to open it would only hide the number that needs fixing.
 
 **The message** is one field on the **Settings** tab, defaulting to `Good day, {{greeting}}`. It
-takes the same placeholders as a circular — `{{greeting}}`, `{{name}}`, `{{title}}`, `{{company}}`
+takes the same placeholders as a circular — `{{salutation}}`, `{{greeting}}`, `{{name}}`, `{{title}}`, `{{company}}`
 — substituted in the browser from the contact on the row, with the same fallbacks (greeting name,
 then the person's name, then "Sirs" for a number filed against a company with nobody's name on
 it). `{{email}}` is not offered: it can mean nothing on a phone contact. Nothing is ever sent by
