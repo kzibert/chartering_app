@@ -28,6 +28,7 @@ import AddToListActions from '../../components/AddToListActions';
 import { collectApi } from '../../api/circulations';
 import EditToolbar, { useEditMode } from '../../components/EditToolbar';
 import GreetingName from '../../components/GreetingName';
+import LeftCompanyButton from '../../components/LeftCompanyButton';
 import PersonForm from './PersonForm';
 import PersonDrawer from './PersonDrawer';
 import CompanyDrawer from '../companies/CompanyDrawer';
@@ -101,9 +102,16 @@ export default function PeoplePage() {
       title: 'Full name',
       key: 'fullName',
       render: (_, r) => (
-        <Typography.Link onClick={() => setSelectedId(r.person.id)}>
-          {r.person.fullName}
-        </Typography.Link>
+        <Space size={4} wrap>
+          <Typography.Link onClick={() => setSelectedId(r.person.id)}>
+            {r.person.fullName}
+          </Typography.Link>
+          {r.person.hasLeft && (
+            <Tooltip title={`No longer at ${r.person.companyName ?? 'this company'}. Every address and number of theirs is out of circulations — collection and send time both.`}>
+              <Tag color="red">left</Tag>
+            </Tooltip>
+          )}
+        </Space>
       ),
     },
     {
@@ -138,12 +146,13 @@ export default function PeoplePage() {
     {
       title: 'Actions',
       key: 'actions',
-      width: 170,
+      width: 260,
       render: (_, r) => (
         <Space size={4}>
           <Button size="small" onClick={() => { setEditing(r.person); setFormOpen(true); }}>
             Edit
           </Button>
+          <LeftCompanyButton p={r.person} />
           <Popconfirm title="Delete this person?" onConfirm={() => remove.mutate(r.person.id)}>
             <Button size="small" danger>Delete</Button>
           </Popconfirm>

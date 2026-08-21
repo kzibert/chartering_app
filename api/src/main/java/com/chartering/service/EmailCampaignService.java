@@ -240,17 +240,22 @@ public class EmailCampaignService {
         int duplicates = byDuplicate.dropped().size();
 
         // Last line of defence: a list is a snapshot taken when the addresses were
-        // collected, so one flagged not-working, or off the circular, since it was collected
-        // would otherwise still be mailed.
+        // collected, so one flagged not-working, off the circular, or belonging to somebody
+        // who has since left the company would otherwise still be mailed. This is what makes
+        // the flags bite on lists that already exist — the saved ones and the current draft
+        // alike — rather than only on the next collection.
         Split byWorking = dropByAddress(deduped, contacts.findNotWorkingEmailValues());
         int dead = byWorking.dropped().size();
 
         Split byCirc = dropByAddress(byWorking.kept(), contacts.findNoCircEmailValues());
-        List<CampaignRecipientRequest> recipients = byCirc.kept();
         int notForCirc = byCirc.dropped().size();
 
+        Split byLeft = dropByAddress(byCirc.kept(), contacts.findLeftCompanyEmailValues());
+        List<CampaignRecipientRequest> recipients = byLeft.kept();
+        int leftCompany = byLeft.dropped().size();
+
         if (recipients.isEmpty()) {
-            throw new IllegalArgumentException(emptyAfterFiltering(dead, notForCirc));
+            throw new IllegalArgumentException(emptyAfterFiltering(dead, notForCirc, leftCompany));
         }
         // Resolved once, here: the pacing and cap a run starts with are the ones it keeps,
         // so changing them in Settings mid-send cannot speed up half a campaign.
@@ -284,6 +289,10 @@ public class EmailCampaignService {
         if (notForCirc > 0) {
             campaignLog.append("NOTE   %d address(es) skipped: flagged not for circ".formatted(notForCirc));
         }
+        if (leftCompany > 0) {
+            campaignLog.append("NOTE   %d address(es) skipped: the person has left the company"
+                    .formatted(leftCompany));
+        }
 
         // The permanent record, opened before the first message so a run that dies halfway
         // still leaves a history entry naming everyone it had already reached. A failure to
@@ -292,7 +301,8 @@ public class EmailCampaignService {
         try {
             run = history.begin(subject, composedHtml, footerId, footerName, listId, listName,
                     recipients, new CirculationHistoryService.SkippedRecipients(
-                            byDuplicate.dropped(), byWorking.dropped(), byCirc.dropped()));
+                            byDuplicate.dropped(), byWorking.dropped(), byCirc.dropped(),
+                            byLeft.dropped()));
         } catch (RuntimeException e) {
             run = CirculationHistoryService.StartedRun.none();
             campaignLog.append("NOTE   history could not be opened for this run: " + rootMessage(e));
@@ -330,23 +340,27 @@ public class EmailCampaignService {
         // that they are honoured late.
         Set<String> dead = contacts.findNotWorkingEmailValues();
         Set<String> offCirc = contacts.findNoCircEmailValues();
+        Set<String> departed = contacts.findLeftCompanyEmailValues();
         List<CirculationHistoryService.PendingRecipient> live = new ArrayList<>();
         List<Long> droppedDead = new ArrayList<>();
         List<Long> droppedOffCirc = new ArrayList<>();
+        List<Long> droppedLeft = new ArrayList<>();
         for (CirculationHistoryService.PendingRecipient pending : src.pending()) {
             String email = pending.fields().getEmail().trim().toLowerCase(Locale.ROOT);
             if (dead.contains(email)) {
                 droppedDead.add(pending.recipientId());
             } else if (offCirc.contains(email)) {
                 droppedOffCirc.add(pending.recipientId());
+            } else if (departed.contains(email)) {
+                droppedLeft.add(pending.recipientId());
             } else {
                 live.add(pending);
             }
         }
-        int dropped = droppedDead.size() + droppedOffCirc.size();
+        int dropped = droppedDead.size() + droppedOffCirc.size() + droppedLeft.size();
         if (live.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "Nobody is left to resume: " + whyNobodyLeft(droppedDead.size(), droppedOffCirc.size()));
+            throw new IllegalArgumentException("Nobody is left to resume: "
+                    + whyNobodyLeft(droppedDead.size(), droppedOffCirc.size(), droppedLeft.size()));
         }
 
         SettingsService.CirculationSettings cfg = settings.circulation();
@@ -361,6 +375,9 @@ public class EmailCampaignService {
         }
         if (!droppedOffCirc.isEmpty()) {
             history.markSkipped(droppedOffCirc, CirculationRunRecipient.SKIPPED_NOT_FOR_CIRC);
+        }
+        if (!droppedLeft.isEmpty()) {
+            history.markSkipped(droppedLeft, CirculationRunRecipient.SKIPPED_LEFT_COMPANY);
         }
         history.reopen(runId, total, skipped);
 
@@ -763,22 +780,46 @@ public class EmailCampaignService {
      * "every one of them is flagged not for circ" tells them exactly which flag to go
      * and look at.
      */
-    private static String emptyAfterFiltering(int dead, int notForCirc) {
-        if (dead == 0 && notForCirc == 0) {
+    private static String emptyAfterFiltering(int dead, int notForCirc, int leftCompany) {
+        if (dead == 0 && notForCirc == 0 && leftCompany == 0) {
             return "No valid recipients left after removing duplicates and blanks.";
         }
-        return "No valid recipients left: " + whyNobodyLeft(dead, notForCirc);
+        return "No valid recipients left: " + whyNobodyLeft(dead, notForCirc, leftCompany);
     }
 
-    /** The reason clause on its own, so both "cannot start" and "cannot resume" can use it. */
-    private static String whyNobodyLeft(int dead, int notForCirc) {
-        if (dead > 0 && notForCirc > 0) {
-            return "%d address(es) are flagged as not working and %d as not for circ."
-                    .formatted(dead, notForCirc);
+    /**
+     * The reason clause on its own, so both "cannot start" and "cannot resume" can use it.
+     *
+     * <p>Every reason that actually applied is named, and none is folded into another. A
+     * user told "every address is flagged as not working" when the truth is that the two
+     * people concerned have left the company would go looking at mailboxes instead of at
+     * the People tab.
+     */
+    private static String whyNobodyLeft(int dead, int notForCirc, int leftCompany) {
+        List<String> reasons = new ArrayList<>();
+        if (dead > 0) {
+            reasons.add("%d flagged as not working".formatted(dead));
         }
+        if (notForCirc > 0) {
+            reasons.add("%d flagged as not for circ".formatted(notForCirc));
+        }
+        if (leftCompany > 0) {
+            reasons.add("%d belonging to somebody who has left the company".formatted(leftCompany));
+        }
+        return switch (reasons.size()) {
+            case 1 -> "every remaining address is " + soleReason(dead, notForCirc);
+            case 2 -> String.join(" and ", reasons) + ".";
+            default -> String.join(", ", reasons.subList(0, reasons.size() - 1))
+                    + " and " + reasons.get(reasons.size() - 1) + ".";
+        };
+    }
+
+    /** Reads better than "1 flagged as..." when only one reason applied at all. */
+    private static String soleReason(int dead, int notForCirc) {
+        if (dead > 0) return "flagged as not working.";
         return notForCirc > 0
-                ? "every remaining address is flagged as not for circ."
-                : "every remaining address is flagged as not working.";
+                ? "flagged as not for circ."
+                : "on file for somebody who has left the company.";
     }
 
     /** Keep the first occurrence of each address, case-insensitively. */

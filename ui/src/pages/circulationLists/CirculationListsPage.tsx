@@ -193,7 +193,24 @@ export default function CirculationListsPage() {
     );
 
   const columns: ColumnsType<CirculationListEntry> = [
-    { title: 'Email', dataIndex: 'email', render: editableCell('email') },
+    {
+      title: 'Email',
+      dataIndex: 'email',
+      // The row stays on the list — a list is a snapshot of a document you prepared — but a
+      // row the send will drop has to say so, or the count at the top is a promise the
+      // circular will not keep.
+      render: (_, r) =>
+        r.personLeft ? (
+          <Space size={4} wrap>
+            {editableCell('email')(r.email, r)}
+            <Tooltip title={`${r.personName ?? 'This person'} has left ${r.companyName ?? 'the company'}, so this address will be skipped when the circular goes out. Remove the row, or put them back on the People tab.`}>
+              <Tag color="red">left the company</Tag>
+            </Tooltip>
+          </Space>
+        ) : (
+          editableCell('email')(r.email, r)
+        ),
+    },
     { title: 'Title', dataIndex: 'title', width: 80, render: editableCell('title') },
     { title: 'Greeting', dataIndex: 'greetingName', width: 130, render: editableCell('greetingName') },
     { title: 'Person', dataIndex: 'personName', width: 180, render: editableCell('personName') },

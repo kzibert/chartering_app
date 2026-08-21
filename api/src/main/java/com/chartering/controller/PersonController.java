@@ -105,6 +105,23 @@ public class PersonController {
         return ResponseEntity.ok(personService.update(id, req));
     }
 
+    @PatchMapping("/{id}/left")
+    @Operation(summary = "Mark a person as having left the company (or clear with ?hasLeft=false)",
+            description = "Takes every address and number of theirs out of circulations at "
+                    + "once: they are left out of bulk collection, and dropped again when a "
+                    + "campaign starts or resumes, so an address already sitting on a saved "
+                    + "list or the current draft still cannot be mailed. History records the "
+                    + "skip as SKIPPED_LEFT_COMPANY rather than folding it into not-working, "
+                    + "because the mailbox may well still be live — the person is simply gone. "
+                    + "Nothing is deleted and the company link is untouched: the record stays "
+                    + "searchable and past circulations keep pointing at it. Clearing the flag "
+                    + "restores every one of their addresses in one go.")
+    public ResponseEntity<PersonResponse> left(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "true") boolean hasLeft) {
+        return ResponseEntity.ok(personService.setHasLeft(id, hasLeft));
+    }
+
     @DeleteMapping("/{id}")
     @Operation(summary = "Delete a person")
     public ResponseEntity<Void> delete(@PathVariable Long id) {

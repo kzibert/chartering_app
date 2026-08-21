@@ -29,4 +29,14 @@ export const peopleApi = {
     client.put<PersonResponse>(`/people/${id}`, body).then((r) => r.data),
 
   remove: (id: number) => client.delete<void>(`/people/${id}`).then((r) => r.data),
+
+  /**
+   * Mark a person as having left the company, or bring them back. Takes every address of
+   * theirs out of circulations at once — collection and send time both — without touching
+   * the record or the company link.
+   */
+  setHasLeft: (id: number, hasLeft: boolean) =>
+    client
+      .patch<PersonResponse>(`/people/${id}/left`, {}, { params: { hasLeft } })
+      .then((r) => r.data),
 };

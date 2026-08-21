@@ -53,6 +53,11 @@ const STATUS: Record<CirculationRecipientStatus, { colour: string; label: string
     label: 'not for circ',
     hint: 'Flagged never to be circulated to — the address works, it is just kept out of bulk mail',
   },
+  SKIPPED_LEFT_COMPANY: {
+    colour: 'warning',
+    label: 'left the company',
+    hint: 'The person behind the address no longer works there. The mailbox may well still be live — it is the recipient who is gone',
+  },
 };
 
 function stamp(iso?: string) {

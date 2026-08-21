@@ -59,6 +59,7 @@ db/
   seed/chartering.sql    # auto-seed dump (runs on first DB init)
   email_templates.sql    # idempotent patch: circular templates + footers (baked into the seed)
   main_contact_flag.sql  # idempotent patch: per-company main email/phone (baked into the seed)
+  person_left_company.sql # idempotent patch: person has left, all their contacts off circs
   company_contact_greeting.sql # idempotent patch: a contact's own greeting (baked into the seed)
   not_working_contact_flag.sql # idempotent patch: dead email/phone flag (baked into the seed)
   vessel_company_links.sql # idempotent patch: vessel<->company broker roles + solo flag (baked in)
@@ -398,11 +399,41 @@ to come off the circular. Without it the only way to achieve that was to mark a 
 which loses real information: the address stops being offered anywhere, and nobody later can tell a
 bounced mailbox from a deliberate exclusion.
 
-Both are honoured **twice** — left out of bulk collection, and dropped again when a campaign starts
-— so an address already sitting in a saved list still cannot be mailed, and one flagged during a
-pause is dropped when the run resumes. The circulation history records *which* of the two applied
-rather than collapsing them, because "their mailbox is dead" and "they are off the circular" send
-you somewhere completely different when someone asks why a broker never heard from us.
+A third exclusion sits on the **person** rather than on any address:
+
+| Flag | Lives on | Means |
+|---|---|---|
+| **not working** | the contact | the mailbox is dead — it bounced, or the account is gone |
+| **not for circ** | the contact | it works, it just must never be bulk-mailed |
+| **left the company** | the *person* | they no longer work there, so **every** address of theirs is both |
+
+`left the company` (`db/person_left_company.sql`, the `left` button on the People tab, in the
+company drawer and on the person drawer) is the one control that reaches all of somebody's
+addresses at once — which is the point of it. Departure is a fact about the person: flagging their
+five addresses individually is the same statement made five times, and the sixth address added next
+month would quietly miss it. Clearing the flag brings all of them back together.
+
+It is deliberately **not** a delete and not a company change. Circulation history references the
+person by id, the addresses stay the right ones to search the mailbox for, and "who did we deal with
+there before?" keeps its answer. Only the mail stops. It is also not copied down onto the contact
+rows: a mailbox that still works should not be marked dead because the person behind it moved on,
+and one flag with one writer is one thing to undo.
+
+A cargo offer landing in the inbox of somebody who left — and forwarded around a company we are
+trying to trade with — is worse than not sending it at all, which is why this is enforced rather
+than left to memory.
+
+All three are honoured **twice** — left out of bulk collection, and dropped again when a campaign
+starts or resumes. That second pass is what makes them bite on lists that already exist, **custom
+and current alike**: a list is a snapshot taken when the addresses were collected, so without it an
+address flagged after collection would still go out. The circulation lists page marks such rows
+`left the company` rather than deleting them — a list is a document you prepared, so the row stays,
+but a row that cannot be mailed and does not say so makes the recipient count a lie.
+
+History records *which* of the three applied rather than collapsing them (`SKIPPED_NOT_WORKING`,
+`SKIPPED_NOT_FOR_CIRC`, `SKIPPED_LEFT_COMPANY`), because "their mailbox is dead", "they are off the
+circular" and "that person left" send you to three completely different places when someone asks why
+a broker never heard from us.
 
 `not for circ` is the exact opposite of `circ`, so setting either clears the other — the two could
 otherwise be held at once, leaving the address in a state no rule could read.

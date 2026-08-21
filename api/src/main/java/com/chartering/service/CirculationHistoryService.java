@@ -124,6 +124,8 @@ public class CirculationHistoryService {
                 recipientRow(r, CirculationRunRecipient.SKIPPED_NOT_WORKING)));
         skipped.notForCirc().forEach(r -> run.addRecipient(
                 recipientRow(r, CirculationRunRecipient.SKIPPED_NOT_FOR_CIRC)));
+        skipped.leftCompany().forEach(r -> run.addRecipient(
+                recipientRow(r, CirculationRunRecipient.SKIPPED_LEFT_COMPANY)));
 
         CirculationRun saved = runs.save(run);
         List<Long> sendableIds = saved.getRecipients().stream()
@@ -216,16 +218,17 @@ public class CirculationHistoryService {
     /**
      * The addresses a run filtered out before sending, kept apart by reason.
      *
-     * <p>Grouped into one object rather than passed as three same-typed lists: they are
-     * always supplied together, and three adjacent {@code List<CampaignRecipientRequest>}
-     * parameters are three chances to record everyone as a duplicate.
+     * <p>Grouped into one object rather than passed as same-typed lists: they are always
+     * supplied together, and four adjacent {@code List<CampaignRecipientRequest>} parameters
+     * are four chances to record everyone as a duplicate.
      */
     public record SkippedRecipients(List<CampaignRecipientRequest> duplicates,
                                     List<CampaignRecipientRequest> notWorking,
-                                    List<CampaignRecipientRequest> notForCirc) {
+                                    List<CampaignRecipientRequest> notForCirc,
+                                    List<CampaignRecipientRequest> leftCompany) {
 
         public int total() {
-            return duplicates.size() + notWorking.size() + notForCirc.size();
+            return duplicates.size() + notWorking.size() + notForCirc.size() + leftCompany.size();
         }
     }
 

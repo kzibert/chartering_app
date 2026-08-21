@@ -11,6 +11,7 @@ import com.chartering.model.CirculationList;
 import com.chartering.model.CirculationListEntry;
 import com.chartering.model.Contact;
 import com.chartering.repository.CirculationListRepository;
+import com.chartering.repository.ContactRepository;
 import jakarta.validation.Validator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -43,6 +44,8 @@ public class CirculationListService {
     private final CirculationListRepository lists;
     /** Used to apply the request DTO's own {@code @Email} rule to collected addresses. */
     private final Validator validator;
+    /** Read only for the send-time blocklists, so a row can say whether it will be mailed. */
+    private final ContactRepository contacts;
 
     // ---------------------------------------------------------------- reading
 
@@ -361,11 +364,23 @@ public class CirculationListService {
                 entryCount, null, l.getCreatedAt(), l.getUpdatedAt());
     }
 
-    private static CirculationListResponse toDetail(CirculationList l) {
+    /**
+     * A list with its rows, each marked with whether the send will actually take it.
+     *
+     * <p>One query for the whole list rather than a lookup per row, and matched on the
+     * address rather than on the snapshotted {@code personId}: the send-time filter matches
+     * on the address, and a page that decided this a different way could show a row as
+     * sendable that the campaign then drops — or worse, the reverse.
+     */
+    private CirculationListResponse toDetail(CirculationList l) {
+        Set<String> departed = l.getEntries().isEmpty()
+                ? Set.of()
+                : contacts.findLeftCompanyEmailValues();
         List<CirculationListEntryResponse> entries = l.getEntries().stream()
                 .map(e -> new CirculationListEntryResponse(e.getId(), e.getContactId(), e.getEmail(),
                         e.getPersonId(), e.getPersonName(), e.getGreetingName(), e.getTitle(),
-                        e.getCompanyId(), e.getCompanyName()))
+                        e.getCompanyId(), e.getCompanyName(),
+                        departed.contains(normalise(e.getEmail()))))
                 .toList();
         return new CirculationListResponse(l.getId(), l.getName(), l.isDraft(), l.getNotes(),
                 entries.size(), entries, l.getCreatedAt(), l.getUpdatedAt());

@@ -53,6 +53,7 @@ public class DtoMapper {
                 ct.getId(),
                 p != null ? p.getId() : null,
                 p != null ? p.getFullName() : null,
+                p != null && p.isHasLeft(),
                 p != null ? p.getTitle() : null,
                 effectiveGreeting(ct),
                 blankToNull(ct.getGreetingName()),
@@ -94,7 +95,7 @@ public class DtoMapper {
                 p.getId(), p.getFullName(), p.getTitle(), p.getGreetingName(),
                 c != null ? c.getId() : null,
                 c != null ? c.getName() : null,
-                p.getNotes(), p.isLegacy());
+                p.getNotes(), p.isLegacy(), p.isHasLeft());
     }
 
     /**

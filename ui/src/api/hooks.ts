@@ -192,7 +192,13 @@ export function usePersonMutations() {
     mutationFn: (id: number) => peopleApi.remove(id),
     onSuccess: () => invalidate(...touched),
   });
-  return { create, update, remove };
+  // Also invalidates the circulation lists: flagging somebody changes which rows a list
+  // will actually send to, and the lists page reads that off the server.
+  const setHasLeft = useMutation({
+    mutationFn: (v: { id: number; hasLeft: boolean }) => peopleApi.setHasLeft(v.id, v.hasLeft),
+    onSuccess: () => invalidate(...touched, 'circulation-lists'),
+  });
+  return { create, update, remove, setHasLeft };
 }
 
 /* ---------------- contacts ---------------- */

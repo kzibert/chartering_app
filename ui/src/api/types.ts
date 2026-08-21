@@ -120,6 +120,13 @@ export interface PersonResponse {
   companyName?: string;
   notes?: string;
   legacy: boolean;
+  /**
+   * No longer works at this company. Every address and number of theirs is then off
+   * circulations — left out of collection, and dropped again at send time, so one already
+   * sitting on a saved list or the current draft still cannot be mailed. Nothing is
+   * deleted: the record stays and past circulations keep pointing at it.
+   */
+  hasLeft: boolean;
 }
 
 /** One row of the People page: the person plus their emails and phones. */
@@ -140,6 +147,12 @@ export interface ContactResponse {
   id: number;
   personId?: number;
   personName?: string;
+  /**
+   * The person behind this address has left the company, so it is off circulations. None of
+   * the address's own flags says so — the exclusion lives on the person and reaches every
+   * address of theirs at once.
+   */
+  personLeft: boolean;
   title?: string;
   /**
    * The greeting to actually use: the contact's own when it has one, else the person's.
@@ -238,6 +251,12 @@ export interface CirculationListEntry {
   title?: string;
   companyId?: number;
   companyName?: string;
+  /**
+   * The send will drop this row: the person behind the address has left the company. The
+   * row stays on the list — a list is a snapshot of a document you prepared — but a row
+   * that cannot be mailed and does not say so makes the recipient count a lie.
+   */
+  personLeft: boolean;
 }
 
 export interface CirculationList {
@@ -468,7 +487,8 @@ export type CirculationRecipientStatus =
   | 'PENDING'
   | 'SKIPPED_DUPLICATE'
   | 'SKIPPED_NOT_WORKING'
-  | 'SKIPPED_NOT_FOR_CIRC';
+  | 'SKIPPED_NOT_FOR_CIRC'
+  | 'SKIPPED_LEFT_COMPANY';
 
 /** One line of the History dropdown. */
 export interface CirculationRun {

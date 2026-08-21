@@ -27,6 +27,12 @@ public class CirculationRunRecipient {
     public static final String SKIPPED_NOT_WORKING = "SKIPPED_NOT_WORKING";
     /** Address flagged "not for circ" — it works, it is simply never bulk-mailed. */
     public static final String SKIPPED_NOT_FOR_CIRC = "SKIPPED_NOT_FOR_CIRC";
+    /**
+     * The person behind the address has left the company. Recorded distinctly from the two
+     * above because it answers a different question: the mailbox may well still work, and
+     * the address is not off the circular — the human is gone.
+     */
+    public static final String SKIPPED_LEFT_COMPANY = "SKIPPED_LEFT_COMPANY";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

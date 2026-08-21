@@ -10,6 +10,7 @@ import {
 import ContactLine from '../../components/ContactLine';
 import EditToolbar, { useEditMode } from '../../components/EditToolbar';
 import GreetingName from '../../components/GreetingName';
+import LeftCompanyButton from '../../components/LeftCompanyButton';
 import ContactForm from '../contacts/ContactForm';
 import { recordRecent } from '../../recent/store';
 import type { ContactResponse, PersonResponse } from '../../api/types';
@@ -98,6 +99,12 @@ export default function PersonDrawer({ personId, onClose, onEdit, onOpenCompany 
                 <Tag>{p.companyName}</Tag>
               ))}
             {!p.legacy && <Tag color="green">new</Tag>}
+            {p.hasLeft && (
+              <Tooltip title={`No longer at ${p.companyName ?? 'this company'}. Every address and number below is out of circulations — left out of collection, and skipped at send time even when already on a list.`}>
+                <Tag color="red">left the company</Tag>
+              </Tooltip>
+            )}
+            <LeftCompanyButton p={p} />
           </Space>
           {p.notes && (
             <Typography.Paragraph style={{ marginBottom: 12, whiteSpace: 'pre-wrap' }}>

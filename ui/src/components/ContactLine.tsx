@@ -20,10 +20,10 @@ const NEUTRAL_SALUTATION = 'Good day';
  * a copiable English greeting name is shown — handy when the list isn't already
  * grouped by person (company Contacts tab, vessel owner contacts).
  *
- * A company-wide address (on a company, on nobody) is labelled as such and shows the
- * opener it will actually be merged with, rather than the blank that a missing greeting
- * would otherwise leave. Reading a row should never require knowing what an absent field
- * turns into.
+ * A company-wide address (on a company, on nobody) carries a tag saying so. The opener it
+ * will be merged with lives in the tag's tooltip rather than on the row: "company-wide"
+ * already says the address has no person behind it, and a general greeting follows from
+ * that — printing it beside every such row is a second label for the same fact.
  */
 export default function ContactLine({
   ct,
@@ -57,6 +57,13 @@ export default function ContactLine({
         {showGreeting && ct.greetingName && (
           <GreetingName title={ct.title} name={ct.greetingName} type="secondary" />
         )}
+        {ct.personLeft && (
+          <Tooltip
+            title={`${ct.personName ?? 'This person'} no longer works at ${ct.companyName ?? 'this company'}, so this address is out of every circulation — it is skipped at send time even if it is already on a list. Clear it from the person, not from here: the flag covers all of their addresses at once.`}
+          >
+            <Tag color="red">left the company</Tag>
+          </Tooltip>
+        )}
         {ct.companyWide && (
           <Tooltip
             title={
@@ -65,9 +72,7 @@ export default function ContactLine({
                 : `Belongs to ${ct.companyName ?? 'the company'} itself, not to a person. Circulars to it open "${NEUTRAL_SALUTATION}," — which commits to no number, gender or role. Edit the contact to open with something else.`
             }
           >
-            <Tag color="cyan">
-              company-wide{!ct.greetingName && ` · ${NEUTRAL_SALUTATION}`}
-            </Tag>
+            <Tag color="cyan">company-wide</Tag>
           </Tooltip>
         )}
         <Tag color={ct.contactKind === 'email' ? 'blue' : 'default'}>{ct.contactKind}</Tag>

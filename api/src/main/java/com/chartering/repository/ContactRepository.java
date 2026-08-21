@@ -41,15 +41,21 @@ public interface ContactRepository
      * <p>
      * Ordered circ-first then main-first within each company, which is the order the
      * selection rule reads each group in.
+     *
+     * <p>Contacts belonging to somebody who has left are excluded here as well. Their group
+     * disappears entirely rather than falling through to another address, which is right —
+     * the exclusion is about the person, so there is no colleague's address hiding behind
+     * theirs to promote. The company's own person-less addresses are unaffected.
      */
     @Query("""
             select c from Contact c
-              left join fetch c.person
+              left join fetch c.person p
               join fetch c.company comp
             where c.contactKind = 'email'
               and comp.id in :companyIds
               and c.working = true
               and c.noCirc = false
+              and (p is null or p.hasLeft = false)
               and (:confirmedOnly = false or c.confirmed = true)
               and (:includeBanned = true or c.banned = false)
             order by comp.id, c.circ desc, c.main desc, c.id
@@ -82,6 +88,10 @@ public interface ContactRepository
      * Working email contacts of the given <em>people</em>, for the People tab's bulk add.
      * Companion to {@link #findEmailContactsByCompanyIds}; ordered circ-first then main-first
      * so the selection rule can read each person's group in precedence order.
+     *
+     * <p>Somebody flagged as having left contributes nothing, even when they were ticked by
+     * hand. Selecting a row and pressing "add" is not a statement that they still work
+     * there — the flag is, and it was set later.
      */
     @Query("""
             select c from Contact c
@@ -91,6 +101,7 @@ public interface ContactRepository
               and p.id in :personIds
               and c.working = true
               and c.noCirc = false
+              and p.hasLeft = false
               and (:confirmedOnly = false or c.confirmed = true)
               and (:includeBanned = true or c.banned = false)
             order by p.id, c.circ desc, c.main desc, c.id
@@ -134,6 +145,27 @@ public interface ContactRepository
      */
     @Query("select lower(c.contactValue) from Contact c where c.contactKind = 'email' and c.noCirc = true")
     Set<String> findNoCircEmailValues();
+
+    /**
+     * Lower-cased addresses belonging to somebody who has left — the third send-time
+     * blocklist.
+     *
+     * <p>Driven off the person rather than off any flag on the contact, so an address added
+     * after the person was flagged is covered by it too, and un-flagging the person restores
+     * every one of their addresses at once.
+     *
+     * <p>Kept apart from the other two for the same reason they are kept apart from each
+     * other: the run has to record <em>which</em> reason applied. "Their mailbox bounces",
+     * "they are off the circular" and "that person left the company" send you to three
+     * completely different places when somebody asks why a broker never heard from us.
+     */
+    @Query("""
+            select lower(c.contactValue) from Contact c
+            where c.contactKind = 'email'
+              and c.person is not null
+              and c.person.hasLeft = true
+            """)
+    Set<String> findLeftCompanyEmailValues();
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""

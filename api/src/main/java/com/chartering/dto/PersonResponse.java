@@ -11,5 +11,11 @@ public record PersonResponse(
         Long companyId,
         String companyName,
         String notes,
-        boolean legacy) {
+        boolean legacy,
+        /**
+         * No longer works at this company. Every address of theirs is then off circulations
+         * — left out of collection and dropped again at send time — while the record itself
+         * stays exactly where it is.
+         */
+        boolean hasLeft) {
 }

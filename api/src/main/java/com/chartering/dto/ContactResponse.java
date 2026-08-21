@@ -9,6 +9,13 @@ public record ContactResponse(
         Long id,
         Long personId,
         String personName,
+        /**
+         * The person behind this address has left the company, so it is off circulations —
+         * every one of their addresses is, and none of the address's own flags says so.
+         * Carried on the contact rather than looked up per row, because a contact list that
+         * cannot show why a row will never be mailed is a list that gets re-collected.
+         */
+        boolean personLeft,
         String title,
         /**
          * The greeting to actually use for this address: the contact's own when it has one,

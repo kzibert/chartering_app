@@ -121,6 +121,26 @@ public class PersonService {
         personRepository.deleteById(id);
     }
 
+    /**
+     * Record that this person has left the company, or that they are back.
+     *
+     * <p>Set on the person, never copied down onto their contacts. One statement, one place
+     * to undo it: flagging five addresses individually is the same fact asserted five times,
+     * and the sixth address added next month would quietly miss it. It also keeps the
+     * addresses' own flags meaning what they say — a mailbox that still works is not marked
+     * dead just because the person behind it moved on.
+     *
+     * <p>Nothing is deleted and the company link is left alone. History references the
+     * person by id, the addresses stay searchable in the mailbox, and "who did we deal with
+     * there before?" keeps its answer. Only the mail stops.
+     */
+    @Transactional
+    public PersonResponse setHasLeft(Long id, boolean hasLeft) {
+        Person p = find(id);
+        p.setHasLeft(hasLeft);
+        return mapper.toPersonResponse(personRepository.save(p));
+    }
+
     private Person find(Long id) {
         return personRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Person", id));

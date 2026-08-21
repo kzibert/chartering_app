@@ -38,6 +38,7 @@ import VesselRoleTag, { ROLE_OPTIONS } from '../../components/VesselRoleTag';
 import EditToolbar, { useEditMode } from '../../components/EditToolbar';
 import BanButton from '../../components/BanButton';
 import GreetingName from '../../components/GreetingName';
+import LeftCompanyButton from '../../components/LeftCompanyButton';
 import VesselDrawer from '../vessels/VesselDrawer';
 import VesselForm from '../vessels/VesselForm';
 import { LinkVesselModal } from '../vessels/VesselOwnerModals';
@@ -479,6 +480,11 @@ function CompanyPeopleTab({
               label: (
                 <Space wrap>
                   <strong>{p.fullName}</strong>
+                  {p.hasLeft && (
+                    <Tooltip title="No longer works here. Every address and number of theirs is out of circulations — left out of collection, and skipped at send time even when already on a list.">
+                      <Tag color="red">left</Tag>
+                    </Tooltip>
+                  )}
                   <GreetingName title={p.title} name={p.greetingName} type="success" />
                   <Typography.Text type="secondary">
                     {personContacts.length} contact{personContacts.length === 1 ? '' : 's'}
@@ -505,6 +511,7 @@ function CompanyPeopleTab({
                             onClick={() => onAddContact(p.id)}
                           />
                         </Tooltip>
+                        <LeftCompanyButton p={p} />
                         <Popconfirm
                           title="Delete this person?"
                           onConfirm={() => removePerson.mutate(p.id)}
