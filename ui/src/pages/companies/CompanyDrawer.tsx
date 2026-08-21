@@ -403,8 +403,15 @@ function CompanyPeopleTab({
   const [editMode, setEditMode] = useEditMode(id);
 
   const byPerson = new Map<number, ContactResponse[]>();
+  // Addresses on the company and on nobody — chartering@, ops@, the switchboard. They have
+  // no person to sit under, and dropping them here is how one goes missing: the row is on
+  // the Contacts tab, but this is the tab somebody opens to ask "who do we know there".
+  const companyWide: ContactResponse[] = [];
   (contacts ?? []).forEach((ct) => {
-    if (ct.personId == null) return;
+    if (ct.personId == null) {
+      companyWide.push(ct);
+      return;
+    }
     const list = byPerson.get(ct.personId) ?? [];
     list.push(ct);
     byPerson.set(ct.personId, list);
@@ -419,9 +426,35 @@ function CompanyPeopleTab({
       </EditToolbar>
       {loadingPeople || loadingContacts ? (
         <Spin />
-      ) : !people || people.length === 0 ? (
-        <Typography.Text type="secondary">No people.</Typography.Text>
       ) : (
+        <>
+          {companyWide.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <Space size={4} style={{ marginBottom: 4 }}>
+                <strong>The company itself</strong>
+                <Tooltip title="Addresses and numbers that belong to the company rather than to any one person — a chartering@ or ops@ desk. Circulars to them open with a general greeting unless the contact carries its own.">
+                  <Typography.Text type="secondary">
+                    {companyWide.length} contact{companyWide.length === 1 ? '' : 's'}
+                  </Typography.Text>
+                </Tooltip>
+              </Space>
+              <List
+                size="small"
+                dataSource={companyWide}
+                renderItem={(ct) => (
+                  <ContactLine
+                    ct={ct}
+                    editing={editMode}
+                    onEdit={onEditContact}
+                    onDelete={(target) => removeContact.mutate(target.id)}
+                  />
+                )}
+              />
+            </div>
+          )}
+          {!people || people.length === 0 ? (
+            <Typography.Text type="secondary">No people.</Typography.Text>
+          ) : (
         <Collapse
           accordion
           // Expanding a panel is how you look at a person here, so that is what the
@@ -508,6 +541,8 @@ function CompanyPeopleTab({
             };
           })}
         />
+          )}
+        </>
       )}
     </>
   );

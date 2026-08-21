@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Form, Input, Modal, Select, Space, Tooltip } from 'antd';
+import { Alert, Button, Form, Input, Modal, Select, Space, Tooltip, Typography } from 'antd';
 import { UserAddOutlined } from '@ant-design/icons';
 import { useContactMutations } from '../../api/hooks';
 import CompanySelect from '../../components/CompanySelect';
@@ -18,10 +18,19 @@ interface Props {
   onClose: () => void;
 }
 
+/** What a company-wide address is greeted with when nothing is typed — see MailTemplateService. */
+const GENERAL_GREETING = 'Sirs';
+
 export default function ContactForm({ open, editing, defaults, onClose }: Props) {
   const [form] = Form.useForm<ContactRequest>();
   const { create, update } = useContactMutations();
+  // Mirrors of the two select values, kept because things outside the fields react to them:
+  // the person list is scoped to the company, and the greeting hint changes once the address
+  // belongs to a company and to nobody. Form.Item injects its own value/onChange over the
+  // child's, so these are fed by the onChange it calls after its own — never by a `value`
+  // prop, which it would override.
   const [companyId, setCompanyId] = useState<number>();
+  const [personId, setPersonId] = useState<number>();
   const [personFormOpen, setPersonFormOpen] = useState(false);
 
   // A person created from here belongs to whichever company this contact is on.
@@ -36,22 +45,34 @@ export default function ContactForm({ open, editing, defaults, onClose }: Props)
           companyId: editing.companyId,
           contactKind: editing.contactKind,
           contactValue: editing.contactValue,
+          // The stored override, never the effective greeting: showing the person's here
+          // would save a frozen copy of it onto the contact on the next save.
+          greetingName: editing.ownGreetingName,
           notes: editing.notes,
         });
         setCompanyId(editing.companyId);
+        setPersonId(editing.personId);
       } else {
         form.setFieldsValue(defaults ?? {});
         // Keeps the person dropdown scoped to the prefilled company.
         setCompanyId(defaults?.companyId);
+        setPersonId(defaults?.personId);
       }
     }
   }, [open, editing, defaults, form]);
 
   const submit = (values: ContactRequest) => {
     const done = { onSuccess: onClose };
-    if (editing) update.mutate({ id: editing.id, body: values }, done);
-    else create.mutate(values, done);
+    const body = { ...values, greetingName: values.greetingName?.trim() || undefined };
+    if (editing) update.mutate({ id: editing.id, body }, done);
+    else create.mutate(body, done);
   };
+
+  // An address on a company and nobody in particular: a chartering@ or ops@ desk. Worth
+  // saying out loud, because the only way to ask for it is by leaving a box empty, and
+  // an empty box otherwise reads as "not filled in yet" rather than as a choice.
+  const companyWide = personId == null && companyId != null;
+  const orphan = personId == null && companyId == null;
 
   return (
     <Modal
@@ -71,18 +92,58 @@ export default function ContactForm({ open, editing, defaults, onClose }: Props)
           <Input placeholder="email address or phone number" />
         </Form.Item>
         <Form.Item name="companyId" label="Company">
-          <CompanySelect allowClear value={companyId} onChange={(v) => { setCompanyId(v); form.setFieldValue('companyId', v); }} />
+          <CompanySelect allowClear onChange={setCompanyId} />
         </Form.Item>
-        <Form.Item label="Person" tooltip="Who this email/phone belongs to — pick an existing person or create one">
+        <Form.Item
+          label="Person"
+          tooltip="Who this email/phone belongs to. Leave it empty for an address that belongs to the company itself — a chartering@ or ops@ desk."
+          extra={
+            companyWide
+              ? 'Empty — this belongs to the company itself, not to anyone in particular.'
+              : undefined
+          }
+        >
           <Space.Compact style={{ width: '100%' }}>
             <Form.Item name="personId" noStyle>
-              <PersonSelect allowClear companyId={companyId} />
+              <PersonSelect allowClear companyId={companyId} onChange={setPersonId} />
             </Form.Item>
             <Tooltip title="Create a new person">
               <Button icon={<UserAddOutlined />} onClick={() => setPersonFormOpen(true)} />
             </Tooltip>
           </Space.Compact>
         </Form.Item>
+
+        {orphan && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="Pick a company, a person, or both"
+            description="A contact filed under neither is listed on no screen — not the company drawer, not the People tab. Leave only the person empty for an address that belongs to the company itself."
+          />
+        )}
+
+        <Form.Item
+          name="greetingName"
+          label="Greeting"
+          tooltip={`What {{greeting}} becomes in a circular to this address. Leave blank to use the person's greeting, or the general "${GENERAL_GREETING}" when there is no person.`}
+          extra={
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {companyWide
+                ? `Blank greets this address as "${GENERAL_GREETING}", which is usually right for a desk rather than a person. Fill it in to open with something else — "Chartering Team", or whoever reads the inbox.`
+                : "Blank uses the person's own greeting. Fill it in only to greet this particular address differently."}
+            </Typography.Text>
+          }
+        >
+          <Input
+            allowClear
+            maxLength={120}
+            placeholder={
+              companyWide ? `${GENERAL_GREETING} (general)` : editing?.greetingName ?? "the person's greeting"
+            }
+          />
+        </Form.Item>
+
         <Form.Item name="notes" label="Notes">
           <Input.TextArea rows={2} />
         </Form.Item>
@@ -93,7 +154,10 @@ export default function ContactForm({ open, editing, defaults, onClose }: Props)
       <PersonForm
         open={personFormOpen}
         defaults={personDefaults}
-        onCreated={(p) => form.setFieldValue('personId', p.id)}
+        onCreated={(p) => {
+          form.setFieldValue('personId', p.id);
+          setPersonId(p.id);
+        }}
         onClose={() => setPersonFormOpen(false)}
       />
     </Modal>

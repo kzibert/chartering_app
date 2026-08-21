@@ -197,6 +197,18 @@ public class ContactService {
     }
 
     private void apply(Contact ct, ContactRequest req) {
+        // A contact hanging off neither a person nor a company is reachable from no screen
+        // in the app: the company drawer lists by company, the people tab by person, and
+        // the vessel drawer through the owner. It would still be in the table, and still be
+        // mailed by any list it already sat in — findable only by searching for the address
+        // itself. Refused rather than saved, because the shape is never what was meant:
+        // clearing both boxes is how somebody tries to detach an address, not how they
+        // choose to lose it.
+        if (req.getPersonId() == null && req.getCompanyId() == null) {
+            throw new IllegalArgumentException(
+                    "A contact must belong to a person or to a company. Leave the person "
+                            + "empty for an address that belongs to the company itself.");
+        }
         Company newCompany = resolveCompany(req.getCompanyId());
         // Moving a main contact to another company (or to none) surrenders the main slot:
         // the target may already have one, and keeping the flag would breach the unique index.
@@ -212,8 +224,16 @@ public class ContactService {
         ct.setContactKind(req.getContactKind());
         ct.setContactValue(req.getContactValue());
         ct.setNotes(req.getNotes());
+        // Blank is stored as null, not as "": the two would read the same on screen but
+        // differently in the merge, where an empty string is a greeting somebody chose and
+        // null is the absence that falls through to the person's, then to "Sirs".
+        ct.setGreetingName(blankToNull(req.getGreetingName()));
         ct.setPerson(resolvePerson(req.getPersonId()));
         ct.setCompany(newCompany);
+    }
+
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
     }
 
     private Person resolvePerson(Long personId) {

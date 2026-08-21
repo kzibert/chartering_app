@@ -12,11 +12,18 @@ import { WhatsappChatLink, WhatsappCheckButton } from './WhatsappButtons';
 import { useContactMutations } from '../api/hooks';
 import type { ContactResponse } from '../api/types';
 
+/** What a greeting-less address is merged with — MailTemplateService.GREETING_FALLBACK. */
+const GENERAL_GREETING = 'Sirs';
+
 /**
  * One email/phone line with copy buttons. When `showGreeting` is set (default),
- * a copiable English greeting name is shown for person-linked contacts — handy
- * when the list isn't already grouped by person (company Contacts tab, vessel
- * owner contacts).
+ * a copiable English greeting name is shown — handy when the list isn't already
+ * grouped by person (company Contacts tab, vessel owner contacts).
+ *
+ * A company-wide address (on a company, on nobody) is labelled as such and shows the
+ * general greeting it will actually be merged with, rather than the blank that a missing
+ * greeting would otherwise leave. Reading a row should never require knowing that an
+ * absent field means "Sirs".
  */
 export default function ContactLine({
   ct,
@@ -49,6 +56,19 @@ export default function ContactLine({
       <Space wrap size={4}>
         {showGreeting && ct.greetingName && (
           <GreetingName title={ct.title} name={ct.greetingName} type="secondary" />
+        )}
+        {ct.companyWide && (
+          <Tooltip
+            title={
+              ct.greetingName
+                ? `Belongs to ${ct.companyName ?? 'the company'} itself, not to a person. Circulars to it open "Dear ${ct.greetingName}".`
+                : `Belongs to ${ct.companyName ?? 'the company'} itself, not to a person. Circulars to it open "Dear ${GENERAL_GREETING}" — edit the contact to greet it differently.`
+            }
+          >
+            <Tag color="cyan">
+              company-wide{!ct.greetingName && ` · ${GENERAL_GREETING}`}
+            </Tag>
+          </Tooltip>
         )}
         <Tag color={ct.contactKind === 'email' ? 'blue' : 'default'}>{ct.contactKind}</Tag>
         <CopyableValue value={ct.contactValue} highlight={highlight} />

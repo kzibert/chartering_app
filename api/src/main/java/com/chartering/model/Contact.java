@@ -30,6 +30,26 @@ public class Contact {
     @Column(name = "contact_value", nullable = false)
     private String contactValue;
 
+    /**
+     * This address's own greeting, overriding whatever the person would supply.
+     *
+     * <p>Exists for the address that belongs to a company rather than to anyone in
+     * particular — a {@code chartering@} or {@code ops@} desk, where {@link #person} is null
+     * and {@link #company} is not. That shape has always been storable and
+     * {@code RecipientSelectionService} already collects it as a group of its own, but the
+     * merge reads the greeting off the person, so such an address could only ever be greeted
+     * with the general fallback.
+     *
+     * <p>That fallback stays the default, which is the point: an address for a desk should
+     * open generally unless somebody says otherwise. This is how they say otherwise.
+     *
+     * <p>Not restricted to person-less rows. One shared mailbox read by two people can want
+     * a different greeting from the person it is filed under, and the person's greeting is
+     * only ever a default for their addresses — never a fact about the mailbox itself.
+     */
+    @Column(name = "greeting_name")
+    private String greetingName;
+
     private String notes;
 
     @Column(name = "legacy_id")

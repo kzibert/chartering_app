@@ -59,6 +59,7 @@ db/
   seed/chartering.sql    # auto-seed dump (runs on first DB init)
   email_templates.sql    # idempotent patch: circular templates + footers (baked into the seed)
   main_contact_flag.sql  # idempotent patch: per-company main email/phone (baked into the seed)
+  company_contact_greeting.sql # idempotent patch: a contact's own greeting (baked into the seed)
   not_working_contact_flag.sql # idempotent patch: dead email/phone flag (baked into the seed)
   vessel_company_links.sql # idempotent patch: vessel<->company broker roles + solo flag (baked in)
   circulations.sql       # idempotent patch: circ flag, circulation lists, circulation history (baked in)
@@ -290,6 +291,49 @@ Endpoints: CRUD on `/api/v1/circulation-lists` (`/current` for the draft, `/{id}
 Subtraction matches on the **address**, not on ids — the same key dedupe and the sender use — so
 it still works when the same mailbox was collected through two different contacts, or typed by
 hand on one side.
+
+### Addresses that belong to the company, not to a person
+
+A `chartering@`, `ops@` or switchboard address belongs to a **desk**, not to anybody in
+particular. Leave the *Person* box empty on a contact and fill in only *Company*: the row is then
+**company-wide**, and both `person_id` and `company_id` have always allowed it — collection has
+always treated a company's person-less addresses as one more group (see the table below).
+
+Two things used to make the shape unusable in practice, and both are fixed:
+
+- **It was invisible where you would look for it.** The company drawer's *People* tab groups
+  contacts under the person they hang off, so an address with no person appeared on the *Contacts*
+  tab and nowhere else — indistinguishable from having been lost. The People tab now opens with a
+  **The company itself** group listing exactly those rows.
+- **It could not be greeted.** The mail-merge reads the greeting off the person, so a company-wide
+  address had none and every circular to it opened `Dear Sirs` with no way to say otherwise.
+
+That general fallback is still the **default**, and deliberately: an address for a desk should open
+generally unless somebody says different. `contacts.greeting_name`
+(`db/company_contact_greeting.sql`) is how they say different — "Chartering Team", "Operations", or
+whoever actually reads the inbox. The *Greeting* field on the contact form sets it, and the
+contact row shows what will be used, including the `Sirs` a blank one resolves to, so reading a row
+never requires knowing that an absent field means something.
+
+Precedence, applied wherever a contact becomes a recipient:
+
+| Source | Used when |
+|---|---|
+| `contacts.greeting_name` | set by hand on the address — wins whenever present |
+| `people.greeting_name` | the person's own, for an ordinary person-linked address |
+| `people.full_name` | a person with no greeting on file |
+| `Sirs` | nothing else — the general greeting |
+
+The override is **not** restricted to company-wide rows. One shared mailbox read by two people can
+want a different greeting from the person it is filed under, and a person's greeting is only ever a
+default for their addresses, never a fact about the mailbox. Editing a person-linked contact leaves
+the field blank and shows the inherited greeting as placeholder text, so saving cannot silently
+freeze a copy of it onto the row.
+
+A contact filed under **neither** a person nor a company is refused (400). Such a row appears on no
+screen — not the company drawer, not the People tab, not the vessel owner list — while still being
+mailable by any list it already sits in, findable only by searching for the address itself.
+Clearing both boxes is how somebody tries to detach an address, never how they choose to lose it.
 
 ### Which addresses get collected
 

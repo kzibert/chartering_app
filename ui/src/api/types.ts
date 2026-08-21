@@ -141,7 +141,25 @@ export interface ContactResponse {
   personId?: number;
   personName?: string;
   title?: string;
+  /**
+   * The greeting to actually use: the contact's own when it has one, else the person's.
+   * Everything downstream reads this — the contact row, the circulation list builder, the
+   * WhatsApp link. Absent means no greeting is on file, and the merge falls through to the
+   * general "Sirs", which is what a company-wide address gets until somebody types one.
+   */
   greetingName?: string;
+  /**
+   * The override as stored, with no fallback applied. Only the edit form wants this:
+   * prefilling the field from `greetingName` would show the person's greeting and pin a
+   * copy of it onto the contact on the next save.
+   */
+  ownGreetingName?: string;
+  /**
+   * This address belongs to the company itself rather than to any person — a chartering@
+   * or ops@ desk. Just `personId == null && companyId != null`, derived server-side so
+   * every row that wants to label itself reads one field instead of re-deriving it.
+   */
+  companyWide: boolean;
   companyId?: number;
   companyName?: string;
   contactKind: string; // 'email' | 'phone'
@@ -178,10 +196,17 @@ export interface ContactResponse {
 }
 
 export interface ContactRequest {
+  /**
+   * Who the address belongs to, or absent for one that belongs to the company itself.
+   * At least one of this and `companyId` must be set — the server refuses a contact
+   * filed under neither, which no screen could list.
+   */
   personId?: number;
   companyId?: number;
   contactKind: string;
   contactValue: string;
+  /** Overrides the person's greeting. Blank falls back to the person's, then to "Sirs". */
+  greetingName?: string;
   notes?: string;
 }
 

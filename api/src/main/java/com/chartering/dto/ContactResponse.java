@@ -10,7 +10,28 @@ public record ContactResponse(
         Long personId,
         String personName,
         String title,
+        /**
+         * The greeting to actually use for this address: the contact's own when it has one,
+         * otherwise the person's. Everything downstream reads this one — the circulation
+         * list builder, the WhatsApp link, the contact row — so a company-wide address with
+         * a greeting typed on it is greeted by it everywhere, and one without stays null and
+         * falls through to the general "Sirs" at merge time.
+         */
         String greetingName,
+        /**
+         * The override as stored, with no fallback applied — null unless somebody typed one.
+         * Only the edit form wants this: prefilling it from {@link #greetingName} would show
+         * the person's greeting in the field and then pin that copy onto the contact on the
+         * next save, quietly severing it from the person it was inherited from.
+         */
+        String ownGreetingName,
+        /**
+         * True when this address belongs to the company itself rather than to any person —
+         * a chartering@ or ops@ desk. Derived, not stored; it is only {@code personId == null
+         * && companyId != null} spelled out, so the UI can label the row without every caller
+         * re-deriving the same condition.
+         */
+        boolean companyWide,
         Long companyId,
         String companyName,
         String contactKind,

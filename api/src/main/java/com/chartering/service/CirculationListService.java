@@ -6,6 +6,7 @@ import com.chartering.dto.CirculationListEntryResponse;
 import com.chartering.dto.CirculationListRequest;
 import com.chartering.dto.CirculationListResponse;
 import com.chartering.exception.ResourceNotFoundException;
+import com.chartering.mapper.DtoMapper;
 import com.chartering.model.CirculationList;
 import com.chartering.model.CirculationListEntry;
 import com.chartering.model.Contact;
@@ -313,13 +314,21 @@ public class CirculationListService {
         return e;
     }
 
+    /**
+     * One collected address as a list entry.
+     *
+     * <p>The greeting comes from {@link DtoMapper#effectiveGreeting}, so an address carrying
+     * its own wins over the person's — and a company-wide address with none stays blank and
+     * is merged as the general "Sirs". The entry is a snapshot either way: editing the
+     * contact afterwards does not rewrite a list already prepared.
+     */
     private static CirculationListEntryRequest toEntryRequest(Contact c) {
         return new CirculationListEntryRequest(
                 c.getContactValue(),
                 c.getId(),
                 c.getPerson() != null ? c.getPerson().getId() : null,
                 c.getPerson() != null ? c.getPerson().getFullName() : null,
-                c.getPerson() != null ? c.getPerson().getGreetingName() : null,
+                DtoMapper.effectiveGreeting(c),
                 c.getPerson() != null ? c.getPerson().getTitle() : null,
                 c.getCompany() != null ? c.getCompany().getId() : null,
                 c.getCompany() != null ? c.getCompany().getName() : null);

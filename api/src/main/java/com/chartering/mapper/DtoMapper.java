@@ -54,13 +54,38 @@ public class DtoMapper {
                 p != null ? p.getId() : null,
                 p != null ? p.getFullName() : null,
                 p != null ? p.getTitle() : null,
-                p != null ? p.getGreetingName() : null,
+                effectiveGreeting(ct),
+                blankToNull(ct.getGreetingName()),
+                p == null && ct.getCompany() != null,
                 ct.getCompany() != null ? ct.getCompany().getId() : null,
                 ct.getCompany() != null ? ct.getCompany().getName() : null,
                 ct.getContactKind(), ct.getContactValue(), ct.getNotes(),
                 ct.isConfirmed(), ct.getConfirmedAt(), ct.getConfirmedBy(), ct.getConfirmNotes(),
                 ct.isBanned(), ct.isLegacy(), ct.isMain(), ct.isWorking(), ct.isCirc(), ct.isNoCirc(),
                 ct.isHasWhatsapp());
+    }
+
+    /**
+     * The greeting for one address: its own override, else the person's.
+     *
+     * <p>Stops here rather than falling through to the person's full name or to "Sirs".
+     * Those last two steps belong to the merge, which applies them per placeholder — the
+     * contact row and the circulation list want to show "no greeting on file" as blank,
+     * not to display a fallback as though somebody had chosen it.
+     *
+     * <p>A company-wide address with nothing typed on it therefore comes back null and is
+     * greeted generally, which is the intended default.
+     */
+    public static String effectiveGreeting(Contact ct) {
+        String own = blankToNull(ct.getGreetingName());
+        if (own != null) {
+            return own;
+        }
+        return ct.getPerson() != null ? blankToNull(ct.getPerson().getGreetingName()) : null;
+    }
+
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
     }
 
     public PersonResponse toPersonResponse(Person p) {
