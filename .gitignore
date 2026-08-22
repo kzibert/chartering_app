@@ -19,6 +19,13 @@ logs/
 # is committed as db-export/chartering-full.dump anyway.
 db-export/history/
 
+# Connection strings pasted while setting up a hosted database. Their real home is
+# .env, ignored above - this is here so a scratch file on the way there cannot be
+# committed by accident. A password in git history is a password you have to rotate.
+db/creds.txt
+*creds*.txt
+*.credentials
+
 # OS / editor
 .DS_Store
 Thumbs.db

@@ -47,6 +47,28 @@ services:
         condition: service_healthy
     environment:
       SPRING_PROFILES_ACTIVE: docker
+      # Where the database is. Set DB_URL in .env to point this container at a managed
+      # Postgres instead of the db service below; db/CLOUD.md is the walkthrough.
+      #
+      # A cloud URL needs TLS, which for pgjdbc is a query parameter on the url itself:
+      #   DB_URL=jdbc:postgresql://HOST/DB?sslmode=require
+      #
+      # The real defaults are written out here rather than left to application.yml, for
+      # the same reason IMAP_USERNAME's fallback is done here: compose always defines a
+      # mapped variable, so "DB_URL: ${DB_URL:-}" with nothing in .env would arrive as an
+      # empty string, and Spring resolves an empty value as a value - not as absent. Its
+      # own ${DB_URL:default} would never fire and the app would start with no url at all.
+      # Compose's :- treats empty and unset alike, so the default belongs on this side.
+      DB_URL: ${DB_URL:-jdbc:postgresql://db:5432/chartering}
+      DB_USER: ${DB_USER:-chartering_user}
+      DB_PASSWORD: ${DB_PASSWORD:-password}
+      # Connection pool, sized for a database in the next container. A serverless one
+      # wants DB_POOL_MIN_IDLE=0 and a short idle timeout so the pool drains to nothing
+      # and the database is allowed to suspend - which is what keeps a free tier metered
+      # on compute hours free. Cost: a cold start after a quiet spell.
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
+      DB_POOL_MIN_IDLE: ${DB_POOL_MIN_IDLE:-10}
+      DB_POOL_IDLE_TIMEOUT_MS: ${DB_POOL_IDLE_TIMEOUT_MS:-600000}
       # The zone the API treats as local. Everything it timestamps — circulation history,
       # the campaign log — and every "today" it counts is wall-clock time in this zone; a
       # container with no TZ would run on UTC and roll the day over at the wrong hour.

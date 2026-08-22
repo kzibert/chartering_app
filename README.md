@@ -73,6 +73,7 @@ api/                     # Spring Boot backend, package com.chartering (multi-st
     V2__reference_data.sql             #   vessels, companies, people, contacts, ports, lists
 db/
   MIGRATIONS.md          # how to change the schema: writing, running, adopting, recovering
+  CLOUD.md               # step-by-step move of the database onto a hosted Postgres
   legacy-patches/        # the hand-applied .sql patches from before Flyway - reading only
 db-export/               # portable full snapshot for reproducing the DB elsewhere
   chartering-full.dump   # pg_dump -Fc, --no-owner (restore with pg_restore)
@@ -789,6 +790,14 @@ docker compose exec -T db psql -U chartering_user -d chartering < db-export/char
 
 A restored snapshot brings its own `flyway_schema_history` with it, so it lands knowing what
 it has already run and migrates forward from there.
+
+## Running against a hosted database
+
+The API's connection comes from `DB_URL` / `DB_USER` / `DB_PASSWORD`, which default to the
+`db` container. Point them at a managed Postgres and nothing else changes — no code, no
+migrations, no rebuild beyond recreating the api container. **[db/CLOUD.md](db/CLOUD.md)**
+walks the whole thing: picking a provider, getting your data across, verifying it arrived,
+the one line that is the actual cutover, and how to get back.
 
 Going the other way — refreshing the dumps *from* the current database — is
 `refresh-db-export.bat`, and [db-export/EXPORTING.md](db-export/EXPORTING.md) for the checks

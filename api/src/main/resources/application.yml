@@ -144,9 +144,9 @@ spring:
     activate:
       on-profile: dev
   datasource:
-    url: jdbc:postgresql://localhost:5433/chartering
-    username: chartering_user
-    password: password
+    url: ${DB_URL:jdbc:postgresql://localhost:5433/chartering}
+    username: ${DB_USER:chartering_user}
+    password: ${DB_PASSWORD:password}
   jpa:
     show-sql: true
     properties:
@@ -158,10 +158,29 @@ spring:
   config:
     activate:
       on-profile: docker
+  # The compose default is the db service beside this container. Point DB_URL at a
+  # managed Postgres and nothing else here changes - see db/CLOUD.md. Credentials are
+  # read from the environment rather than written here so that .env is the only place
+  # they live; the note at the top of .env.example used to say "update that profile
+  # too", and this is what removes the need.
   datasource:
-    url: jdbc:postgresql://db:5432/chartering
-    username: chartering_user
-    password: password
+    url: ${DB_URL:jdbc:postgresql://db:5432/chartering}
+    username: ${DB_USER:chartering_user}
+    password: ${DB_PASSWORD:password}
+
+    # Sized for a database on the other side of this machine, not the other side of the
+    # network. The defaults are HikariCP's own and are right for the local container.
+    #
+    # A serverless provider wants the opposite: DB_POOL_MIN_IDLE=0 with a short idle
+    # timeout lets the pool drain to nothing, which is what allows the database to
+    # suspend and is how a free tier metered on compute hours stays free. The cost is a
+    # cold start on the first query after a quiet spell. See db/CLOUD.md.
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX:10}
+      minimum-idle: ${DB_POOL_MIN_IDLE:10}
+      idle-timeout: ${DB_POOL_IDLE_TIMEOUT_MS:600000}
+      max-lifetime: ${DB_POOL_MAX_LIFETIME_MS:1800000}
+      connection-timeout: ${DB_POOL_CONNECT_TIMEOUT_MS:30000}
   jpa:
     show-sql: false
 
