@@ -83,6 +83,7 @@ db-export/               # portable full snapshot for reproducing the DB elsewhe
   EXPORTING.md           # how to refresh both dumps, and how to verify them
 db-migrate.bat           # flyway info / migrate / validate / repair against the compose DB
 refresh-db-export.bat    # one-click refresh of db-export/, keeping the previous dumps
+backup-db.bat            # full + schema-only dump of whatever DB_URL points at, per-run folder
 ui/                      # React SPA (multi-stage: node build -> nginx)
 logs/                    # campaign send log, bind-mounted from the api container (gitignored)
 ```

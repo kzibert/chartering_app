@@ -19,6 +19,11 @@ logs/
 # is committed as db-export/chartering-full.dump anyway.
 db-export/history/
 
+# Timestamped backups from backup-db.bat. Real data, including the send history
+# and synced mail, and one folder per run - none of it belongs in the repo. Keep
+# them somewhere that is not this disk; the script goes wherever you put it.
+db-backup-*/
+
 # Connection strings pasted while setting up a hosted database. Their real home is
 # .env, ignored above - this is here so a scratch file on the way there cannot be
 # committed by accident. A password in git history is a password you have to rotate.
