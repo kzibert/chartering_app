@@ -14,6 +14,13 @@ npm-debug.log*
 # and they contain recipient addresses.
 logs/
 
+# Local launchers and internal notes. Kept on disk because they are useful here,
+# untracked because they are not part of what this repo publishes: the .bat files
+# are Windows convenience wrappers around docker compose, and SAAS-MIGRATION.md is
+# an internal assessment of work that has not been done.
+*.bat
+SAAS-MIGRATION.md
+
 # ---------------------------------------------------------------------------
 # No database contents in this repo. Ever.
 # ---------------------------------------------------------------------------
