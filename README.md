@@ -29,20 +29,19 @@ Then open:
 - API + Swagger: http://localhost:8081/swagger-ui/index.html
 - OpenAPI JSON: http://localhost:8081/v3/api-docs
 
-First boot: Postgres comes up with an empty database and the **api container fills it** —
-Flyway applies `V1__baseline_schema.sql` (23 tables, 3 views, 49 indexes, `pg_trgm`) and then
-`V2__reference_data.sql` (~4.5k vessels / 3k companies / 3.6k people / 7.5k contacts, plus
-ports, regions, tonnage categories, circulation lists and the circular templates). It takes a
-few seconds and only happens once; after that Flyway records what it has run and applies only
-what is new.
+First boot: Postgres comes up with an empty database and the **api container builds the
+schema** — Flyway applies `V1__baseline_schema.sql` (23 tables, 3 views, 49 indexes,
+`pg_trgm`). It takes a second, and only happens once; after that Flyway records what it has
+run and applies only what is new.
 
-That means `docker compose up -d db` on its own now leaves an **empty** database. The thing
-that populates it is the api service, so bring up the stack rather than just the database.
+**It builds the schema, not the data.** A fresh clone comes up with every table present and
+every table empty — no vessels, no companies, no contacts. That is deliberate: this repo
+carries code, schema and infrastructure, and no copy of anybody's database. Data arrives from
+a backup you restore yourself, which is what `backup-db.bat` produces — see
+[db/CLOUD.md](db/CLOUD.md).
 
-The reference data deliberately carries **no activity data** — no circulation history, no
-synced mail, no `app_settings` overrides — so a new environment starts with a clean send
-history, an empty inbox and the settings its own `.env` specifies. `db-export/` is the
-opposite: a complete snapshot including all of it, for moving an existing database elsewhere.
+`docker compose up -d db` on its own leaves the database empty in a second sense: it is the
+api service that runs the migrations, so bring up the stack rather than just the database.
 
 ```bash
 docker compose down        # stop, keep data
@@ -70,19 +69,11 @@ docker-compose.yml       # db + api + ui (compose project "chartering")
 api/                     # Spring Boot backend, package com.chartering (multi-stage Dockerfile)
   src/main/resources/db/migration/     # THE SCHEMA. Flyway migrations, applied on api startup
     V1__baseline_schema.sql            #   23 tables, 3 views, 49 indexes, pg_trgm - no data
-    V2__reference_data.sql             #   vessels, companies, people, contacts, ports, lists
 db/
   MIGRATIONS.md          # how to change the schema: writing, running, adopting, recovering
   CLOUD.md               # step-by-step move of the database onto a hosted Postgres
   legacy-patches/        # the hand-applied .sql patches from before Flyway - reading only
-db-export/               # portable full snapshot for reproducing the DB elsewhere
-  chartering-full.dump   # pg_dump -Fc, --no-owner (restore with pg_restore)
-  chartering-full.sql    # same content as plain SQL (restore with psql)
-  history/               # timestamped copy of every refresh (gitignored)
-  README.md              # restore instructions
-  EXPORTING.md           # how to refresh both dumps, and how to verify them
 db-migrate.bat           # flyway info / migrate / validate / repair against the compose DB
-refresh-db-export.bat    # one-click refresh of db-export/, keeping the previous dumps
 ui/                      # React SPA (multi-stage: node build -> nginx)
 logs/                    # campaign send log, bind-mounted from the api container (gitignored)
 ```
@@ -255,10 +246,9 @@ to plain text, because Word/Outlook markup is a common cause of mail rendering b
 Incoming HTML is stripped of `<script>`/`<iframe>` blocks, `on*` handlers and `javascript:`
 URLs before storage; mail clients drop these anyway, and their presence hurts spam scoring.
 
-Both tables are in `V1__baseline_schema.sql` and the starter footer in
-`V2__reference_data.sql`, so a fresh `docker compose up` has them already. The original
-patch that introduced them, and the reasoning behind their shape, is kept in
-`db/legacy-patches/email_templates.sql`.
+Both tables are in `V1__baseline_schema.sql`, so a fresh `docker compose up` has them —
+empty, like everything else. The original patch that introduced them, and the reasoning
+behind their shape, is kept in `db/legacy-patches/email_templates.sql`.
 
 ### Circulation lists
 
@@ -775,21 +765,22 @@ stops every database that ran it from starting. Corrections are the next migrati
 **[db/MIGRATIONS.md](db/MIGRATIONS.md)** covers writing one, adopting an existing database,
 the line-ending trap in `V2`, and what to do when `validate` fails.
 
-## Backing up / restoring manually
+## Backing up, and getting data into a fresh environment
 
-Migrations version *structure*; they are not a backup. A populated database moves as a
-snapshot from `db-export/`:
+Migrations version *structure*; they are not a backup, and this repo deliberately holds no
+copy of the data. Dumps are taken by **`backup-db.bat`**, which lives **outside the
+checkout** — with its credentials and its output beside it, none of it version-controlled.
+[db/CLOUD.md](db/CLOUD.md) documents what it does and where it lives.
+
+To populate a fresh environment, restore one of its dumps into the empty database the stack
+just built:
 
 ```bash
-# the custom-format dump
-docker compose exec -T db pg_restore -U chartering_user -d chartering --no-owner   < db-export/chartering-full.dump
-
-# or the plain-SQL twin
-docker compose exec -T db psql -U chartering_user -d chartering < db-export/chartering-full.sql
+pg_restore --no-owner --no-privileges -d TARGET_URL chartering-full-YYYYMMDD-HHMMSS.dump
 ```
 
-A restored snapshot brings its own `flyway_schema_history` with it, so it lands knowing what
-it has already run and migrates forward from there.
+A dump taken that way brings its own `flyway_schema_history`, so it lands knowing which
+migrations it has run and picks up from there rather than being rebuilt.
 
 ## Running against a hosted database
 
@@ -799,6 +790,5 @@ migrations, no rebuild beyond recreating the api container. **[db/CLOUD.md](db/C
 walks the whole thing: picking a provider, getting your data across, verifying it arrived,
 the one line that is the actual cutover, and how to get back.
 
-Going the other way — refreshing the dumps *from* the current database — is
-`refresh-db-export.bat`, and [db-export/EXPORTING.md](db-export/EXPORTING.md) for the checks
-worth running before trusting the result.
+Note that the backup script dumps whatever it is pointed at, which after a cutover is the
+hosted database — not the local container, which by then is a stale copy.

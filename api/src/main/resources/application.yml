@@ -12,20 +12,23 @@ spring:
     locations: classpath:db/migration
 
     # Adopting a database that already exists. A database with tables but no
-    # flyway_schema_history is stamped as being at V2 - schema and reference data
-    # both already in place - and V1/V2 are recorded rather than run, which is what
-    # keeps this from trying to CREATE TABLE over 7,583 live contacts. An empty
-    # database is not baselined: it has nothing to adopt, so it runs V1 forward.
+    # flyway_schema_history is stamped as being at V1 - the schema already in place -
+    # and V1 is recorded rather than run, which is what keeps this from trying to
+    # CREATE TABLE over live data. An empty database is not baselined: it has nothing
+    # to adopt, so it runs V1 forward and comes up with the schema and no rows.
+    #
+    # The databases in use were adopted before this repo stopped carrying data, so
+    # they carry a baseline of 2 rather than 1. That is harmless - nothing above it
+    # is pending either way - and it is recorded history, so it stays as it is.
     #
     # Left on deliberately, and it is the one setting here with a sharp edge: it
-    # means a database that turns up unexpectedly populated is quietly adopted at
-    # V2 instead of failing loudly. That is the behaviour worth having while the
-    # local database, the restored exports in db-export/ and whatever cloud
-    # instance comes next all still need adopting. Turn it off once every database
-    # in play was built by Flyway from empty.
+    # means a database that turns up unexpectedly populated is quietly adopted
+    # instead of failing loudly. That is the behaviour worth having while databases
+    # restored from a backup still need adopting. Turn it off once every database in
+    # play was built by Flyway from empty.
     baseline-on-migrate: true
-    baseline-version: 2
-    baseline-description: "existing database adopted at V2"
+    baseline-version: 1
+    baseline-description: "existing database adopted at V1"
 
     # Refuse to start against a database whose applied migrations no longer match
     # the files in this build - an edited V1, a deleted V3, a checksum that moved.

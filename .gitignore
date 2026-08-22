@@ -14,16 +14,24 @@ npm-debug.log*
 # and they contain recipient addresses.
 logs/
 
-# Timestamped dumps kept by refresh-db-export.bat. A local safety net, not
-# shared history: ~0.5 MB per run would bloat the repo, and the current export
-# is committed as db-export/chartering-full.dump anyway.
-db-export/history/
-
-# Timestamped backups from backup-db.bat. That script and its output live outside
-# this repo now (see db/CLOUD.md), so this rule is a safety net rather than a
-# necessity - it catches the case where someone runs a copy of it in here. The
-# folders hold real data, including the send history and synced mail.
+# ---------------------------------------------------------------------------
+# No database contents in this repo. Ever.
+# ---------------------------------------------------------------------------
+# This repo holds code, schema and infrastructure. It does not hold a copy of the
+# data: the history was rewritten on 2026-08-22 to remove the dumps it used to
+# carry, and these rules are what stop them coming back. Dumps are taken with
+# backup-db.bat, which lives outside the checkout - see db/CLOUD.md.
+#
+# Deliberately broad, and deliberately by extension rather than by path: the
+# failure this guards against is someone dropping a dump into a folder nobody
+# thought to list. A migration under db/migration is the one legitimate .sql that
+# is checked in, and it is not matched here because it is schema, not data.
+*.dump
+*.sql.gz
+*.backup
 db-backup-*/
+db-export/
+**/dumps/
 
 # Connection strings pasted while setting up a hosted database. Their real home is
 # .env, ignored above - this is here so a scratch file on the way there cannot be
