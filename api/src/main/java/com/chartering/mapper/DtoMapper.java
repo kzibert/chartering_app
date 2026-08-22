@@ -109,6 +109,7 @@ public class DtoMapper {
         return new MailMessageResponse(
                 m.getId(), m.getFromAddress(), m.getFromName(), m.getSubject(), m.getSnippet(),
                 m.getSentAt(), m.getReceivedAt(), m.isRead(), m.isHasAttachments(),
+                m.getImapFolder(),
                 f != null ? f.getId() : null,
                 f != null ? f.getName() : null,
                 m.getFiledByRuleId(),

@@ -10,29 +10,37 @@ import {
   Empty,
   Input,
   Menu,
+  Skeleton,
   Space,
   Table,
+  Tree,
   Tag,
   Tooltip,
   Typography,
 } from 'antd';
 import {
   BankOutlined,
+  DeleteOutlined,
+  EditOutlined,
   FolderOpenOutlined,
   FolderOutlined,
   InboxOutlined,
   MailOutlined,
   PaperClipOutlined,
   ReloadOutlined,
+  SendOutlined,
   SettingOutlined,
+  StopOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import type { DataNode } from 'antd/es/tree';
 import dayjs from 'dayjs';
 import {
   useMailFolders,
   useMailMessageMutations,
   useMailMessages,
+  useMailServerFolders,
   useMailboxStatus,
   useMailboxSync,
 } from '../../mailbox/store';
@@ -41,14 +49,21 @@ import { useTableControls } from '../../components/useTableControls';
 import CompanyDrawer from '../companies/CompanyDrawer';
 import MessageDrawer from './MessageDrawer';
 import FoldersRulesModal from './FoldersRulesModal';
-import type { MailMessage, MailboxFilter } from '../../api/types';
+import type { MailMessage, MailServerFolder, MailboxFilter } from '../../api/types';
 
 /**
- * Which folder the rail is showing. 'all' spans every folder, 'inbox' is the mail nothing
- * has filed, and a number is one folder — the three cases the API takes as (nothing),
- * unfiled=true and folderId.
+ * Which folder the rail is showing.
+ *
+ * <p>Four cases, because there are two kinds of folder and they are different axes. A
+ * {@code server} scope is a folder in the mailbox itself — where Zoho's own filters put the
+ * message on arrival. A number is one of the app's folders, and 'inbox' is the mail no app
+ * rule has claimed; neither of those says anything about where the mail server keeps it.
+ * 'all' spans the lot. The API takes them as imapFolder, folderId, unfiled=true and nothing.
+ *
+ * <p>The string cases are kept as bare strings rather than tidied into one shape because
+ * they are what is already in localStorage from before the server folders existed.
  */
-type Scope = 'all' | 'inbox' | number;
+type Scope = 'all' | 'inbox' | number | { server: string };
 
 interface Filters {
   search: string;
@@ -58,7 +73,13 @@ interface Filters {
   scope: Scope;
 }
 
-const DEFAULTS: Filters = { search: '', searchBody: false, unreadOnly: false, scope: 'inbox' };
+/** Opens on the mail server's Inbox — the same thing the mail client beside it opens on. */
+const DEFAULTS: Filters = {
+  search: '',
+  searchBody: false,
+  unreadOnly: false,
+  scope: { server: 'INBOX' },
+};
 
 /**
  * One line, truncated. Mail rows carry addresses and quoted subjects with no spaces in
@@ -96,6 +117,7 @@ export default function MailboxPage() {
 
   const table = useTableControls({ size: 25, sort: 'receivedAt,desc' }, 'mailbox');
   const folders = useMailFolders();
+  const serverFolders = useMailServerFolders();
   const status = useMailboxStatus();
   const sync = useMailboxSync();
   const { setReadBulk, moveBulk } = useMailMessageMutations();
@@ -106,6 +128,7 @@ export default function MailboxPage() {
       searchBody: filters.searchBody || undefined,
       unfiled: filters.scope === 'inbox' ? true : undefined,
       folderId: typeof filters.scope === 'number' ? filters.scope : undefined,
+      imapFolder: serverScope(filters.scope),
       read: filters.unreadOnly ? false : undefined,
       page: table.state.page,
       size: table.state.size,
@@ -129,7 +152,22 @@ export default function MailboxPage() {
   const inbox = folderList.find((f) => f.id == null);
 
   // ---- the folder rail ----------------------------------------------------------------
-  const railItems = [
+  // Two sections, because there are two kinds of folder. The mailbox's own tree comes first:
+  // it is where a message actually is, and on a mailbox with server-side filters it is the
+  // only rail that accounts for every message. The app's folders sit below it as what this
+  // desk has filed on top.
+  /** Full name to the leaf the rail shows, so a row says "Handy" rather than "Brokers/Handy". */
+  const serverNames = useMemo(
+    () => new Map((serverFolders.data ?? []).map((f) => [f.fullName, f.displayName])),
+    [serverFolders.data],
+  );
+
+  const serverTree = useMemo(
+    () => toTree(serverFolders.data ?? []),
+    [serverFolders.data],
+  );
+
+  const appItems = [
     {
       key: 'all',
       icon: <MailOutlined />,
@@ -137,8 +175,10 @@ export default function MailboxPage() {
     },
     {
       key: 'inbox',
+      // Not "Inbox": there is a real one in the tree above now, and two rows meaning
+      // different things under the same name is worse than a plainer word for this one.
       icon: <InboxOutlined />,
-      label: <RailLabel name="Inbox" unread={inbox?.unread ?? 0} />,
+      label: <RailLabel name="Unfiled" unread={inbox?.unread ?? 0} />,
     },
     ...named.map((f) => ({
       key: String(f.id),
@@ -147,14 +187,12 @@ export default function MailboxPage() {
     })),
   ];
 
-  const scopeKey = filters.scope === 'all' || filters.scope === 'inbox'
-    ? filters.scope
-    : String(filters.scope);
+  const scopeKey = typeof filters.scope === 'object' ? null : String(filters.scope);
 
   // ---- bulk actions -------------------------------------------------------------------
   const moveMenu = {
     items: [
-      { key: 'inbox', icon: <InboxOutlined />, label: 'Back to Inbox' },
+      { key: 'inbox', icon: <InboxOutlined />, label: 'Take out of the folder' },
       ...(named.length ? [{ type: 'divider' as const }] : []),
       ...named.map((f) => ({ key: String(f.id), icon: <FolderOutlined />, label: f.name })),
     ],
@@ -164,8 +202,12 @@ export default function MailboxPage() {
         { ids: picked, folderId },
         {
           onSuccess: (moved) => {
-            const where = key === 'inbox' ? 'the Inbox' : named.find((f) => f.id === Number(key))?.name;
-            message.success(`Moved ${moved} message${moved === 1 ? '' : 's'} to ${where}`);
+            const where = named.find((f) => f.id === Number(key))?.name;
+            message.success(
+              key === 'inbox'
+                ? `Took ${moved} message${moved === 1 ? '' : 's'} out of their folder`
+                : `Moved ${moved} message${moved === 1 ? '' : 's'} to ${where}`,
+            );
             setPicked([]);
           },
         },
@@ -273,19 +315,34 @@ export default function MailboxPage() {
     },
     {
       title: 'Folder',
-      dataIndex: 'folderName',
-      width: 130,
-      // Only meaningful when looking across folders; inside one it would be the same word
-      // on every row.
-      hidden: filters.scope !== 'all',
-      render: (name: string | undefined, m) =>
-        name ? (
-          <Tag icon={<FolderOpenOutlined />} color={m.filedByRuleId ? 'geekblue' : 'default'}>
-            {name}
-          </Tag>
-        ) : (
-          <Tag icon={<InboxOutlined />}>Inbox</Tag>
-        ),
+      dataIndex: 'imapFolder',
+      width: 190,
+      // Both folders a message can be in, and they are different statements: the first is
+      // where the mail server keeps it, the second what this app has filed on top. The
+      // mailbox one is dropped while browsing that very folder, where it would be the same
+      // word on every row.
+      render: (_: string, m) => (
+        <Space size={4} wrap>
+          {m.imapFolder && serverScope(filters.scope) !== m.imapFolder && (
+            <Tooltip title={`In the mailbox: ${m.imapFolder}`}>
+              <Tag>{serverNames.get(m.imapFolder) ?? m.imapFolder}</Tag>
+            </Tooltip>
+          )}
+          {m.folderName && (
+            <Tooltip
+              title={
+                m.filedByRuleId
+                  ? "Filed here by one of this app's rules"
+                  : 'Filed here by hand, in this app'
+              }
+            >
+              <Tag icon={<FolderOpenOutlined />} color={m.filedByRuleId ? 'geekblue' : 'default'}>
+                {m.folderName}
+              </Tag>
+            </Tooltip>
+          )}
+        </Space>
+      ),
     },
     {
       title: 'Received',
@@ -308,17 +365,58 @@ export default function MailboxPage() {
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
         <Card
           size="small"
-          style={{ width: 230, flex: '0 0 230px' }}
+          style={{ width: 250, flex: '0 0 250px' }}
           styles={{ body: { padding: 0 } }}
         >
           <Menu
             mode="inline"
-            selectedKeys={[scopeKey]}
-            items={railItems}
+            selectedKeys={scopeKey ? [scopeKey] : []}
+            items={appItems.slice(0, 1)}
             style={{ borderInlineEnd: 0 }}
-            onClick={({ key }) =>
-              update({ scope: key === 'all' || key === 'inbox' ? key : Number(key) })
-            }
+            onClick={() => update({ scope: 'all' })}
+          />
+
+          <RailSection
+            title="In the mailbox"
+            hint="The folders as they are on the mail server, refreshed on every sync. This is
+                  where the mailbox's own filters put each message as it arrived — the app
+                  mirrors that and never moves anything on the server."
+          />
+          {serverFolders.isLoading ? (
+            <div style={{ padding: 12 }}>
+              <Skeleton active paragraph={{ rows: 4 }} title={false} />
+            </div>
+          ) : serverTree.length === 0 ? (
+            <Typography.Text type="secondary" style={{ display: 'block', padding: '4px 12px 10px' }}>
+              Not listed yet — they appear after the first sync.
+            </Typography.Text>
+          ) : (
+            <Tree
+              treeData={serverTree}
+              blockNode
+              defaultExpandAll
+              selectedKeys={typeof filters.scope === 'object' ? [filters.scope.server] : []}
+              onSelect={(keys) => {
+                // Clicking the selected row again would otherwise clear the scope and show
+                // nothing, which is not a state the rail can express.
+                if (keys.length) update({ scope: { server: String(keys[0]) } });
+              }}
+              style={{ padding: '0 8px 8px' }}
+            />
+          )}
+
+          <RailSection
+            title="Filed by this app"
+            hint="The app's own folders and the rules that fill them. They file a copy of the
+                  filing, so to speak: a message keeps sitting in the mailbox folder it
+                  arrived in, and nothing here is ever written back to the server."
+          />
+          <Menu
+            mode="inline"
+            selectedKeys={scopeKey && scopeKey !== 'all' ? [scopeKey] : []}
+            items={appItems.slice(1)}
+            style={{ borderInlineEnd: 0 }}
+            onClick={({ key }) => update({ scope: key === 'inbox' ? key : Number(key) })}
           />
           <div style={{ padding: 8, borderTop: '1px solid rgba(5,5,5,0.06)' }}>
             <Button
@@ -449,6 +547,128 @@ export default function MailboxPage() {
   );
 }
 
+/** The scope as the API's imapFolder parameter, and nothing at all when it is not one. */
+function serverScope(scope: Scope): string | undefined {
+  return typeof scope === 'object' ? scope.server : undefined;
+}
+
+/** A heading over a section of the rail, with the section's reason for existing behind it. */
+function RailSection({ title, hint }: { title: string; hint: string }) {
+  return (
+    <div style={{ padding: '10px 12px 4px', borderTop: '1px solid rgba(5,5,5,0.06)' }}>
+      <Tooltip title={hint}>
+        <Typography.Text type="secondary" style={{ fontSize: 11, letterSpacing: 0.4 }}>
+          {title.toUpperCase()}
+        </Typography.Text>
+      </Tooltip>
+    </div>
+  );
+}
+
+/**
+ * The icon for a server folder, taken from IMAP's SPECIAL-USE rather than from its name —
+ * the names are in whatever language the mailbox was set up in, and on this one the four
+ * system folders are Черновики, Отправленные, Спам and Корзина.
+ */
+function serverIcon(f: MailServerFolder) {
+  switch (f.specialUse) {
+    case 'INBOX':
+      return <InboxOutlined />;
+    case 'SENT':
+      return <SendOutlined />;
+    case 'DRAFTS':
+      return <EditOutlined />;
+    case 'JUNK':
+      return <StopOutlined />;
+    case 'TRASH':
+      return <DeleteOutlined />;
+    default:
+      return <FolderOutlined />;
+  }
+}
+
+/**
+ * The flat list the API returns, assembled into the tree the rail draws.
+ *
+ * Parents are matched by name, and a folder whose parent is missing from the list — an
+ * unselectable branch the server declined to report, say — is hoisted to the top rather than
+ * dropped. A folder that cannot be drawn is a folder whose mail cannot be reached.
+ */
+function toTree(folders: MailServerFolder[]) {
+  const byName = new Map(folders.map((f) => [f.fullName, f]));
+  const children = new Map<string, MailServerFolder[]>();
+  const roots: MailServerFolder[] = [];
+
+  for (const f of folders) {
+    const parent = f.parentName && byName.has(f.parentName) ? f.parentName : null;
+    if (parent) {
+      children.set(parent, [...(children.get(parent) ?? []), f]);
+    } else {
+      roots.push(f);
+    }
+  }
+
+  const node = (f: MailServerFolder): DataNode => ({
+    key: f.fullName,
+    // A folder that holds no mail of its own is a branch of the tree, not a place to look:
+    // letting it be picked would show an empty table and read as a folder that had lost its
+    // contents.
+    selectable: f.selectable,
+    icon: serverIcon(f),
+    title: <ServerRailLabel folder={f} />,
+    children: (children.get(f.fullName) ?? []).map(node),
+  });
+  return roots.map(node);
+}
+
+/**
+ * One server folder in the rail: its name, the unread badge, and — behind the tooltip — how
+ * much of it has actually been synced.
+ *
+ * The two numbers are worth keeping apart. The badge counts unread mail the app holds; the
+ * server's own count is what the folder holds in the mailbox. A first sync reaches back
+ * thirty days and drains a backlog over several polls, so "26 there, 18 here" is a normal
+ * state, and a rail that quietly showed only the second number would be lying by omission.
+ */
+function ServerRailLabel({ folder }: { folder: MailServerFolder }) {
+  const behind =
+    folder.serverTotal != null && folder.serverTotal > folder.total
+      ? folder.serverTotal - folder.total
+      : 0;
+
+  const hint = [
+    `${folder.total} synced${behind ? ` of ${folder.serverTotal} in the mailbox` : ''}`,
+    folder.lastStatus === 'FAILED' ? `Last sync failed: ${folder.lastError}` : null,
+    folder.lastSyncAt
+      ? `Last read ${dayjs(folder.lastSyncAt).format('YYYY-MM-DD HH:mm')}`
+      : 'Not read yet',
+    folder.present ? null : 'No longer on the server — kept for the mail already synced',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  return (
+    <Tooltip title={hint} mouseEnterDelay={0.4}>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+        <span
+          style={{
+            flex: 1,
+            width: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            textDecoration: folder.present ? undefined : 'line-through',
+          }}
+        >
+          {folder.displayName}
+        </span>
+        {folder.lastStatus === 'FAILED' && <Tag color="error">!</Tag>}
+        {folder.unread > 0 && <Badge count={folder.unread} size="small" overflowCount={999} />}
+      </span>
+    </Tooltip>
+  );
+}
+
 /** A folder name with its unread count — the badge is the only thing that draws the eye. */
 function RailLabel({ name, unread }: { name: string; unread: number }) {
   return (
@@ -539,7 +759,11 @@ function SyncBanner({
       message={
         <Space wrap size={4}>
           <Tag color="green">{status.username}</Tag>
-          <Tag>{status.folder}</Tag>
+          <Tooltip title="Every folder in the mailbox is mirrored; the rail on the left is that tree">
+            <Tag>
+              {status.folderCount} folder{status.folderCount === 1 ? '' : 's'}
+            </Tag>
+          </Tooltip>
           <span>
             {status.lastSyncAt
               ? `last fetched ${dayjs(status.lastSyncAt).format('YYYY-MM-DD HH:mm')} — ` +

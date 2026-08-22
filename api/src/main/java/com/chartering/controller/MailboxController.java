@@ -4,6 +4,7 @@ import com.chartering.config.MailboxProperties;
 import com.chartering.dto.MailLinkRequest;
 import com.chartering.dto.MailMessageDetailResponse;
 import com.chartering.dto.MailMessageResponse;
+import com.chartering.dto.MailServerFolderResponse;
 import com.chartering.dto.MailboxStatusResponse;
 import com.chartering.dto.PageResponse;
 import com.chartering.model.MailSyncState;
@@ -12,6 +13,7 @@ import com.chartering.repository.MailSyncStateRepository;
 import com.chartering.service.MailboxService;
 import com.chartering.service.MailboxService.MailboxFilter;
 import com.chartering.service.mail.ImapMailboxSyncService;
+import com.chartering.service.mail.MailServerFolderService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -27,6 +29,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 @RestController
@@ -39,6 +42,7 @@ public class MailboxController {
     private final ImapMailboxSyncService sync;
     private final MailSyncStateRepository syncState;
     private final MailMessageRepository messages;
+    private final MailServerFolderService serverFolders;
     private final MailboxProperties props;
 
     @GetMapping("/messages")
@@ -48,8 +52,9 @@ public class MailboxController {
                     + "match somewhere, but no term is tied to a particular field. "
                     + "searchBody=true additionally scans the message text — that is an "
                     + "unindexed scan of the largest columns in the table, which is why it is "
-                    + "opt-in rather than the default. Scope with folderId, or unfiled=true "
-                    + "for the Inbox (mail nothing has filed yet).")
+                    + "opt-in rather than the default. Scope with imapFolder for a folder on "
+                    + "the mail server, with folderId for one of the app's own, or with "
+                    + "unfiled=true for the mail no app rule has filed.")
     public ResponseEntity<PageResponse<MailMessageResponse>> search(
             @RequestParam(required = false) String search,
             @Parameter(description = "Also scan the message text. Slower, deliberately opt-in.")
@@ -57,6 +62,10 @@ public class MailboxController {
             @RequestParam(required = false) Long folderId,
             @Parameter(description = "true = the Inbox: mail no rule and no hand has filed")
             @RequestParam(required = false) Boolean unfiled,
+            @Parameter(description = "One folder on the mail server, and everything nested "
+                    + "under it — 'INBOX', 'DMARC Reports', 'Brokers/Handy'. A different axis "
+                    + "from folderId: the server files the message, the app's rules file on top.")
+            @RequestParam(required = false) String imapFolder,
             @RequestParam(required = false) Boolean read,
             @RequestParam(required = false) Long companyId,
             @Parameter(description = "false lists mail from senders that match no contact")
@@ -68,8 +77,8 @@ public class MailboxController {
             @PageableDefault(size = 25, sort = "receivedAt", direction = Sort.Direction.DESC)
             Pageable pageable) {
 
-        MailboxFilter filter = new MailboxFilter(search, searchBody, folderId, unfiled, read,
-                companyId, linked, receivedFrom, receivedTo);
+        MailboxFilter filter = new MailboxFilter(search, searchBody, folderId, unfiled,
+                imapFolder, read, companyId, linked, receivedFrom, receivedTo);
         return ResponseEntity.ok(mailbox.search(filter, pageable));
     }
 
@@ -144,6 +153,17 @@ public class MailboxController {
         return ResponseEntity.ok(mailbox.relinkAll());
     }
 
+    @GetMapping("/server-folders")
+    @Operation(summary = "The mail server's own folder tree, as last listed",
+            description = "A read-only mirror of the folders in the mailbox — the app never "
+                    + "creates, renames or deletes one. Each carries two pairs of counts: what "
+                    + "has been synced into the app, and what the server says the folder holds. "
+                    + "A folder the server has stopped listing keeps its row, marked not "
+                    + "present, because the mail synced out of it is still here.")
+    public ResponseEntity<List<MailServerFolderResponse>> serverFolders() {
+        return ResponseEntity.ok(serverFolders.listWithCounts());
+    }
+
     @GetMapping("/status")
     @Operation(summary = "Whether the mailbox is being read, and how the last sync went")
     public ResponseEntity<MailboxStatusResponse> status() {
@@ -160,21 +180,47 @@ public class MailboxController {
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(buildStatus());
     }
 
+    /**
+     * The banner's summary of a mailbox that is now read folder by folder.
+     *
+     * <p>Every folder keeps its own cursor and its own outcome, so the one line at the top of
+     * the tab has to say something true about all of them: the newest read of any folder, the
+     * totals across the pass, and FAILED the moment any single folder failed — named, because
+     * "the sync failed" without saying which folder is not actionable. The per-folder detail
+     * is on the rail, beside the folder it belongs to.
+     */
     private MailboxStatusResponse buildStatus() {
-        Optional<MailSyncState> state = syncState.findById(props.getFolder());
+        List<MailSyncState> states = syncState.findAll();
+
+        LocalDateTime lastSyncAt = states.stream()
+                .map(MailSyncState::getLastSyncAt)
+                .filter(Objects::nonNull)
+                .max(LocalDateTime::compareTo)
+                .orElse(null);
+        Optional<MailSyncState> failed = states.stream()
+                .filter(s -> MailSyncState.FAILED.equals(s.getLastStatus()))
+                .findFirst();
+        String status = failed.isPresent() ? MailSyncState.FAILED
+                : states.stream().anyMatch(s -> s.getLastStatus() != null) ? MailSyncState.OK
+                : null;
+        String error = failed
+                .map(s -> s.getImapFolder() + ": " + s.getLastError())
+                .orElse(null);
+
         return new MailboxStatusResponse(
                 props.isEnabled(),
                 sync.isConfigured(),
                 sync.missingSettings(),
                 props.getHost(),
                 props.getFolder(),
+                serverFolders.listWithCounts().size(),
                 props.getUsername(),
                 sync.isSyncing(),
-                state.map(MailSyncState::getLastSyncAt).orElse(null),
-                state.map(MailSyncState::getLastStatus).orElse(null),
-                state.map(MailSyncState::getLastError).orElse(null),
-                state.map(MailSyncState::getLastFetched).orElse(0),
-                state.map(MailSyncState::getLastStored).orElse(0),
+                lastSyncAt,
+                status,
+                error,
+                states.stream().mapToInt(MailSyncState::getLastFetched).sum(),
+                states.stream().mapToInt(MailSyncState::getLastStored).sum(),
                 props.getPollIntervalMs(),
                 messages.count(),
                 messages.countByReadFalse());

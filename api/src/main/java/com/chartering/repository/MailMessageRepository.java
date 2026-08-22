@@ -65,6 +65,17 @@ public interface MailMessageRepository
             """)
     List<Object[]> countByFolder();
 
+    /**
+     * The same two counts again, by the folder the mail server itself has the message in.
+     * Grouped on a plain column rather than a join: server folders are mirrored by name, and
+     * the name is what every message carries.
+     */
+    @Query("select m.imapFolder, count(m) from MailMessage m group by m.imapFolder")
+    List<Object[]> countByImapFolder();
+
+    @Query("select m.imapFolder, count(m) from MailMessage m where m.read = false group by m.imapFolder")
+    List<Object[]> countUnreadByImapFolder();
+
     long countByReadFalse();
 
     /**

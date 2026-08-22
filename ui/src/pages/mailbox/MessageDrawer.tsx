@@ -14,6 +14,7 @@ import {
 } from 'antd';
 import {
   BankOutlined,
+  CloudServerOutlined,
   DisconnectOutlined,
   FolderOutlined,
   InboxOutlined,
@@ -51,7 +52,7 @@ export default function MessageDrawer({ messageId, onClose, onOpenCompany }: Pro
 
   const moveMenu = {
     items: [
-      { key: 'inbox', icon: <InboxOutlined />, label: 'Back to Inbox' },
+      { key: 'inbox', icon: <InboxOutlined />, label: 'Take out of the folder' },
       ...(named.length ? [{ type: 'divider' as const }] : []),
       ...named.map((f) => ({ key: String(f.id), icon: <FolderOutlined />, label: f.name })),
     ],
@@ -63,7 +64,7 @@ export default function MessageDrawer({ messageId, onClose, onOpenCompany }: Pro
           onSuccess: () =>
             toast.success(
               key === 'inbox'
-                ? 'Moved back to the Inbox'
+                ? 'Taken out of its folder'
                 : `Filed into ${named.find((f) => f.id === Number(key))?.name}`,
             ),
         },
@@ -184,13 +185,23 @@ export default function MessageDrawer({ messageId, onClose, onOpenCompany }: Pro
               <Descriptions.Item label="Received">
                 <Space size={8} wrap>
                   <span>{dayjs(m.receivedAt).format('YYYY-MM-DD HH:mm')}</span>
+                  {/* Where the mail server keeps it — for mail the mailbox's own filters
+                      sorted on arrival, this is the only answer to "why did I not see it in
+                      the Inbox?". The app's own filing follows it, when there is any. */}
+                  {m.imapFolder && (
+                    <Tooltip title="The folder this is in on the mail server">
+                      <Tag icon={<CloudServerOutlined />}>{m.imapFolder}</Tag>
+                    </Tooltip>
+                  )}
                   {m.folderName ? (
                     <Tag color={m.filedByRuleId ? 'geekblue' : 'default'} icon={<FolderOutlined />}>
                       {m.folderName}
                       {m.filedByRuleId ? ' (by rule)' : ''}
                     </Tag>
                   ) : (
-                    <Tag icon={<InboxOutlined />}>Inbox</Tag>
+                    <Tooltip title="No rule of this app has filed it">
+                      <Tag icon={<InboxOutlined />}>Unfiled</Tag>
+                    </Tooltip>
                   )}
                 </Space>
               </Descriptions.Item>

@@ -76,10 +76,38 @@ public final class MailMessageSpecification {
         return cb.like(cb.lower(field), pattern);
     }
 
+    /**
+     * LIKE's own wildcards, escaped. Only the folder prefix below needs this — a folder
+     * called "Q_1" is a name, not a pattern for "Q" plus any character.
+     */
+    private static final char LIKE_ESCAPE = '!';
+
+    private static String escapeLike(String value) {
+        return value.replace("!", "!!").replace("%", "!%").replace("_", "!_");
+    }
+
     /** One app folder. Pair with {@link #unfiled} to mean the Inbox instead. */
     public static Specification<MailMessage> inFolder(Long folderId) {
         return (root, query, cb) -> folderId == null ? null
                 : cb.equal(root.get("folder").get("id"), folderId);
+    }
+
+    /**
+     * One folder on the mail server, and everything under it.
+     *
+     * <p>Descendants included because a folder with children is still a place mail sits:
+     * picking "Brokers" and being shown none of the mail in "Brokers/Handy" would read as an
+     * empty folder rather than as a narrow question. The prefix is the folder's own name plus
+     * the server's delimiter, so "Brokers" never catches "Brokerage".
+     */
+    public static Specification<MailMessage> inServerFolder(String fullName, String separator) {
+        return (root, query, cb) -> {
+            if (fullName == null || fullName.isBlank()) return null;
+            Predicate itself = cb.equal(root.get("imapFolder"), fullName);
+            if (separator == null || separator.isBlank()) return itself;
+            return cb.or(itself, cb.like(root.get("imapFolder"),
+                    escapeLike(fullName + separator) + "%", LIKE_ESCAPE));
+        };
     }
 
     /**

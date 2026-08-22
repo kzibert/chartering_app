@@ -17,6 +17,8 @@ public record MailMessageResponse(
         LocalDateTime receivedAt,
         boolean read,
         boolean hasAttachments,
+        /** The folder the mail server has it in — where the mailbox's own filters put it. */
+        String imapFolder,
         Long folderId,
         String folderName,
         /** Which rule filed it, when one did — the answer to "why is this in here?". */

@@ -16,6 +16,7 @@ import com.chartering.repository.ContactRepository;
 import com.chartering.repository.MailFolderRepository;
 import com.chartering.repository.MailMessageRepository;
 import com.chartering.repository.PersonRepository;
+import com.chartering.service.mail.MailServerFolderService;
 import com.chartering.specification.MailMessageSpecification;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -55,6 +56,8 @@ public class MailboxService {
     private final CompanyRepository companies;
     private final PersonRepository people;
     private final ContactRepository contacts;
+    /** Only for the server's folder delimiter, and only when a server folder is filtered on. */
+    private final MailServerFolderService serverFolders;
     private final HtmlSanitizer sanitizer;
     private final DtoMapper mapper;
 
@@ -311,6 +314,9 @@ public class MailboxService {
                 MailMessageSpecification.matches(f.search(), f.includeBody()),
                 MailMessageSpecification.inFolder(f.folderId()),
                 MailMessageSpecification.unfiled(f.unfiled()),
+                MailMessageSpecification.inServerFolder(
+                        f.imapFolder(),
+                        f.imapFolder() == null ? null : serverFolders.separator()),
                 MailMessageSpecification.readEquals(f.read()),
                 MailMessageSpecification.companyIdEquals(f.companyId()),
                 MailMessageSpecification.hasCompany(f.linked()),
@@ -325,12 +331,17 @@ public class MailboxService {
      * @param includeBody also scan the message text — the expensive half, off by default
      * @param folderId    one app folder
      * @param unfiled     true = the Inbox (nothing has filed it); pair with a null folderId
+     * @param imapFolder  one folder on the mail server, and everything nested under it. A
+     *                    different axis from the two above and combinable with them: the
+     *                    server decides where a message sits, the app's rules decide what is
+     *                    filed on top of that
      * @param read        read/unread
      * @param companyId   mail from one company
      * @param linked      true = attached to a company, false = the senders nobody knows yet
      */
     public record MailboxFilter(
-            String search, boolean includeBody, Long folderId, Boolean unfiled, Boolean read,
-            Long companyId, Boolean linked, LocalDateTime receivedFrom, LocalDateTime receivedTo) {
+            String search, boolean includeBody, Long folderId, Boolean unfiled, String imapFolder,
+            Boolean read, Long companyId, Boolean linked,
+            LocalDateTime receivedFrom, LocalDateTime receivedTo) {
     }
 }

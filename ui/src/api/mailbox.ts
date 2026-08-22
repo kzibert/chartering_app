@@ -5,6 +5,7 @@ import type {
   MailLinkRequest,
   MailMessage,
   MailMessageDetail,
+  MailServerFolder,
   MailRule,
   MailRuleRequest,
   MailRuleRun,
@@ -57,6 +58,10 @@ export const mailboxApi = {
 
   /** Re-resolve every automatic link against the contacts as they are now. */
   relink: () => client.post<number>('/mailbox/relink').then((r) => r.data),
+
+  /** The mail server's own folder tree, as the last sync listed it. Read-only. */
+  serverFolders: () =>
+    client.get<MailServerFolder[]>('/mailbox/server-folders').then((r) => r.data),
 
   status: () => client.get<MailboxStatus>('/mailbox/status').then((r) => r.data),
 

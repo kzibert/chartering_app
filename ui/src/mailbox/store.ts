@@ -25,6 +25,7 @@ export const mailboxKeys = {
   messages: (filter: MailboxFilter) => [...KEY, 'messages', filter] as const,
   message: (id: number) => [...KEY, 'message', id] as const,
   folders: [...KEY, 'folders'] as const,
+  serverFolders: [...KEY, 'server-folders'] as const,
   rules: [...KEY, 'rules'] as const,
   status: [...KEY, 'status'] as const,
 };
@@ -89,6 +90,14 @@ export function useMailMessage(id?: number) {
 
 export const useMailFolders = () =>
   useQuery({ queryKey: mailboxKeys.folders, queryFn: mailFoldersApi.list });
+
+/**
+ * The mail server's own folders. A different axis from {@link useMailFolders}: that one is
+ * the app's filing, this one is where the mailbox itself keeps the message. Both hang off the
+ * same key prefix, so a sync refreshes the two rails together.
+ */
+export const useMailServerFolders = () =>
+  useQuery({ queryKey: mailboxKeys.serverFolders, queryFn: mailboxApi.serverFolders });
 
 export const useMailRules = () =>
   useQuery({ queryKey: mailboxKeys.rules, queryFn: mailRulesApi.list });

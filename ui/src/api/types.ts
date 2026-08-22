@@ -703,6 +703,8 @@ export interface MailMessage {
   folderName?: string;
   /** Set when a rule filed it — the answer to "why is this in here?". */
   filedByRuleId?: number;
+  /** The folder the mail server has it in — where Zoho's own filters put it. */
+  imapFolder?: string;
   companyId?: number;
   companyName?: string;
   personId?: number;
@@ -731,6 +733,35 @@ export interface MailFolder {
   sortOrder: number;
   total: number;
   unread: number;
+}
+
+/**
+ * One folder of the mail server's own tree — a read-only mirror. Flat, with `parentName`
+ * pointing at the row above, which the rail assembles into a tree.
+ *
+ * Two pairs of counts, because they answer different questions: `total`/`unread` is the mail
+ * synced into the app, `serverTotal`/`serverUnseen` is what the server says the folder holds.
+ * A folder showing 26 there and nothing here has not been reached yet, which otherwise looks
+ * exactly like an empty folder.
+ */
+export interface MailServerFolder {
+  /** The IMAP full name — 'INBOX', 'DMARC Reports', 'Brokers/Handy'. The identity. */
+  fullName: string;
+  displayName: string;
+  parentName?: string;
+  specialUse?: 'INBOX' | 'SENT' | 'DRAFTS' | 'JUNK' | 'TRASH' | 'ARCHIVE';
+  /** False for a branch of the tree that holds no mail of its own. */
+  selectable: boolean;
+  /** Still listed by the server. False for a folder deleted in Zoho since. */
+  present: boolean;
+  sortOrder: number;
+  total: number;
+  unread: number;
+  serverTotal?: number;
+  serverUnseen?: number;
+  lastSyncAt?: string;
+  lastStatus?: 'OK' | 'FAILED';
+  lastError?: string;
 }
 
 export interface MailFolderRequest {
@@ -791,7 +822,9 @@ export interface MailboxStatus {
   /** What is missing, named as the environment variable that supplies it. */
   missingSettings: string[];
   host?: string;
+  /** The folder read first on every poll. Every folder in the mailbox is mirrored. */
   folder?: string;
+  folderCount: number;
   username?: string;
   syncing: boolean;
   lastSyncAt?: string;
@@ -810,8 +843,10 @@ export interface MailboxFilter extends PageParams {
   /** Also scan the message text. Unindexed, hence opt-in — see the Mailbox tab. */
   searchBody?: boolean;
   folderId?: number;
-  /** true = the Inbox (mail nothing has filed). */
+  /** true = mail no app rule or hand has filed. */
   unfiled?: boolean;
+  /** One folder on the mail server, and everything nested under it. */
+  imapFolder?: string;
   read?: boolean;
   companyId?: number;
   linked?: boolean;

@@ -31,8 +31,13 @@ import java.util.Set;
  * <h2>What happens to each message on the way in</h2>
  * <ol>
  *   <li><b>Dedupe</b> by Message-ID, falling back to the IMAP UID for the rare message that
- *       has none. A message already stored is skipped entirely — not updated — because
- *       everything the app owns about it (read, folder, links) would be what got overwritten.</li>
+ *       has none. A message already stored keeps everything the app owns about it — read,
+ *       app folder, links — because that is precisely what a re-fetch would otherwise
+ *       overwrite. The one thing taken from the second sighting is <em>where the server has
+ *       it now</em>: an IMAP move is a copy into the target folder and a delete from the
+ *       source, so a message Zoho refiles turns up again under a new UID, and following it is
+ *       what keeps the mirrored folders honest instead of leaving the message showing in a
+ *       folder it left last week.</li>
  *   <li><b>Link</b> the sender to a contact, and through it to a company and person.</li>
  *   <li><b>File</b> it by the rules, which may also mark it read.</li>
  * </ol>
@@ -82,9 +87,13 @@ public class MailIngestService {
         int stored = 0;
         int skipped = 0;
         int filed = 0;
+        int moved = 0;
         for (Incoming in : batch) {
             if (isDuplicate(in, alreadyStored)) {
                 skipped++;
+                if (followMove(in)) {
+                    moved++;
+                }
                 continue;
             }
             MailMessage m = toEntity(in);
@@ -101,10 +110,38 @@ public class MailIngestService {
             }
         }
         if (stored > 0 || skipped > 0) {
-            log.info("Mailbox sync: stored {}, skipped {} already known, {} filed by rules",
-                    stored, skipped, filed);
+            log.info("Mailbox sync: stored {}, skipped {} already known, {} filed by rules, "
+                    + "{} followed to another server folder", stored, skipped, filed, moved);
         }
         return new Result(stored, skipped, filed);
+    }
+
+    /**
+     * The message is already stored — but the server has just handed it over from a different
+     * folder, which means it was moved there. Only the server's own identity is updated:
+     * where it is, under which UID. Everything the app decided about it stays.
+     *
+     * @return whether this was in fact a move rather than a re-read of the same place
+     */
+    private boolean followMove(Incoming in) {
+        if (in.messageId() == null || in.messageId().isBlank()) {
+            // Identified by folder+UID rather than by Message-ID, so "the same message in a
+            // different folder" is not a statement that can be made about it at all.
+            return false;
+        }
+        return messages.findByMessageId(in.messageId())
+                .filter(m -> !in.imapFolder().equals(m.getImapFolder()))
+                .map(m -> {
+                    log.info("Message \"{}\" has moved on the server: {} -> {}",
+                            m.getSubject(), m.getImapFolder(), in.imapFolder());
+                    m.setImapFolder(in.imapFolder());
+                    m.setImapUid(in.uid());
+                    m.setImapValidity(in.uidValidity());
+                    m.setSyncedAt(LocalDateTime.now());
+                    messages.save(m);
+                    return true;
+                })
+                .orElse(false);
     }
 
     /** One query for the batch's Message-IDs rather than one existence check per message. */

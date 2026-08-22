@@ -68,6 +68,7 @@ db/
   whatsapp_flag.sql      # idempotent patch: "this number is on WhatsApp" flag (baked in)
   app_settings.sql       # idempotent patch: runtime settings edited from the Settings tab (baked in)
   mailbox.sql            # idempotent patch: synced mail, its folders and its filing rules (baked in)
+  mailbox_server_folders.sql # idempotent patch: the mail server's own folder tree, mirrored
   circulation_provider.sql # idempotent patch: which flow each message left by (baked in)
   chartering.dump        # same data in pg_restore (-Fc) format, for manual restore
   schema.sql             # DDL reference (the dump already contains the schema)
@@ -611,10 +612,33 @@ IMAP into Postgres, attached to the company it came from, and filed into folders
 the desk writes. It is what lets "who is this from?" be answered by the app that already
 knows every broker, rather than by a mail client that knows none of them.
 
-**The mailbox is opened read-only.** The app sets no flags, moves nothing and deletes
-nothing on the server. Folders and rules here are the app's own, stored in `mail_folders` /
-`mail_rules` — so filing a message moves a row in this database, and the worst a mis-written
-rule can do is rearrange that table. Your real mailbox is exactly as you left it.
+**The mailbox is opened read-only.** The app sets no flags, moves nothing, deletes nothing,
+and creates, renames or removes no folder. Your real mailbox is exactly as you left it.
+
+### Two kinds of folder, side by side
+
+The rail has two sections, because a message is in two places at once and they are different
+statements.
+
+**In the mailbox** is the server's own folder tree, mirrored into `mail_server_folders` on
+every sync and shown with the names and nesting the mail client shows — including folders
+whose names are not in English, which is why the system ones are matched by IMAP SPECIAL-USE
+(`\Sent`, `\Trash`, …) rather than by name. Every folder is synced, so a message appears
+where the mailbox's own filters put it on arrival. **That is what shows the filtering rules
+you have set up in Zoho**: their text is not readable over IMAP by any client, but their
+effect — the folder each message landed in — is exactly what the rail draws. Mail that a
+server-side filter diverts never reaches INBOX, so before this the app could not see it at
+all.
+
+**Filed by this app** is the app's own folders and rules, in `mail_folders` / `mail_rules`.
+They file *on top of* the server's filing: a message keeps sitting in the mailbox folder it
+arrived in, and filing it here moves a row in this database. The worst a mis-written rule can
+do is rearrange that table.
+
+A message re-sighted in a different server folder is followed rather than duplicated: an IMAP
+move is a copy plus a delete, so a message Zoho refiles turns up again under a new UID, and
+the mirror follows it. Everything the app owns about it — read, app folder, company link —
+stays.
 
 ```bash
 # in .env  (see .env.example for the full annotated block)
@@ -635,13 +659,21 @@ Accounts.
 
 ### What is synced, and how much
 
-A poller wakes every `IMAP_POLL_MS` (default 5 min) and asks for what arrived above the last
-IMAP UID it recorded. Two bounds keep it honest:
+A poller wakes every `IMAP_POLL_MS` (default 5 min), lists the folders, and asks each for what
+arrived above the last IMAP UID recorded **for that folder** — every folder keeps its own
+cursor and its own outcome in `mail_sync_state`. Three bounds keep it honest:
 
 | | |
 |---|---|
-| **First sync** | no cursor to resume from, so it takes the newest `IMAP_MAX_PER_POLL` messages and keeps those inside `IMAP_INITIAL_DAYS` (default 30). Pointing the app at fifteen years of mail must not mean downloading fifteen years of mail. |
-| **Every sync** | capped at `IMAP_MAX_PER_POLL` (default 200), **oldest first**. A backlog drains over several polls in arrival order, so the cursor only moves forward and an interrupted catch-up resumes where it stopped. |
+| **First sync** | of a folder there is no cursor to resume from, so it takes the newest messages in it and keeps those inside `IMAP_INITIAL_DAYS` (default 30). Pointing the app at fifteen years of mail must not mean downloading fifteen years of mail. |
+| **Every sync** | capped at `IMAP_MAX_PER_POLL` (default 200) **across all folders together**, **oldest first**. A backlog drains over several polls in arrival order, so each cursor only moves forward and an interrupted catch-up resumes where it stopped. |
+| **The order** | `IMAP_FOLDER` first (it is where mail arrives and what the tab opens on), then whichever folder was read longest ago. A busy folder therefore cannot starve the rest, and no rotation state is needed — the sync times already say whose turn it is. |
+
+A folder that fails is recorded as failed against itself, with the error on its own rail row,
+and the loop moves on: one folder the server will not open must not cost the poll every folder
+behind it. Empty folders are skipped without being opened. Each folder's rail tooltip carries
+both numbers — what the server says it holds, and how much of it is synced — so a folder still
+draining a backlog cannot be mistaken for an empty one.
 
 Headers, both body parts and the *names* of attachments are stored; the attachment files
 themselves are not. Deduplication is by `Message-ID`, which is the only identifier that
