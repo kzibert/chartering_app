@@ -28,7 +28,7 @@ services:
       # an empty database here and the api service fills it: Flyway runs V1 (schema)
       # and V2 (reference data) on startup. That is the whole reason the mount is gone
       # - while an init script also built the schema there were two sources of truth
-      # for it, and they drifted. See db/MIGRATIONS.md.
+      # for it, and they drifted. See the README.
       #
       # Consequence worth knowing: `docker compose up -d db` on a fresh volume leaves
       # an empty database, because the thing that populates it is the api container.
@@ -48,7 +48,7 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: docker
       # Where the database is. Set DB_URL in .env to point this container at a managed
-      # Postgres instead of the db service below; db/CLOUD.md is the walkthrough.
+      # Postgres instead of the db service below; the README is the walkthrough.
       #
       # A cloud URL needs TLS, which for pgjdbc is a query parameter on the url itself:
       #   DB_URL=jdbc:postgresql://HOST/DB?sslmode=require

@@ -15,7 +15,8 @@ The UI's nginx reverse-proxies `/api` → the `api` service, which talks to the 
 The schema is owned by **Flyway**, which runs the migrations in
 `api/src/main/resources/db/migration/` on api startup — before Hibernate, whose
 `ddl-auto=validate` is left on as a second opinion rather than as the mechanism. Changing
-the schema means adding a numbered SQL file: **[db/MIGRATIONS.md](db/MIGRATIONS.md)**.
+the schema means adding a numbered SQL file beside `V1__baseline_schema.sql`; see
+[Changing the schema](#changing-the-schema) below.
 
 ## Quick start
 
@@ -37,8 +38,7 @@ run and applies only what is new.
 **It builds the schema, not the data.** A fresh clone comes up with every table present and
 every table empty — no vessels, no companies, no contacts. That is deliberate: this repo
 carries code, schema and infrastructure, and no copy of anybody's database. Data arrives from
-a backup you restore yourself, which is what `backup-db.bat` produces — see
-[db/CLOUD.md](db/CLOUD.md).
+a backup you restore yourself (see [Backing up](#backing-up-and-getting-data-into-a-fresh-environment)).
 
 `docker compose up -d db` on its own leaves the database empty in a second sense: it is the
 api service that runs the migrations, so bring up the stack rather than just the database.
@@ -69,11 +69,7 @@ docker-compose.yml       # db + api + ui (compose project "chartering")
 api/                     # Spring Boot backend, package com.chartering (multi-stage Dockerfile)
   src/main/resources/db/migration/     # THE SCHEMA. Flyway migrations, applied on api startup
     V1__baseline_schema.sql            #   23 tables, 3 views, 49 indexes, pg_trgm - no data
-db/
-  MIGRATIONS.md          # how to change the schema: writing, running, adopting, recovering
-  CLOUD.md               # step-by-step move of the database onto a hosted Postgres
-  legacy-patches/        # the hand-applied .sql patches from before Flyway - reading only
-db-migrate.bat           # flyway info / migrate / validate / repair against the compose DB
+(no db/ folder: this repo carries no database, no dumps and no operational runbooks)
 ui/                      # React SPA (multi-stage: node build -> nginx)
 logs/                    # campaign send log, bind-mounted from the api container (gitignored)
 ```
@@ -220,7 +216,7 @@ allows, the plan has outgrown the config and the server says so in the log, once
 Brevo is asked at most twice every 30 seconds however hard the tab polls; a reporting call that
 cannot reach Brevo shows the reason and leaves the mailbox half of the figure untouched.
 
-Which flow each message left by is recorded **per recipient**, not per run (`db/legacy-patches/circulation_provider.sql`).
+Which flow each message left by is recorded **per recipient**, not per run.
 A circulation paused under the mailbox flow and resumed after the switch genuinely left by two
 routes, and a run-level column would have to lie about one half of it. Rows that predate the
 column are backfilled `SMTP`, because that was the only flow there was.
@@ -248,11 +244,11 @@ URLs before storage; mail clients drop these anyway, and their presence hurts sp
 
 Both tables are in `V1__baseline_schema.sql`, so a fresh `docker compose up` has them —
 empty, like everything else. The original patch that introduced them, and the reasoning
-behind their shape, is kept in `db/legacy-patches/email_templates.sql`.
+behind their shape, is in the commit that introduced them.
 
 ### Circulation lists
 
-Recipients live in **circulation lists**, stored in Postgres (`db/legacy-patches/circulations.sql`). There is
+Recipients live in **circulation lists**, stored in Postgres. There is
 one unnamed **current list** — what the Circulars tab sends to, and what every other tab adds
 into by default — plus any number of **saved lists** prepared in advance. Building the current
 list lives entirely on this tab; the Circulars tab only sends it, so there is one place to look
@@ -306,7 +302,7 @@ Two things used to make the shape unusable in practice, and both are fixed:
 
 That general fallback is still the **default**, and deliberately: an address for a desk should open
 generally unless somebody says different. `contacts.greeting_name`
-(`db/legacy-patches/company_contact_greeting.sql`) is how they say different — "Chartering Team", "Operations", or
+is how they say different — "Chartering Team", "Operations", or
 whoever actually reads the inbox. The *Greeting* field on the contact form sets it, and the
 contact row shows what will be used, including the `Sirs` a blank one resolves to, so reading a row
 never requires knowing that an absent field means something.
@@ -389,7 +385,7 @@ Two flags do that, and they mean different things:
 | **not working** | the mailbox is dead — it bounced, or the account is gone | unusable for anything |
 | **not for circ** | it works, it just must never be bulk-mailed | still the right one to write to by hand |
 
-`not for circ` (`db/legacy-patches/no_circ_flag.sql`) is for an `accounts@` or `ops@` inbox, or a broker who asked
+`not for circ` is for an `accounts@` or `ops@` inbox, or a broker who asked
 to come off the circular. Without it the only way to achieve that was to mark a live address dead,
 which loses real information: the address stops being offered anywhere, and nobody later can tell a
 bounced mailbox from a deliberate exclusion.
@@ -402,7 +398,7 @@ A third exclusion sits on the **person** rather than on any address:
 | **not for circ** | the contact | it works, it just must never be bulk-mailed |
 | **left the company** | the *person* | they no longer work there, so **every** address of theirs is both |
 
-`left the company` (`db/legacy-patches/person_left_company.sql`, the `left` button on the People tab, in the
+`left the company` (the `left` button on the People tab, in the
 company drawer and on the person drawer) is the one control that reaches all of somebody's
 addresses at once — which is the point of it. Departure is a fact about the person: flagging their
 five addresses individually is the same statement made five times, and the sixth address added next
@@ -493,12 +489,12 @@ Endpoints: `POST /api/v1/campaigns/current/pause`, `GET /campaigns/resumable`,
 ### Settings
 
 The **Settings** tab (bottom of the sidebar) edits the circulation knobs at runtime, stored in
-`app_settings` (`db/legacy-patches/app_settings.sql`):
+`app_settings`:
 
 | Setting | Default (SMTP) | Default (Brevo) |
 |---|---|---|
 | Use Brevo for circs | off | — |
-| From name / address | `Maritella Chartering Desk` / `desk@example.com` | same |
+| From name / address | `Maritella Chartering Desk` / the address in `MAIL_FROM` | same |
 | SMTP host / port | `smtp.zoho.eu` / `465` | unused |
 | Gap between messages (random within the range) | 3–10s | 0.2–0.8s |
 | Max recipients per run | 200 | 500 |
@@ -572,7 +568,7 @@ popup shows the number exactly as it will be dialled, opens `https://wa.me/<numb
 in a new tab, and then asks what you saw. WhatsApp itself gives the answer: a chat opens, or it
 tells you the number is not registered.
 
-**Remembering it.** Saying yes sets `has_whatsapp` on the contact (`db/legacy-patches/whatsapp_flag.sql`), and
+**Remembering it.** Saying yes sets `has_whatsapp` on the contact, and
 from then on the number carries a green WhatsApp icon linking straight to that chat, with the same
 greeting prefilled. That link is *not* behind the Edit toggle — messaging someone is reading the
 contact, not editing it, and being able to reach them from wherever the number happens to be
@@ -757,38 +753,81 @@ Add a numbered SQL file to `api/src/main/resources/db/migration/` and restart th
 
 ```bash
 docker compose up -d --build api      # Flyway applies anything pending on startup
-db-migrate.bat                        # or just read the history first
 ```
 
-Never edit a migration that has already run — Flyway checksums them, and an edited file
-stops every database that ran it from starting. Corrections are the next migration.
-**[db/MIGRATIONS.md](db/MIGRATIONS.md)** covers writing one, adopting an existing database,
-the line-ending trap in `V2`, and what to do when `validate` fails.
+Rules worth keeping to:
+
+- **Two underscores** between version and description (`V2__add_scrubber_flag.sql`), or
+  Flyway will not see the file.
+- **Schema-qualify** (`public.vessels`) — migrations run on whatever `search_path` the
+  connection happens to have.
+- **Never edit a migration that has already run.** Flyway checksums them, and an edited file
+  stops every database that ran it from starting. Corrections are the next migration; there
+  is no undo in Flyway Community, so the safety net is a backup taken beforehand.
+- **`api/src/main/resources/db/migration/.gitattributes` marks these `-text`** and must stay:
+  a rewritten line ending is a changed checksum, and an app that will not start in whichever
+  environment did not apply it first.
+- If `ddl-auto: validate` refuses to start the app and names a column, an entity changed
+  without a migration. Write the migration.
 
 ## Backing up, and getting data into a fresh environment
 
 Migrations version *structure*; they are not a backup, and this repo deliberately holds no
-copy of the data. Dumps are taken by **`backup-db.bat`**, which lives **outside the
-checkout** — with its credentials and its output beside it, none of it version-controlled.
-[db/CLOUD.md](db/CLOUD.md) documents what it does and where it lives.
+copy of the data. Dumps are taken **by hand, from outside this checkout** — the script that
+does it lives with its credentials and its output in a folder that is not version-controlled,
+so that a backup never sits on the same disk as the repo that describes it.
 
-To populate a fresh environment, restore one of its dumps into the empty database the stack
-just built:
+To populate a fresh environment — local or hosted — restore a dump into the empty database
+the stack just built:
 
 ```bash
 pg_restore --no-owner --no-privileges -d TARGET_URL chartering-full-YYYYMMDD-HHMMSS.dump
 ```
 
-A dump taken that way brings its own `flyway_schema_history`, so it lands knowing which
-migrations it has run and picks up from there rather than being rebuilt.
+A dump carries its own `flyway_schema_history`, so it lands knowing which migrations it has
+run and picks up from there rather than being rebuilt.
+
+Two things that bite when taking one:
+
+- **`pg_dump` refuses to read a server newer than itself**, and leaves a zero-byte file when
+  it does — which anything checking "did a file appear?" will read as success. Use a client
+  at least the server's major version; a throwaway `postgres:N-alpine` container is the
+  easiest way and needs nothing installed.
+- **Check the result before trusting it.** `pg_restore -l` on the archive should list table
+  data. A dump that exists is not the same as a dump that restores.
 
 ## Running against a hosted database
 
 The API's connection comes from `DB_URL` / `DB_USER` / `DB_PASSWORD`, which default to the
 `db` container. Point them at a managed Postgres and nothing else changes — no code, no
-migrations, no rebuild beyond recreating the api container. **[db/CLOUD.md](db/CLOUD.md)**
-walks the whole thing: picking a provider, getting your data across, verifying it arrived,
-the one line that is the actual cutover, and how to get back.
+migrations, no rebuild beyond recreating the api container:
+
+```bash
+# in .env
+DB_URL=jdbc:postgresql://HOST/DATABASE?sslmode=require
+DB_USER=...
+DB_PASSWORD=...
+```
+
+That is a **JDBC** url, not the `postgresql://user:pass@host/db` string a provider hands you:
+swap the scheme, and move the credentials into the two lines below it. TLS is not optional on
+a hosted database, and for pgjdbc it rides on the url as `?sslmode=require`.
+
+On a serverless provider that meters compute, add the pool settings that let the database
+sleep — an idle pool keeps it awake around the clock:
+
+```bash
+DB_POOL_MAX=5
+DB_POOL_MIN_IDLE=0
+DB_POOL_IDLE_TIMEOUT_MS=30000
+```
+
+The cost is a cold start on the first query after a quiet spell. Worth pairing with a longer
+`IMAP_POLL_MS`, since a five-minute poll wakes the database twelve times an hour by itself.
+
+The database still has to exist and have `pg_trgm` available before the app connects —
+`CREATE EXTENSION IF NOT EXISTS pg_trgm;` once, as an admin, since managed providers often
+withhold that right from the application role.
 
 Note that the backup script dumps whatever it is pointed at, which after a cutover is the
 hosted database — not the local container, which by then is a stale copy.

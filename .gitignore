@@ -20,7 +20,7 @@ logs/
 # This repo holds code, schema and infrastructure. It does not hold a copy of the
 # data: the history was rewritten on 2026-08-22 to remove the dumps it used to
 # carry, and these rules are what stop them coming back. Dumps are taken with
-# backup-db.bat, which lives outside the checkout - see db/CLOUD.md.
+# a script that lives outside the checkout, along with its credentials.
 #
 # Deliberately broad, and deliberately by extension rather than by path: the
 # failure this guards against is someone dropping a dump into a folder nobody

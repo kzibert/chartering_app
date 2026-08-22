@@ -91,7 +91,6 @@
 				The same migrations, driven from the command line instead of from app
 				startup: mvn flyway:info to read the history, flyway:validate to check
 				this checkout against a database, flyway:repair after a failed migration.
-				db-migrate.bat in the repo root wraps these for the compose stack.
 
 				Points at the dev profile's database by default - localhost:5433, the port
 				compose publishes - and every field is overridable, so the same commands

@@ -6,7 +6,7 @@ spring:
   # Flyway owns the schema. It runs on startup, before Hibernate is given the
   # DataSource, so by the time validate below has an opinion the database is
   # already at the newest migration this build carries. Adding a column is a new
-  # file in db/migration and a restart - see db/MIGRATIONS.md.
+  # file in db/migration and a restart - see the README.
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -162,7 +162,7 @@ spring:
     activate:
       on-profile: docker
   # The compose default is the db service beside this container. Point DB_URL at a
-  # managed Postgres and nothing else here changes - see db/CLOUD.md. Credentials are
+  # managed Postgres and nothing else here changes - see the README. Credentials are
   # read from the environment rather than written here so that .env is the only place
   # they live; the note at the top of .env.example used to say "update that profile
   # too", and this is what removes the need.
@@ -177,7 +177,7 @@ spring:
     # A serverless provider wants the opposite: DB_POOL_MIN_IDLE=0 with a short idle
     # timeout lets the pool drain to nothing, which is what allows the database to
     # suspend and is how a free tier metered on compute hours stays free. The cost is a
-    # cold start on the first query after a quiet spell. See db/CLOUD.md.
+    # cold start on the first query after a quiet spell. See the README.
     hikari:
       maximum-pool-size: ${DB_POOL_MAX:10}
       minimum-idle: ${DB_POOL_MIN_IDLE:10}

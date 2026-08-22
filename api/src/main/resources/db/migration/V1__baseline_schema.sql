@@ -5,18 +5,16 @@
 -- indexes, 11 sequences, the foreign keys between them, and the pg_trgm
 -- extension the name searches need. No data - that is V2.
 --
--- This file is where the schema now lives. Before Flyway it lived in a 1.9 MB
+-- This file is where the schema lives. Before Flyway it lived in a 1.9 MB
 -- pg_dump that Postgres ran on first init, with a folder of hand-applied
 -- patches beside it that had to be remembered and kept in step; the last one
 -- was not, and a fresh volume built a database the API refused to validate
 -- against. Generated from the live database on 2026-08-22 (PostgreSQL 16.13),
--- which is why it already carries every one of those patches inline. The
--- patches themselves are kept, unrunnable and for reading only, in
--- db/legacy-patches/.
+-- which is why it already carries every one of those patches inline.
 --
--- Never edit this file. It has run, and Flyway records its checksum; changing
--- a byte makes every existing database fail validation at startup. Schema
--- changes are new V-numbered files beside it - see db/MIGRATIONS.md.
+-- Never edit this file once it has run anywhere: Flyway records its checksum,
+-- and changing a byte makes that database fail validation at startup. Schema
+-- changes are new V-numbered files beside it - see the README.
 --
 -- Rewritten out of pg_dump --schema-only rather than used raw: the psql
 -- \restrict / \unrestrict meta-commands it emits are not SQL and Flyway runs
