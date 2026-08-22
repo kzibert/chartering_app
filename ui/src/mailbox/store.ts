@@ -6,6 +6,7 @@ import type {
   MailLinkRequest,
   MailRuleRequest,
   MailboxFilter,
+  MailboxScope,
 } from '../api/types';
 
 /**
@@ -127,6 +128,11 @@ export function useMailMessageMutations() {
     mutationFn: (v: { ids: number[]; read: boolean }) => mailboxApi.setReadBulk(v.ids, v.read),
     onSuccess: invalidate,
   });
+  /** The whole current view at once, rather than a list of ids the tab would have to page for. */
+  const markAllRead = useMutation({
+    mutationFn: (scope: MailboxScope) => mailboxApi.markAllRead(scope),
+    onSuccess: invalidate,
+  });
   const move = useMutation({
     mutationFn: (v: { id: number; folderId?: number }) => mailboxApi.move(v.id, v.folderId),
     onSuccess: invalidate,
@@ -148,7 +154,7 @@ export function useMailMessageMutations() {
   });
   const relink = useMutation({ mutationFn: mailboxApi.relink, onSuccess: invalidate });
 
-  return { setRead, setReadBulk, move, moveBulk, link, unlink, relink };
+  return { setRead, setReadBulk, markAllRead, move, moveBulk, link, unlink, relink };
 }
 
 export function useMailFolderMutations() {

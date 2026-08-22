@@ -852,6 +852,17 @@ export interface MailboxFilter extends PageParams {
   linked?: boolean;
 }
 
+/**
+ * Which mail a whole-view action applies to: the folder rail's selection and the search box,
+ * without the paging or the read/unread narrowing. It is the filter minus the parts that
+ * only decide what is on screen right now, which is what makes "mark all read" mean the same
+ * thing on page one as on page four.
+ */
+export type MailboxScope = Pick<
+  MailboxFilter,
+  'search' | 'searchBody' | 'folderId' | 'unfiled' | 'imapFolder' | 'companyId'
+>;
+
 export interface MailLinkRequest {
   companyId?: number;
   personId?: number;

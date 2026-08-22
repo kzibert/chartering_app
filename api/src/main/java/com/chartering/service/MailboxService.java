@@ -108,6 +108,28 @@ public class MailboxService {
         return found.size();
     }
 
+    /**
+     * Marks read every unread message the filter matches, and returns how many that was.
+     *
+     * <p>Scoped by the same filter the list is showing rather than sweeping the whole
+     * mailbox, because that is the only version of the action anyone can check before
+     * clicking it: what it will mark is what is on the screen. "All mail" on the rail with
+     * an empty search box is still available, and is then the whole thing.
+     *
+     * <p>The unread predicate is added here rather than trusted from the caller, so the
+     * count returned is messages actually changed and the tab's "Unread only" checkbox
+     * cannot turn this into a narrower action than the button says.
+     */
+    @Transactional
+    public int markAllRead(MailboxFilter f) {
+        Specification<MailMessage> spec = Specification.allOf(
+                buildSpec(f), MailMessageSpecification.readEquals(false));
+        List<MailMessage> unread = messages.findAll(spec);
+        unread.forEach(m -> m.setRead(true));
+        messages.saveAll(unread);
+        return unread.size();
+    }
+
     // ---------------------------------------------------------------- filing
 
     /**

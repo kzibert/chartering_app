@@ -10,6 +10,7 @@ import type {
   MailRuleRequest,
   MailRuleRun,
   MailboxFilter,
+  MailboxScope,
   MailboxStatus,
   PageResponse,
 } from './types';
@@ -35,6 +36,15 @@ export const mailboxApi = {
   setReadBulk: (ids: number[], read: boolean) =>
     client
       .post<number>('/mailbox/messages/read', ids, { params: { read } })
+      .then((r) => r.data),
+
+  /**
+   * Mark read every unread message one view of the mail contains — the folder on screen,
+   * narrowed by whatever is in the search box. Returns how many were actually changed.
+   */
+  markAllRead: (scope: MailboxScope) =>
+    client
+      .post<number>('/mailbox/messages/read-all', null, { params: cleanParams(scope) })
       .then((r) => r.data),
 
   /** folderId undefined sends the message back to the Inbox. */

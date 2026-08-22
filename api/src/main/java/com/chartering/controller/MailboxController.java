@@ -109,6 +109,26 @@ public class MailboxController {
         return ResponseEntity.ok(mailbox.setReadBulk(ids, read));
     }
 
+    @PostMapping("/messages/read-all")
+    @Operation(summary = "Mark read every unread message in one view of the mail",
+            description = "Takes the same scoping parameters as the search, and marks read "
+                    + "everything they match — the folder the user is looking at, narrowed by "
+                    + "whatever they have typed. Returns how many messages were actually "
+                    + "changed, which is unread ones only: mail already read is left alone. "
+                    + "With no parameters at all this is the whole mailbox.")
+    public ResponseEntity<Integer> markAllRead(
+            @RequestParam(required = false) String search,
+            @RequestParam(defaultValue = "false") boolean searchBody,
+            @RequestParam(required = false) Long folderId,
+            @RequestParam(required = false) Boolean unfiled,
+            @RequestParam(required = false) String imapFolder,
+            @RequestParam(required = false) Long companyId) {
+
+        MailboxFilter filter = new MailboxFilter(search, searchBody, folderId, unfiled,
+                imapFolder, null, companyId, null, null, null);
+        return ResponseEntity.ok(mailbox.markAllRead(filter));
+    }
+
     @PatchMapping("/messages/{id}/folder")
     @Operation(summary = "File a message into a folder",
             description = "Omit folderId to send it back to the Inbox. Filing by hand also "

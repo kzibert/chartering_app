@@ -6,10 +6,12 @@ import {
   Button,
   Card,
   Checkbox,
+  Divider,
   Dropdown,
   Empty,
   Input,
   Menu,
+  Popconfirm,
   Skeleton,
   Space,
   Table,
@@ -20,6 +22,7 @@ import {
 } from 'antd';
 import {
   BankOutlined,
+  CheckCircleOutlined,
   DeleteOutlined,
   EditOutlined,
   FolderOpenOutlined,
@@ -27,11 +30,10 @@ import {
   InboxOutlined,
   MailOutlined,
   PaperClipOutlined,
-  ReloadOutlined,
   SendOutlined,
   SettingOutlined,
   StopOutlined,
-  ThunderboltOutlined,
+  SyncOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { DataNode } from 'antd/es/tree';
@@ -49,7 +51,12 @@ import { useTableControls } from '../../components/useTableControls';
 import CompanyDrawer from '../companies/CompanyDrawer';
 import MessageDrawer from './MessageDrawer';
 import FoldersRulesModal from './FoldersRulesModal';
-import type { MailMessage, MailServerFolder, MailboxFilter } from '../../api/types';
+import type {
+  MailMessage,
+  MailServerFolder,
+  MailboxFilter,
+  MailboxScope,
+} from '../../api/types';
 
 /**
  * Which folder the rail is showing.
@@ -120,21 +127,34 @@ export default function MailboxPage() {
   const serverFolders = useMailServerFolders();
   const status = useMailboxStatus();
   const sync = useMailboxSync();
-  const { setReadBulk, moveBulk } = useMailMessageMutations();
+  const { setReadBulk, markAllRead, moveBulk } = useMailMessageMutations();
 
-  const query: MailboxFilter = useMemo(
+  /**
+   * Which mail is being looked at — the rail's folder and the search box, and nothing about
+   * the page or the unread checkbox. Kept apart from the query below because it is also what
+   * "Mark all read" acts on, and that action has to mean the same thing on page four as on
+   * page one.
+   */
+  const scope: MailboxScope = useMemo(
     () => ({
       search: filters.search || undefined,
       searchBody: filters.searchBody || undefined,
       unfiled: filters.scope === 'inbox' ? true : undefined,
       folderId: typeof filters.scope === 'number' ? filters.scope : undefined,
       imapFolder: serverScope(filters.scope),
+    }),
+    [filters.search, filters.searchBody, filters.scope],
+  );
+
+  const query: MailboxFilter = useMemo(
+    () => ({
+      ...scope,
       read: filters.unreadOnly ? false : undefined,
       page: table.state.page,
       size: table.state.size,
       sort: table.state.sort ?? 'receivedAt,desc',
     }),
-    [filters, table.state],
+    [scope, filters.unreadOnly, table.state],
   );
   const messages = useMailMessages(query);
   const rows = messages.data?.content ?? [];
@@ -214,6 +234,25 @@ export default function MailboxPage() {
       );
     },
   };
+
+  /** What the rail is showing, in the words the rail shows it in — the confirm quotes it. */
+  const scopeName =
+    filters.scope === 'all'
+      ? 'All mail'
+      : filters.scope === 'inbox'
+        ? 'Unfiled'
+        : typeof filters.scope === 'number'
+          ? (named.find((f) => f.id === filters.scope)?.name ?? 'this folder')
+          : (serverNames.get(filters.scope.server) ?? filters.scope.server);
+
+  const markAll = () =>
+    markAllRead.mutate(scope, {
+      onSuccess: (marked) => {
+        if (marked === 0) message.info('Nothing unread here');
+        else message.success(`Marked ${marked} message${marked === 1 ? '' : 's'} read`);
+        setPicked([]);
+      },
+    });
 
   const markPicked = (read: boolean) =>
     setReadBulk.mutate(
@@ -356,7 +395,7 @@ export default function MailboxPage() {
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      <SyncBanner
+      <SyncBar
         status={status.data}
         onSync={() => sync.mutate(undefined, { onSuccess: () => message.info('Fetching mail…') })}
         syncing={status.data?.syncing || sync.isPending}
@@ -432,45 +471,82 @@ export default function MailboxPage() {
 
         <Card size="small" style={{ flex: 1, minWidth: 0 }}>
           <Space direction="vertical" size="small" style={{ width: '100%' }}>
-            <Space wrap>
-              <Input.Search
-                allowClear
-                value={typed}
-                onChange={(e) => setTyped(e.target.value)}
-                onSearch={runSearch}
-                placeholder="Address, person, company, or words from the subject…"
-                style={{ width: 420 }}
-                enterButton
-              />
-              <Tooltip
-                title="Also search inside the message text. Not indexed — every stored body is
-                       scanned — so it is left off unless you ask for it."
-              >
+            {/* The filters on the left and the one action on the right, rather than all of
+                it in one Space: "Mark all read" acts on everything these controls select,
+                so it belongs at the end of the row that defines it — and away from the
+                checkboxes, where a mis-aimed click would be expensive. */}
+            <div
+              style={{
+                display: 'flex',
+                gap: 8,
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+              }}
+            >
+              <Space wrap>
+                <Input.Search
+                  allowClear
+                  value={typed}
+                  onChange={(e) => setTyped(e.target.value)}
+                  onSearch={runSearch}
+                  placeholder="Address, person, company, or words from the subject…"
+                  style={{ width: 420 }}
+                  enterButton
+                />
+                <Tooltip
+                  title="Also search inside the message text. Not indexed — every stored body is
+                         scanned — so it is left off unless you ask for it."
+                >
+                  <Checkbox
+                    checked={filters.searchBody}
+                    onChange={(e) => update({ searchBody: e.target.checked })}
+                  >
+                    Search message text
+                  </Checkbox>
+                </Tooltip>
                 <Checkbox
-                  checked={filters.searchBody}
-                  onChange={(e) => update({ searchBody: e.target.checked })}
+                  checked={filters.unreadOnly}
+                  onChange={(e) => update({ unreadOnly: e.target.checked })}
                 >
-                  Search message text
+                  Unread only
                 </Checkbox>
-              </Tooltip>
-              <Checkbox
-                checked={filters.unreadOnly}
-                onChange={(e) => update({ unreadOnly: e.target.checked })}
+                {(filters.search || filters.searchBody || filters.unreadOnly) && (
+                  <Button
+                    size="small"
+                    onClick={() => {
+                      setTyped('');
+                      update({ search: '', searchBody: false, unreadOnly: false });
+                    }}
+                  >
+                    Reset
+                  </Button>
+                )}
+              </Space>
+
+              <Popconfirm
+                title="Mark everything here as read"
+                description={
+                  <span style={{ display: 'inline-block', maxWidth: 280 }}>
+                    Every unread message in <strong>{scopeName}</strong>
+                    {filters.search ? <> matching “{filters.search}”</> : null} — not only the
+                    ones on this page.
+                  </span>
+                }
+                okText="Mark read"
+                cancelText="Cancel"
+                okButtonProps={{ loading: markAllRead.isPending }}
+                onConfirm={markAll}
               >
-                Unread only
-              </Checkbox>
-              {(filters.search || filters.searchBody || filters.unreadOnly) && (
                 <Button
-                  size="small"
-                  onClick={() => {
-                    setTyped('');
-                    update({ search: '', searchBody: false, unreadOnly: false });
-                  }}
+                  icon={<CheckCircleOutlined />}
+                  loading={markAllRead.isPending}
+                  disabled={(messages.data?.totalElements ?? 0) === 0}
                 >
-                  Reset
+                  Mark all read
                 </Button>
-              )}
-            </Space>
+              </Popconfirm>
+            </div>
 
             {picked.length > 0 && (
               <Space wrap>
@@ -694,14 +770,28 @@ function RelativeDate({ value }: { value: string }) {
   );
 }
 
+/** The muted, small type the bar's supporting facts are set in. */
+const BAR_NOTE: React.CSSProperties = { fontSize: 12 };
+
 /**
  * What the sync is doing, and why it is not doing it.
  *
  * <p>Shown above the mail rather than tucked into a settings screen: an inbox that stopped
  * syncing three days ago looks exactly like an inbox where nothing has arrived, and the
  * whole tab is misleading until that is said out loud.
+ *
+ * <p>A healthy mailbox says so in a strip built like the rest of the tab — the same Card as
+ * the rail and the table, one line of quiet type, the fetch control at the end of it. It was
+ * a green success Alert, which is the wrong shape twice over: an Alert is a thing that has
+ * happened and wants reading, and "the mail is arriving normally" is the permanent state of
+ * this tab, so it shouted a colour at the top of the page all day and left Fetch now hanging
+ * off the side of it as an alert's afterthought rather than as the tab's own control.
+ *
+ * <p>The Alerts are kept for the two states that really are alerts — not configured, and the
+ * last pass failed — and now sit under the strip, so the fetch button is in one place whether
+ * or not anything is wrong.
  */
-function SyncBanner({
+function SyncBar({
   status,
   onSync,
   syncing,
@@ -712,71 +802,106 @@ function SyncBanner({
 }) {
   if (!status) return null;
 
-  const syncButton = (
-    <Button
-      size="small"
-      icon={syncing ? <ThunderboltOutlined /> : <ReloadOutlined />}
-      loading={syncing}
-      disabled={!status.configured}
-      onClick={onSync}
-    >
-      {syncing ? 'Fetching…' : 'Fetch now'}
-    </Button>
-  );
-
-  if (!status.configured) {
-    return (
-      <Alert
-        type="warning"
-        showIcon
-        message="The mailbox is not being read"
-        description={
-          <>
-            Set {status.missingSettings.join(', ')} in <code>.env</code> and restart the api
-            container. Until then this tab shows whatever was synced before.
-          </>
-        }
-      />
-    );
-  }
-
-  if (status.lastStatus === 'FAILED') {
-    return (
-      <Alert
-        type="error"
-        showIcon
-        message={`Last sync failed — ${dayjs(status.lastSyncAt).format('YYYY-MM-DD HH:mm')}`}
-        description={status.lastError}
-        action={syncButton}
-      />
-    );
-  }
+  const failed = status.lastStatus === 'FAILED';
+  const dot = !status.configured ? 'default' : syncing ? 'processing' : failed ? 'error' : 'success';
+  const every = Math.round(status.pollIntervalMs / 60000);
 
   return (
-    <Alert
-      type="success"
-      showIcon
-      message={
-        <Space wrap size={4}>
-          <Tag color="green">{status.username}</Tag>
-          <Tooltip title="Every folder in the mailbox is mirrored; the rail on the left is that tree">
-            <Tag>
-              {status.folderCount} folder{status.folderCount === 1 ? '' : 's'}
-            </Tag>
-          </Tooltip>
-          <span>
-            {status.lastSyncAt
-              ? `last fetched ${dayjs(status.lastSyncAt).format('YYYY-MM-DD HH:mm')} — ` +
-                `${status.lastStored} new of ${status.lastFetched} read`
-              : 'not fetched yet'}
-          </span>
-          <Typography.Text type="secondary">
-            · every {Math.round(status.pollIntervalMs / 60000)} min · {status.unread} unread of{' '}
-            {status.totalMessages}
+    // A column rather than a fragment: the strip and an alert under it are two blocks, and
+    // the page's own Space cannot see inside a component to put a gap between them.
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <Card size="small" styles={{ body: { padding: '6px 12px' } }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            rowGap: 6,
+            flexWrap: 'wrap',
+            minWidth: 0,
+          }}
+        >
+          {/* The state of the mailbox as a dot beside its own address: it is either fine,
+              working, or broken, and that is one glyph's worth of information. */}
+          <Badge status={dot} />
+          <Typography.Text strong ellipsis style={{ maxWidth: 240 }}>
+            {status.username ?? 'Mailbox'}
           </Typography.Text>
-        </Space>
-      }
-      action={syncButton}
-    />
+
+          <Divider type="vertical" style={{ margin: 0, height: 16 }} />
+
+          <Tooltip title="Every folder in the mailbox is mirrored; the rail on the left is that tree">
+            <Typography.Text type="secondary" style={BAR_NOTE}>
+              {status.folderCount} folder{status.folderCount === 1 ? '' : 's'}
+            </Typography.Text>
+          </Tooltip>
+          <Typography.Text type="secondary" style={BAR_NOTE}>
+            {status.unread} unread of {status.totalMessages}
+          </Typography.Text>
+
+          {/* Pushes the fetch control to the far end, where the eye is not passing over it
+              on the way to the mail. */}
+          <span style={{ flex: 1, minWidth: 24 }} />
+
+          <Typography.Text type="secondary" style={BAR_NOTE}>
+            {syncing ? (
+              'reading the mailbox…'
+            ) : status.lastSyncAt ? (
+              <>
+                fetched <RelativeDate value={status.lastSyncAt} /> · {status.lastStored} new of{' '}
+                {status.lastFetched} read
+              </>
+            ) : (
+              'not fetched yet'
+            )}
+          </Typography.Text>
+
+          <Tooltip
+            title={
+              status.configured
+                ? `Read the mailbox now. It is read on its own every ${every} min.`
+                : 'Not configured — see below'
+            }
+          >
+            {/* Ghost rather than solid: it is the tab's own control and should look like one,
+                but nothing here needs doing — the mail arrives without it being pressed. The
+                icon spins in place instead of the button going into antd's loading state,
+                which would swap the icon for a spinner and shift the label as it did so. */}
+            <Button
+              type="primary"
+              ghost
+              icon={<SyncOutlined spin={syncing} />}
+              disabled={!status.configured || syncing}
+              onClick={onSync}
+            >
+              {syncing ? 'Fetching…' : 'Fetch now'}
+            </Button>
+          </Tooltip>
+        </div>
+      </Card>
+
+      {!status.configured && (
+        <Alert
+          type="warning"
+          showIcon
+          message="The mailbox is not being read"
+          description={
+            <>
+              Set {status.missingSettings.join(', ')} in <code>.env</code> and restart the api
+              container. Until then this tab shows whatever was synced before.
+            </>
+          }
+        />
+      )}
+
+      {status.configured && failed && (
+        <Alert
+          type="error"
+          showIcon
+          message={`Last sync failed — ${dayjs(status.lastSyncAt).format('YYYY-MM-DD HH:mm')}`}
+          description={status.lastError}
+        />
+      )}
+    </div>
   );
 }
