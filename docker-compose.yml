@@ -1,9 +1,9 @@
-# Self-contained chartering stack: Postgres (seeded from the bundled dump) +
+# Self-contained chartering stack: Postgres (built by Flyway on api startup) +
 # Spring Boot API + React/nginx UI. No dependency on any external project or network.
 #
 #   docker compose up -d --build        # build images, start everything
 #   docker compose down                 # stop (keeps data volume)
-#   docker compose down -v              # stop + wipe DB (next up re-seeds from db/seed)
+#   docker compose down -v              # stop + wipe DB (next up rebuilds it from db/migration)
 #
 # Compose project name is fixed to "chartering" so container/volume/network names are
 # stable and prefixed (chartering-db-1, chartering_db_data, ...). Services reach each
@@ -24,8 +24,15 @@ services:
       - "${DB_PORT:-5433}:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
-      # *.sql here runs once on first init (empty volume) -> seeds schema + data.
-      - ./db/seed:/docker-entrypoint-initdb.d:ro
+      # Nothing is mounted into /docker-entrypoint-initdb.d any more. Postgres creates
+      # an empty database here and the api service fills it: Flyway runs V1 (schema)
+      # and V2 (reference data) on startup. That is the whole reason the mount is gone
+      # - while an init script also built the schema there were two sources of truth
+      # for it, and they drifted. See db/MIGRATIONS.md.
+      #
+      # Consequence worth knowing: `docker compose up -d db` on a fresh volume leaves
+      # an empty database, because the thing that populates it is the api container.
+      # Bring up the stack, or point a local `mvn spring-boot:run` at it.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chartering_user} -d ${POSTGRES_DB:-chartering}"]
       interval: 10s

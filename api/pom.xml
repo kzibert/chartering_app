@@ -17,12 +17,39 @@
 	<properties>
 		<java.version>21</java.version>
 		<springdoc.version>2.7.0</springdoc.version>
+		<!--
+			Connection the flyway-maven-plugin uses. Not the application's: the app reads
+			application.yml and these are only for the command-line goals, which run
+			outside Spring entirely. Override per invocation, e.g.
+			mvn flyway:info -Dflyway.url=jdbc:postgresql://host:5432/chartering
+		-->
+		<flyway.url>jdbc:postgresql://localhost:5433/chartering</flyway.url>
+		<flyway.user>chartering_user</flyway.user>
+		<flyway.password>password</flyway.password>
 	</properties>
 
 	<dependencies>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-data-jpa</artifactId>
+		</dependency>
+		<!--
+			Flyway owns the schema. It runs before Hibernate is handed the DataSource, so
+			ddl-auto=validate below it is checking a schema Flyway has just finished
+			bringing up to date rather than one somebody remembered to patch by hand.
+
+			Split in two since Flyway 10: the Postgres dialect lives in its own artifact
+			and flyway-core alone cannot talk to this database. Both versions come from
+			the Spring Boot parent - do not pin them here, or an upgrade of the parent
+			starts mixing a core with a dialect it was never tested against.
+		-->
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-core</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-database-postgresql</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -60,6 +87,43 @@
 
 	<build>
 		<plugins>
+			<!--
+				The same migrations, driven from the command line instead of from app
+				startup: mvn flyway:info to read the history, flyway:validate to check
+				this checkout against a database, flyway:repair after a failed migration.
+				db-migrate.bat in the repo root wraps these for the compose stack.
+
+				Points at the dev profile's database by default - localhost:5433, the port
+				compose publishes - and every field is overridable, so the same commands
+				reach a cloud database with -Dflyway.url=... and nothing edited here.
+			-->
+			<plugin>
+				<groupId>org.flywaydb</groupId>
+				<artifactId>flyway-maven-plugin</artifactId>
+				<version>${flyway.version}</version>
+				<configuration>
+					<url>${flyway.url}</url>
+					<user>${flyway.user}</user>
+					<password>${flyway.password}</password>
+					<locations>
+						<location>filesystem:src/main/resources/db/migration</location>
+					</locations>
+					<baselineOnMigrate>true</baselineOnMigrate>
+					<baselineVersion>2</baselineVersion>
+				</configuration>
+				<dependencies>
+					<dependency>
+						<groupId>org.flywaydb</groupId>
+						<artifactId>flyway-database-postgresql</artifactId>
+						<version>${flyway.version}</version>
+					</dependency>
+					<dependency>
+						<groupId>org.postgresql</groupId>
+						<artifactId>postgresql</artifactId>
+						<version>${postgresql.version}</version>
+					</dependency>
+				</dependencies>
+			</plugin>
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>

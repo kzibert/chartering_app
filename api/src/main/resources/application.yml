@@ -3,9 +3,41 @@ spring:
     name: chartering-api
   profiles:
     default: dev               # overridden by SPRING_PROFILES_ACTIVE=docker in the container
+  # Flyway owns the schema. It runs on startup, before Hibernate is given the
+  # DataSource, so by the time validate below has an opinion the database is
+  # already at the newest migration this build carries. Adding a column is a new
+  # file in db/migration and a restart - see db/MIGRATIONS.md.
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+    # Adopting a database that already exists. A database with tables but no
+    # flyway_schema_history is stamped as being at V2 - schema and reference data
+    # both already in place - and V1/V2 are recorded rather than run, which is what
+    # keeps this from trying to CREATE TABLE over 7,583 live contacts. An empty
+    # database is not baselined: it has nothing to adopt, so it runs V1 forward.
+    #
+    # Left on deliberately, and it is the one setting here with a sharp edge: it
+    # means a database that turns up unexpectedly populated is quietly adopted at
+    # V2 instead of failing loudly. That is the behaviour worth having while the
+    # local database, the restored exports in db-export/ and whatever cloud
+    # instance comes next all still need adopting. Turn it off once every database
+    # in play was built by Flyway from empty.
+    baseline-on-migrate: true
+    baseline-version: 2
+    baseline-description: "existing database adopted at V2"
+
+    # Refuse to start against a database whose applied migrations no longer match
+    # the files in this build - an edited V1, a deleted V3, a checksum that moved.
+    # Failing at startup is the cheap version of that discovery.
+    validate-on-migrate: true
+
   jpa:
     hibernate:
-      ddl-auto: validate          # schema is owned by the seed dump (db/seed); validate catches drift
+      # Second opinion, not the mechanism: Flyway has already built the schema, and
+      # this catches the case where an entity changed and its migration was
+      # forgotten. Hibernate never writes DDL here.
+      ddl-auto: validate
     open-in-view: false
     properties:
       hibernate:

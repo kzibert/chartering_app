@@ -1,16 +1,21 @@
 # chartering
 
-Self-contained, vessel-centric chartering stack: **Postgres + Spring Boot REST API + React/Ant Design SPA**, all wired together with Docker Compose. The whole thing builds and runs from this repo alone — the database seeds itself from a bundled dump, so there is **no dependency on any external database or project**.
+Self-contained, vessel-centric chartering stack: **Postgres + Spring Boot REST API + React/Ant Design SPA**, all wired together with Docker Compose. The whole thing builds and runs from this repo alone — the API builds its own database on first start, so there is **no dependency on any external database or project**.
 
 ## Stack
 
 | Service | Tech                                   | Container (compose project `chartering`) | Host port |
 |---------|----------------------------------------|------------------------------------------|-----------|
-| `db`    | Postgres 16 (seeded from `db/seed/`)   | `chartering-db-1`                        | `5433`    |
+| `db`    | Postgres 16 (built by Flyway)          | `chartering-db-1`                        | `5433`    |
 | `api`   | Spring Boot 3.4 / Java 21 / JPA        | `chartering-api-1`                       | `8081`    |
 | `ui`    | React 18 + Vite + Ant Design (nginx)   | `chartering-ui-1`                        | `8082`    |
 
-The UI's nginx reverse-proxies `/api` → the `api` service, which talks to the `db` service over the compose network. The API uses `ddl-auto=validate` — the schema is owned by the seed dump, not Hibernate.
+The UI's nginx reverse-proxies `/api` → the `api` service, which talks to the `db` service over the compose network.
+
+The schema is owned by **Flyway**, which runs the migrations in
+`api/src/main/resources/db/migration/` on api startup — before Hibernate, whose
+`ddl-auto=validate` is left on as a second opinion rather than as the mechanism. Changing
+the schema means adding a numbered SQL file: **[db/MIGRATIONS.md](db/MIGRATIONS.md)**.
 
 ## Quick start
 
@@ -24,17 +29,24 @@ Then open:
 - API + Swagger: http://localhost:8081/swagger-ui/index.html
 - OpenAPI JSON: http://localhost:8081/v3/api-docs
 
-First boot: Postgres runs `db/seed/chartering.sql` (full `pg_dump`: schema, ~4.5k vessels / 3k companies / 3.6k people / 7.5k contacts, views, indexes, `pg_trgm`). This only happens when the data volume is empty.
+First boot: Postgres comes up with an empty database and the **api container fills it** —
+Flyway applies `V1__baseline_schema.sql` (23 tables, 3 views, 49 indexes, `pg_trgm`) and then
+`V2__reference_data.sql` (~4.5k vessels / 3k companies / 3.6k people / 7.5k contacts, plus
+ports, regions, tonnage categories, circulation lists and the circular templates). It takes a
+few seconds and only happens once; after that Flyway records what it has run and applies only
+what is new.
 
-Every `db/*.sql` patch is baked into that dump, so a fresh volume already validates against the
-API — none of them needs applying by hand. The seed deliberately carries **no activity data**:
-circulation history and the `app_settings` overrides are excluded, so a new environment starts
-with a clean send history and the settings its own `.env` specifies. `db-export/` is the
-opposite — a complete snapshot including both, for moving an existing database elsewhere.
+That means `docker compose up -d db` on its own now leaves an **empty** database. The thing
+that populates it is the api service, so bring up the stack rather than just the database.
+
+The reference data deliberately carries **no activity data** — no circulation history, no
+synced mail, no `app_settings` overrides — so a new environment starts with a clean send
+history, an empty inbox and the settings its own `.env` specifies. `db-export/` is the
+opposite: a complete snapshot including all of it, for moving an existing database elsewhere.
 
 ```bash
 docker compose down        # stop, keep data
-docker compose down -v     # stop + wipe DB; next `up` re-seeds from the dump
+docker compose down -v     # stop + wipe DB; next `up` rebuilds it from db/migration
 ```
 
 Override credentials/ports by copying `.env.example` to `.env`.
@@ -55,31 +67,21 @@ docker compose up -d --force-recreate api db
 ```
 docker-compose.yml       # db + api + ui (compose project "chartering")
 .env.example             # credential / port overrides
+api/                     # Spring Boot backend, package com.chartering (multi-stage Dockerfile)
+  src/main/resources/db/migration/     # THE SCHEMA. Flyway migrations, applied on api startup
+    V1__baseline_schema.sql            #   23 tables, 3 views, 49 indexes, pg_trgm - no data
+    V2__reference_data.sql             #   vessels, companies, people, contacts, ports, lists
 db/
-  seed/chartering.sql    # auto-seed dump (runs on first DB init)
-  email_templates.sql    # idempotent patch: circular templates + footers (baked into the seed)
-  main_contact_flag.sql  # idempotent patch: per-company main email/phone (baked into the seed)
-  person_left_company.sql # idempotent patch: person has left, all their contacts off circs
-  company_contact_greeting.sql # idempotent patch: a contact's own greeting (baked into the seed)
-  not_working_contact_flag.sql # idempotent patch: dead email/phone flag (baked into the seed)
-  vessel_company_links.sql # idempotent patch: vessel<->company broker roles + solo flag (baked in)
-  circulations.sql       # idempotent patch: circ flag, circulation lists, circulation history (baked in)
-  no_circ_flag.sql       # idempotent patch: "never circulate to this address" flag (baked in)
-  whatsapp_flag.sql      # idempotent patch: "this number is on WhatsApp" flag (baked in)
-  app_settings.sql       # idempotent patch: runtime settings edited from the Settings tab (baked in)
-  mailbox.sql            # idempotent patch: synced mail, its folders and its filing rules (baked in)
-  mailbox_server_folders.sql # idempotent patch: the mail server's own folder tree, mirrored
-  circulation_provider.sql # idempotent patch: which flow each message left by (baked in)
-  chartering.dump        # same data in pg_restore (-Fc) format, for manual restore
-  schema.sql             # DDL reference (the dump already contains the schema)
+  MIGRATIONS.md          # how to change the schema: writing, running, adopting, recovering
+  legacy-patches/        # the hand-applied .sql patches from before Flyway - reading only
 db-export/               # portable full snapshot for reproducing the DB elsewhere
   chartering-full.dump   # pg_dump -Fc, --no-owner (restore with pg_restore)
   chartering-full.sql    # same content as plain SQL (restore with psql)
   history/               # timestamped copy of every refresh (gitignored)
   README.md              # restore instructions
-  EXPORTING.md           # how to refresh all four dumps, and how to verify them
+  EXPORTING.md           # how to refresh both dumps, and how to verify them
+db-migrate.bat           # flyway info / migrate / validate / repair against the compose DB
 refresh-db-export.bat    # one-click refresh of db-export/, keeping the previous dumps
-api/                     # Spring Boot backend, package com.chartering (multi-stage Dockerfile)
 ui/                      # React SPA (multi-stage: node build -> nginx)
 logs/                    # campaign send log, bind-mounted from the api container (gitignored)
 ```
@@ -226,7 +228,7 @@ allows, the plan has outgrown the config and the server says so in the log, once
 Brevo is asked at most twice every 30 seconds however hard the tab polls; a reporting call that
 cannot reach Brevo shows the reason and leaves the mailbox half of the figure untouched.
 
-Which flow each message left by is recorded **per recipient**, not per run (`db/circulation_provider.sql`).
+Which flow each message left by is recorded **per recipient**, not per run (`db/legacy-patches/circulation_provider.sql`).
 A circulation paused under the mailbox flow and resumed after the switch genuinely left by two
 routes, and a run-level column would have to lie about one half of it. Rows that predate the
 column are backfilled `SMTP`, because that was the only flow there was.
@@ -252,13 +254,14 @@ to plain text, because Word/Outlook markup is a common cause of mail rendering b
 Incoming HTML is stripped of `<script>`/`<iframe>` blocks, `on*` handlers and `javascript:`
 URLs before storage; mail clients drop these anyway, and their presence hurts spam scoring.
 
-Schema comes from `db/email_templates.sql` (idempotent, same house pattern as
-`db/banned_flags.sql`) and is baked into the seed dump, so a fresh `docker compose up` has
-both tables and one starter footer already.
+Both tables are in `V1__baseline_schema.sql` and the starter footer in
+`V2__reference_data.sql`, so a fresh `docker compose up` has them already. The original
+patch that introduced them, and the reasoning behind their shape, is kept in
+`db/legacy-patches/email_templates.sql`.
 
 ### Circulation lists
 
-Recipients live in **circulation lists**, stored in Postgres (`db/circulations.sql`). There is
+Recipients live in **circulation lists**, stored in Postgres (`db/legacy-patches/circulations.sql`). There is
 one unnamed **current list** — what the Circulars tab sends to, and what every other tab adds
 into by default — plus any number of **saved lists** prepared in advance. Building the current
 list lives entirely on this tab; the Circulars tab only sends it, so there is one place to look
@@ -312,7 +315,7 @@ Two things used to make the shape unusable in practice, and both are fixed:
 
 That general fallback is still the **default**, and deliberately: an address for a desk should open
 generally unless somebody says different. `contacts.greeting_name`
-(`db/company_contact_greeting.sql`) is how they say different — "Chartering Team", "Operations", or
+(`db/legacy-patches/company_contact_greeting.sql`) is how they say different — "Chartering Team", "Operations", or
 whoever actually reads the inbox. The *Greeting* field on the contact form sets it, and the
 contact row shows what will be used, including the `Sirs` a blank one resolves to, so reading a row
 never requires knowing that an absent field means something.
@@ -395,7 +398,7 @@ Two flags do that, and they mean different things:
 | **not working** | the mailbox is dead — it bounced, or the account is gone | unusable for anything |
 | **not for circ** | it works, it just must never be bulk-mailed | still the right one to write to by hand |
 
-`not for circ` (`db/no_circ_flag.sql`) is for an `accounts@` or `ops@` inbox, or a broker who asked
+`not for circ` (`db/legacy-patches/no_circ_flag.sql`) is for an `accounts@` or `ops@` inbox, or a broker who asked
 to come off the circular. Without it the only way to achieve that was to mark a live address dead,
 which loses real information: the address stops being offered anywhere, and nobody later can tell a
 bounced mailbox from a deliberate exclusion.
@@ -408,7 +411,7 @@ A third exclusion sits on the **person** rather than on any address:
 | **not for circ** | the contact | it works, it just must never be bulk-mailed |
 | **left the company** | the *person* | they no longer work there, so **every** address of theirs is both |
 
-`left the company` (`db/person_left_company.sql`, the `left` button on the People tab, in the
+`left the company` (`db/legacy-patches/person_left_company.sql`, the `left` button on the People tab, in the
 company drawer and on the person drawer) is the one control that reaches all of somebody's
 addresses at once — which is the point of it. Departure is a fact about the person: flagging their
 five addresses individually is the same statement made five times, and the sixth address added next
@@ -499,7 +502,7 @@ Endpoints: `POST /api/v1/campaigns/current/pause`, `GET /campaigns/resumable`,
 ### Settings
 
 The **Settings** tab (bottom of the sidebar) edits the circulation knobs at runtime, stored in
-`app_settings` (`db/app_settings.sql`):
+`app_settings` (`db/legacy-patches/app_settings.sql`):
 
 | Setting | Default (SMTP) | Default (Brevo) |
 |---|---|---|
@@ -578,7 +581,7 @@ popup shows the number exactly as it will be dialled, opens `https://wa.me/<numb
 in a new tab, and then asks what you saw. WhatsApp itself gives the answer: a chat opens, or it
 tells you the number is not registered.
 
-**Remembering it.** Saying yes sets `has_whatsapp` on the contact (`db/whatsapp_flag.sql`), and
+**Remembering it.** Saying yes sets `has_whatsapp` on the contact (`db/legacy-patches/whatsapp_flag.sql`), and
 from then on the number carries a green WhatsApp icon linking straight to that chat, with the same
 greeting prefilled. That link is *not* behind the Edit toggle — messaging someone is reading the
 contact, not editing it, and being able to reach them from wherever the number happens to be
@@ -754,19 +757,39 @@ thread), plus CRUD on `/api/v1/mailbox/folders` and `/api/v1/mailbox/rules` and
 
 ## Local dev (without Docker)
 
-- **API:** needs JDK 21 + Maven and a Postgres on `localhost:5433` (the `dev` profile default). `cd api && mvn spring-boot:run`. Easiest is to run just the DB via `docker compose up -d db` and point the dev profile at it.
+- **API:** needs JDK 21 + Maven and a Postgres on `localhost:5433` (the `dev` profile default). `cd api && mvn spring-boot:run`. Easiest is to run just the DB via `docker compose up -d db` and point the dev profile at it — on a fresh volume that database is empty, and the app you are about to start is what migrates it.
 - **UI:** needs Node 20. `cd ui && npm install && npm run dev` → http://localhost:5173 (Vite proxies `/api` → `localhost:8081`).
 
-## Reseeding / restoring manually
+## Changing the schema
+
+Add a numbered SQL file to `api/src/main/resources/db/migration/` and restart the api:
 
 ```bash
-# plain SQL into a running DB
-docker compose exec -T db psql -U chartering_user -d chartering < db/seed/chartering.sql
-
-# or the custom-format dump
-docker compose exec -T db pg_restore -U chartering_user -d chartering --no-owner < db/chartering.dump
+docker compose up -d --build api      # Flyway applies anything pending on startup
+db-migrate.bat                        # or just read the history first
 ```
 
+Never edit a migration that has already run — Flyway checksums them, and an edited file
+stops every database that ran it from starting. Corrections are the next migration.
+**[db/MIGRATIONS.md](db/MIGRATIONS.md)** covers writing one, adopting an existing database,
+the line-ending trap in `V2`, and what to do when `validate` fails.
+
+## Backing up / restoring manually
+
+Migrations version *structure*; they are not a backup. A populated database moves as a
+snapshot from `db-export/`:
+
+```bash
+# the custom-format dump
+docker compose exec -T db pg_restore -U chartering_user -d chartering --no-owner   < db-export/chartering-full.dump
+
+# or the plain-SQL twin
+docker compose exec -T db psql -U chartering_user -d chartering < db-export/chartering-full.sql
+```
+
+A restored snapshot brings its own `flyway_schema_history` with it, so it lands knowing what
+it has already run and migrates forward from there.
+
 Going the other way — refreshing the dumps *from* the current database — is
-`refresh-db-export.bat` for `db-export/`, and [db-export/EXPORTING.md](db-export/EXPORTING.md)
-for all four files plus the checks worth running before trusting them.
+`refresh-db-export.bat`, and [db-export/EXPORTING.md](db-export/EXPORTING.md) for the checks
+worth running before trusting the result.

@@ -1,0 +1,13 @@
+# Migrations must round-trip byte-for-byte, for two reasons.
+#
+# V2 carries real data, and 86 of its lines sit inside multi-line string literals
+# — a company name that spans two lines, a contact note that spans three. On a
+# Windows checkout (core.autocrlf=true) git would rewrite those LFs to CRLF and
+# the CR would land inside the restored column value, exactly as it would in a
+# COPY block. Same hazard the dumps in db-export/ are protected from.
+#
+# And Flyway records a checksum per migration. A file whose bytes differ between
+# a Windows checkout and a Linux one is a file that fails validate-on-migrate in
+# whichever environment did not apply it first — the app then refuses to start,
+# with a checksum mismatch on a migration nobody edited.
+*.sql -text
