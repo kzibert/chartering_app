@@ -1,65 +1,53 @@
-# Self-contained chartering stack: Postgres (built by Flyway on api startup) +
-# Spring Boot API + React/nginx UI. No dependency on any external project or network.
+# The chartering application: Spring Boot API + React/nginx UI. Two services, both
+# built from this repo.
 #
 #   docker compose up -d --build        # build images, start everything
-#   docker compose down                 # stop (keeps data volume)
-#   docker compose down -v              # stop + wipe DB (next up rebuilds it from db/migration)
+#   docker compose down                 # stop
 #
-# Compose project name is fixed to "chartering" so container/volume/network names are
-# stable and prefixed (chartering-db-1, chartering_db_data, ...). Services reach each
-# other by service name (db / api) over the default network.
+# There is no database here. The api talks to whatever DB_URL points at - the hosted
+# Postgres in normal use, or the separate chartering-db project beside this one for
+# working offline. That is why this file has no db service, no data volume and no
+# "down -v": nothing in this project holds state, so stopping it never costs anything.
+#
+# The database being configuration rather than a service is what lets this repo be
+# only the application. Point DB_URL somewhere else and nothing here changes.
+#
+# Compose project name is fixed to "chartering" so container names are stable
+# (chartering-api-1, chartering-ui-1). The two services reach each other by service
+# name over the default network.
 name: chartering
 
 services:
-  db:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      # Local wall-clock time everywhere, so psql output and the API agree on what "today" is.
-      TZ: ${TZ:-Europe/Warsaw}
-      POSTGRES_USER: ${POSTGRES_USER:-chartering_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
-      POSTGRES_DB: ${POSTGRES_DB:-chartering}
-    ports:
-      - "${DB_PORT:-5433}:5432"
-    volumes:
-      - db_data:/var/lib/postgresql/data
-      # Nothing is mounted into /docker-entrypoint-initdb.d any more. Postgres creates
-      # an empty database here and the api service fills it: Flyway runs V1 (schema)
-      # and V2 (reference data) on startup. That is the whole reason the mount is gone
-      # - while an init script also built the schema there were two sources of truth
-      # for it, and they drifted. See the README.
-      #
-      # Consequence worth knowing: `docker compose up -d db` on a fresh volume leaves
-      # an empty database, because the thing that populates it is the api container.
-      # Bring up the stack, or point a local `mvn spring-boot:run` at it.
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chartering_user} -d ${POSTGRES_DB:-chartering}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   api:
     build: ./api
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
+    # Reaches a database outside this project. host-gateway is what makes
+    # host.docker.internal resolve to the machine running docker, so a Postgres
+    # published on a host port - the chartering-db project's 5433 - is reachable from
+    # in here. Docker Desktop provides the name anyway; this line is what makes the
+    # same compose file work on Linux, where it does not.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       SPRING_PROFILES_ACTIVE: docker
-      # Where the database is. Set DB_URL in .env to point this container at a managed
-      # Postgres instead of the db service below; the README is the walkthrough.
+      # Where the database is, and it is not in this project. Set DB_URL in .env to
+      # the hosted Postgres; the README is the walkthrough.
       #
       # A cloud URL needs TLS, which for pgjdbc is a query parameter on the url itself:
       #   DB_URL=jdbc:postgresql://HOST/DB?sslmode=require
       #
-      # The real defaults are written out here rather than left to application.yml, for
+      # The default below is the chartering-db project beside this one, published on
+      # host port 5433. Unset DB_URL and start nothing else, and the api will come up
+      # unable to connect - which is correct: a database it does not own is not
+      # something this file can conjure.
+      #
+      # The real default is written out here rather than left to application.yml, for
       # the same reason IMAP_USERNAME's fallback is done here: compose always defines a
       # mapped variable, so "DB_URL: ${DB_URL:-}" with nothing in .env would arrive as an
       # empty string, and Spring resolves an empty value as a value - not as absent. Its
       # own ${DB_URL:default} would never fire and the app would start with no url at all.
       # Compose's :- treats empty and unset alike, so the default belongs on this side.
-      DB_URL: ${DB_URL:-jdbc:postgresql://db:5432/chartering}
+      DB_URL: ${DB_URL:-jdbc:postgresql://host.docker.internal:5433/chartering}
       DB_USER: ${DB_USER:-chartering_user}
       DB_PASSWORD: ${DB_PASSWORD:-password}
       # Connection pool, sized for a database in the next container. A serverless one
@@ -141,7 +129,3 @@ services:
       - api
     ports:
       - "${UI_PORT:-8082}:80"
-
-volumes:
-  db_data:
-    driver: local

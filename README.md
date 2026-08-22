@@ -1,16 +1,30 @@
 # chartering
 
-Self-contained, vessel-centric chartering stack: **Postgres + Spring Boot REST API + React/Ant Design SPA**, all wired together with Docker Compose. The whole thing builds and runs from this repo alone — the API builds its own database on first start, so there is **no dependency on any external database or project**.
+Vessel-centric chartering application: **Spring Boot REST API + React/Ant Design SPA**, wired together with Docker Compose. This repo builds the api and the ui and nothing else. The database is a connection string — normally a hosted Postgres, and there is a separate `chartering-db` project beside this one for a local one.
 
 ## Stack
 
 | Service | Tech                                   | Container (compose project `chartering`) | Host port |
 |---------|----------------------------------------|------------------------------------------|-----------|
-| `db`    | Postgres 16 (built by Flyway)          | `chartering-db-1`                        | `5433`    |
 | `api`   | Spring Boot 3.4 / Java 21 / JPA        | `chartering-api-1`                       | `8081`    |
 | `ui`    | React 18 + Vite + Ant Design (nginx)   | `chartering-ui-1`                        | `8082`    |
 
-The UI's nginx reverse-proxies `/api` → the `api` service, which talks to the `db` service over the compose network.
+The UI's nginx reverse-proxies `/api` → the `api` service. Nothing in this project holds
+state, so `docker compose down` never costs anything and there is no `down -v`.
+
+**The database is not one of these services.** The api connects to whatever `DB_URL` names,
+which in normal use is a hosted Postgres. For a local one there is a sibling project:
+
+```
+Chartering/
+  chartering-app/     this repo - the api and the ui
+  chartering-db/      local Postgres, on its own (docker compose up -d)
+```
+
+Separate projects rather than a `db` service with a profile, because they have genuinely
+different lifecycles: this one is rebuilt on every change and holds nothing, while a database
+is started once and is the only thing with something to lose. Keeping a stateful service in
+a compose file you routinely tear down is how volumes get deleted by accident.
 
 The schema is owned by **Flyway**, which runs the migrations in
 `api/src/main/resources/db/migration/` on api startup — before Hibernate, whose
@@ -30,22 +44,22 @@ Then open:
 - API + Swagger: http://localhost:8081/swagger-ui/index.html
 - OpenAPI JSON: http://localhost:8081/v3/api-docs
 
-First boot: Postgres comes up with an empty database and the **api container builds the
-schema** — Flyway applies `V1__baseline_schema.sql` (23 tables, 3 views, 49 indexes,
-`pg_trgm`). It takes a second, and only happens once; after that Flyway records what it has
-run and applies only what is new.
+**A database has to exist first.** Set `DB_URL` in `.env` to the hosted one, or start the
+sibling project — `cd ../chartering-db && docker compose up -d` — which listens on
+`localhost:5433` and is the default this compose file falls back to.
 
-**It builds the schema, not the data.** A fresh clone comes up with every table present and
-every table empty — no vessels, no companies, no contacts. That is deliberate: this repo
-carries code, schema and infrastructure, and no copy of anybody's database. Data arrives from
-a backup you restore yourself (see [Backing up](#backing-up-and-getting-data-into-a-fresh-environment)).
+On first connection the **api builds the schema**: Flyway applies `V1__baseline_schema.sql`
+(23 tables, 3 views, 49 indexes, `pg_trgm`). It takes a second and only happens once; after
+that Flyway records what it has run and applies only what is new.
 
-`docker compose up -d db` on its own leaves the database empty in a second sense: it is the
-api service that runs the migrations, so bring up the stack rather than just the database.
+**It builds the schema, not the data.** A database the api has just migrated has every table
+present and every table empty — no vessels, no companies, no contacts. That is deliberate:
+this repo carries code, schema and infrastructure, and no copy of anybody's database. Data
+arrives from a backup you restore yourself (see
+[Backing up](#backing-up-and-getting-data-into-a-fresh-environment)).
 
 ```bash
-docker compose down        # stop, keep data
-docker compose down -v     # stop + wipe DB; next `up` rebuilds it from db/migration
+docker compose down        # stop; nothing here holds state
 ```
 
 Override credentials/ports by copying `.env.example` to `.env`.
@@ -64,8 +78,8 @@ docker compose up -d --force-recreate api db
 ## Layout
 
 ```
-docker-compose.yml       # db + api + ui (compose project "chartering")
-.env.example             # credential / port overrides
+docker-compose.yml       # api + ui only (compose project "chartering") - no database
+.env.example             # DB connection, credential and port overrides
 api/                     # Spring Boot backend, package com.chartering (multi-stage Dockerfile)
   src/main/resources/db/migration/     # THE SCHEMA. Flyway migrations, applied on api startup
     V1__baseline_schema.sql            #   23 tables, 3 views, 49 indexes, pg_trgm - no data
@@ -744,7 +758,7 @@ thread), plus CRUD on `/api/v1/mailbox/folders` and `/api/v1/mailbox/rules` and
 
 ## Local dev (without Docker)
 
-- **API:** needs JDK 21 + Maven and a Postgres on `localhost:5433` (the `dev` profile default). `cd api && mvn spring-boot:run`. Easiest is to run just the DB via `docker compose up -d db` and point the dev profile at it — on a fresh volume that database is empty, and the app you are about to start is what migrates it.
+- **API:** needs JDK 21 + Maven and a Postgres on `localhost:5433`, which is exactly what the `dev` profile defaults to and exactly what `../chartering-db` publishes. Start that, then `cd api && mvn spring-boot:run` — the database will be empty and the app you are about to start is what migrates it. To work against the hosted database instead, set `DB_URL` / `DB_USER` / `DB_PASSWORD` in the environment.
 - **UI:** needs Node 20. `cd ui && npm install && npm run dev` → http://localhost:5173 (Vite proxies `/api` → `localhost:8081`).
 
 ## Changing the schema
