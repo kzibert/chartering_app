@@ -74,9 +74,6 @@ api/                     # Spring Boot backend, package com.chartering (multi-st
 db/
   MIGRATIONS.md          # how to change the schema: writing, running, adopting, recovering
   CLOUD.md               # step-by-step move of the database onto a hosted Postgres
-  neon_backups/
-    backup-db.bat        # full + schema-only dump of the cloud DB, into a per-run folder
-    creds.txt            # its connection - gitignored, holds a live password (not committed)
   legacy-patches/        # the hand-applied .sql patches from before Flyway - reading only
 db-export/               # portable full snapshot for reproducing the DB elsewhere
   chartering-full.dump   # pg_dump -Fc, --no-owner (restore with pg_restore)

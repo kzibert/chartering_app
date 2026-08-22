@@ -19,9 +19,10 @@ logs/
 # is committed as db-export/chartering-full.dump anyway.
 db-export/history/
 
-# Timestamped backups from backup-db.bat. Real data, including the send history
-# and synced mail, and one folder per run - none of it belongs in the repo. Keep
-# them somewhere that is not this disk; the script goes wherever you put it.
+# Timestamped backups from backup-db.bat. That script and its output live outside
+# this repo now (see db/CLOUD.md), so this rule is a safety net rather than a
+# necessity - it catches the case where someone runs a copy of it in here. The
+# folders hold real data, including the send history and synced mail.
 db-backup-*/
 
 # Connection strings pasted while setting up a hosted database. Their real home is
