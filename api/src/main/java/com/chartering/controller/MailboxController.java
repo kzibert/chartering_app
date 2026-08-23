@@ -1,5 +1,6 @@
 package com.chartering.controller;
 
+import com.chartering.config.MailboxCredentials;
 import com.chartering.config.MailboxProperties;
 import com.chartering.dto.MailLinkRequest;
 import com.chartering.dto.MailMessageDetailResponse;
@@ -48,6 +49,7 @@ public class MailboxController {
     private final MailMessageRepository messages;
     private final MailServerFolderService serverFolders;
     private final MailboxProperties props;
+    private final MailboxCredentials credentials;
 
     @GetMapping("/messages")
     @Operation(summary = "Search the synced mail",
@@ -254,7 +256,10 @@ public class MailboxController {
                 props.getHost(),
                 props.getFolder(),
                 serverFolders.listWithCounts().size(),
-                props.getUsername(),
+                // The account it will actually connect as, which is the SMTP one whenever
+                // no separate IMAP username was given. Showing the raw property here would
+                // display a blank while the sync ran perfectly well.
+                credentials.username(),
                 sync.isSyncing(),
                 lastSyncAt,
                 status,

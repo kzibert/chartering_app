@@ -1,5 +1,6 @@
 package com.chartering.service.mail;
 
+import com.chartering.config.MailboxCredentials;
 import com.chartering.config.MailboxProperties;
 import com.chartering.exception.MailNotConfiguredException;
 import com.chartering.model.MailServerFolder;
@@ -91,6 +92,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ImapMailboxSyncService {
 
     private final MailboxProperties props;
+    private final MailboxCredentials credentials;
     private final MailSyncStateRepository syncState;
     private final MailIngestService ingest;
     private final MailServerFolderService serverFolders;
@@ -152,8 +154,10 @@ public class ImapMailboxSyncService {
         List<String> missing = new ArrayList<>();
         if (!props.isEnabled()) missing.add("IMAP_ENABLED=true");
         if (isBlank(props.getHost())) missing.add("IMAP_HOST");
-        if (isBlank(props.getUsername())) missing.add("IMAP_USERNAME (or MAIL_USERNAME)");
-        if (isBlank(props.getPassword())) missing.add("IMAP_PASSWORD (or MAIL_PASSWORD)");
+        // Through the resolver, so a blank IMAP_USERNAME reports as missing only when the
+        // SMTP one cannot stand in for it — which is the whole point of the fallback.
+        if (isBlank(credentials.username())) missing.add("IMAP_USERNAME (or MAIL_USERNAME)");
+        if (isBlank(credentials.password())) missing.add("IMAP_PASSWORD (or MAIL_PASSWORD)");
         return missing;
     }
 
@@ -410,7 +414,7 @@ public class ImapMailboxSyncService {
         p.put("mail." + protocol + ".starttls.enable", "true");
 
         Store store = Session.getInstance(p).getStore(protocol);
-        store.connect(props.getHost(), props.getPort(), props.getUsername(), props.getPassword());
+        store.connect(props.getHost(), props.getPort(), credentials.username(), credentials.password());
         return store;
     }
 
