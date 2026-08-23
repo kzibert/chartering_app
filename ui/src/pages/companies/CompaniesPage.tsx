@@ -10,7 +10,6 @@ import { usePersistedFilters } from '../../components/usePersistedState';
 import { CONFIRMED_OPTIONS } from '../../components/filterOptions';
 import ConfirmTag from '../../components/ConfirmTag';
 import AddToListActions from '../../components/AddToListActions';
-import EditToolbar, { useEditMode } from '../../components/EditToolbar';
 import { collectApi } from '../../api/circulations';
 import CompanyDrawer from './CompanyDrawer';
 import CompanyForm from './CompanyForm';
@@ -30,10 +29,6 @@ export default function CompaniesPage() {
   const [editing, setEditing] = useState<CompanyResponse | null>(null);
   // Ticked rows for the bulk add, kept across pages (see preserveSelectedRowKeys below).
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
-  // Page-wide rather than per-row: confirming is something you do to a run of companies
-  // you have just been through, and a mode that reset after every row would mean pressing
-  // Edit again for each one. Same reasoning as the People tab's contact editing.
-  const [editMode, setEditMode] = useEditMode(undefined);
 
   const query = useCompanies({ ...filters, page: tc.state.page, size: tc.state.size, sort: tc.state.sort });
   const deadOnly = filters.noWorkingEmail === true;
@@ -90,7 +85,6 @@ export default function CompaniesPage() {
       key: 'confirmed',
       render: (_, c) => (
         <ConfirmTag
-          editing={editMode}
           confirmed={c.confirmed}
           confirmedAt={c.confirmedAt}
           confirmedBy={c.confirmedBy}
@@ -127,7 +121,6 @@ export default function CompaniesPage() {
                 collect={(ids, confirmedOnly) => collectApi.fromCompanies(filters, ids, confirmedOnly)}
                 onCleared={() => setSelectedIds([])}
               />
-              <EditToolbar editing={editMode} onToggle={setEditMode} style={{ marginBottom: 0 }} />
             </>
           }
           extras={
@@ -247,7 +240,6 @@ export default function CompaniesPage() {
           },
           actions: (c) => (
             <ConfirmTag
-              editing={editMode}
               confirmed={c.confirmed}
               confirmedAt={c.confirmedAt}
               confirmedBy={c.confirmedBy}
@@ -273,7 +265,13 @@ export default function CompaniesPage() {
         onClose={() => setSelectedId(undefined)}
         onEdit={(c) => { setEditing(c); setFormOpen(true); }}
       />
-      <CompanyForm open={formOpen} editing={editing} onClose={() => setFormOpen(false)} />
+      <CompanyForm
+        open={formOpen}
+        editing={editing}
+        onClose={() => setFormOpen(false)}
+        // The drawer behind the form is showing the company that was just deleted.
+        onDeleted={() => setSelectedId(undefined)}
+      />
     </>
   );
 }

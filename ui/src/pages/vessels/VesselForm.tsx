@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Col, Form, Input, InputNumber, Modal, Row, Select } from 'antd';
 import { useVesselMutations, useVesselTypes, useFlags } from '../../api/hooks';
 import CompanySelect from '../../components/CompanySelect';
+import RecordActions from '../../components/RecordActions';
 import type { VesselRequest, VesselResponse } from '../../api/types';
 
 interface Props {
@@ -13,13 +14,32 @@ interface Props {
    */
   defaults?: Partial<VesselRequest>;
   onClose: () => void;
+  /**
+   * The vessel was deleted from in here. The form closes itself either way; this is for a
+   * caller that also has a drawer open on the same vessel, which would otherwise be left
+   * showing a record the server no longer has.
+   */
+  onDeleted?: () => void;
 }
 
-export default function VesselForm({ open, editing, defaults, onClose }: Props) {
+export default function VesselForm({ open, editing, defaults, onClose, onDeleted }: Props) {
   const [form] = Form.useForm<VesselRequest>();
-  const { create, update } = useVesselMutations();
+  const { create, update, remove, confirm, ban } = useVesselMutations();
   const { data: types } = useVesselTypes();
   const { data: flags } = useFlags();
+
+  /**
+   * The record as the server last described it.
+   *
+   * `editing` is a snapshot taken from the row that was clicked, and confirming or banning
+   * does not update it — the page's copy stays as it was until the list refetches, so the
+   * tag would still read "Needs confirm" a moment after you confirmed. Both endpoints hand
+   * back the saved record, so the answer is simply to keep what they returned.
+   */
+  const [record, setRecord] = useState<VesselResponse | null>(editing ?? null);
+  useEffect(() => {
+    if (open) setRecord(editing ?? null);
+  }, [open, editing]);
 
   useEffect(() => {
     if (open) {
@@ -128,6 +148,45 @@ export default function VesselForm({ open, editing, defaults, onClose }: Props) 
           <Input.TextArea rows={2} />
         </Form.Item>
       </Form>
+
+      {/* Only for a vessel that exists: there is nothing to confirm, ban or delete about
+          one that has not been saved yet. */}
+      {record && (
+        <RecordActions
+          entity="vessel"
+          name={record.name}
+          confirmed={record.confirmed}
+          confirmedAt={record.confirmedAt}
+          confirmedBy={record.confirmedBy}
+          confirmLoading={confirm.isPending}
+          onConfirm={(body) =>
+            confirm.mutate(
+              { id: record.id, confirmed: true, body },
+              { onSuccess: setRecord },
+            )
+          }
+          onUnconfirm={() =>
+            confirm.mutate({ id: record.id, confirmed: false }, { onSuccess: setRecord })
+          }
+          banned={record.banned}
+          banLoading={ban.isPending}
+          onToggleBan={(banned) =>
+            ban.mutate({ id: record.id, banned }, { onSuccess: setRecord })
+          }
+          deleteLoading={remove.isPending}
+          // What actually cascades, per the FK constraints in V1__baseline_schema.sql:
+          // vessel_company_links goes, the companies at the other end of it do not.
+          deleteWarning="The vessel is removed from the database. Companies linked to it are kept — only the link between them goes."
+          onDelete={() =>
+            remove.mutate(record.id, {
+              onSuccess: () => {
+                onClose();
+                onDeleted?.();
+              },
+            })
+          }
+        />
+      )}
     </Modal>
   );
 }

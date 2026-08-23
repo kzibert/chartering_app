@@ -8,7 +8,6 @@ import ContactLine from '../../components/ContactLine';
 import EditToolbar, { useEditMode } from '../../components/EditToolbar';
 import VesselRoleTag, { ROLE_OPTIONS } from '../../components/VesselRoleTag';
 import AttachCompanyModal from './AttachCompanyModal';
-import BanButton from '../../components/BanButton';
 import CompanyDrawer from '../companies/CompanyDrawer';
 import CompanyForm from '../companies/CompanyForm';
 import ContactForm from '../contacts/ContactForm';
@@ -22,7 +21,6 @@ interface Props {
 
 export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
   const { data, isLoading } = useVessel(vesselId);
-  const { confirm, remove, ban } = useVesselMutations();
   const v = data?.vessel;
 
   const [companyId, setCompanyId] = useState<number>();
@@ -32,11 +30,6 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
   // Owner contacts follow the same rules as the company drawer's Contacts tab:
   // read-only until Edit is on, which then reveals add/edit/delete and the
   // main / not-working toggles.
-  // Keyed on vesselId like every other edit mode in this drawer: the drawer stays mounted
-  // as you move from vessel to vessel, so without the reset you would still be armed to
-  // unconfirm on the next one you opened.
-  const [statusEditing, setStatusEditing] = useEditMode(vesselId);
-
   const { setLink, removeLink } = useVesselMutations();
   const [linksEditing, setLinksEditing] = useEditMode(vesselId);
   const [linkModalOpen, setLinkModalOpen] = useState(false);
@@ -67,50 +60,25 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
       width={560}
       title={v?.name ?? 'Vessel'}
       onClose={onClose}
-      extra={
-        v && (
-          <Space>
-            <Button onClick={() => onEdit(v)}>Edit</Button>
-            <BanButton
-              banned={v.banned}
-              loading={ban.isPending}
-              onToggle={(b) => ban.mutate({ id: v.id, banned: b })}
-            />
-            <Button
-              danger
-              loading={remove.isPending}
-              onClick={() => remove.mutate(v.id, { onSuccess: onClose })}
-            >
-              Delete
-            </Button>
-          </Space>
-        )
-      }
+      // Just Edit. Ban and Delete moved inside it, where confirm went too — the header of
+      // a drawer you opened to read something is no place for a one-click delete.
+      extra={v && <Button onClick={() => onEdit(v)}>Edit</Button>}
     >
       {isLoading || !v ? (
         <Spin />
       ) : (
         <>
-          {/* The toggle sits with the tags it governs, not on a row of its own — the same
-              way the Companies list below has its own. Each Edit in this drawer belongs to
-              the thing beside it, and the header's Edit (which opens the form) is a fourth
-              of those rather than an exception to it. */}
+          {/* Status only. ConfirmTag without `editing` is a tag and nothing more, and the
+              control for it now lives in the edit form. */}
           <Space style={{ marginBottom: 12 }} wrap>
             <ConfirmTag
-              editing={statusEditing}
               confirmed={v.confirmed}
               confirmedAt={v.confirmedAt}
               confirmedBy={v.confirmedBy}
-              loading={confirm.isPending}
-              onConfirm={(body) => confirm.mutate({ id: v.id, confirmed: true, body })}
-              onUnconfirm={() => confirm.mutate({ id: v.id, confirmed: false })}
+              onConfirm={() => undefined}
+              onUnconfirm={() => undefined}
             />
             {v.banned && <Tag color="red">banned</Tag>}
-            <EditToolbar
-              editing={statusEditing}
-              onToggle={setStatusEditing}
-              style={{ marginBottom: 0 }}
-            />
           </Space>
           {/* One column on a phone: bordered Descriptions put label and value in the same
               row, so two of each across 360px leaves nothing legible in any of the four. */}
@@ -221,6 +189,8 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
             open={companyFormOpen}
             editing={editingCompany}
             onClose={() => setCompanyFormOpen(false)}
+            // The nested company drawer, if one is open on the company just deleted.
+            onDeleted={() => setCompanyId(undefined)}
           />
           <ContactForm
             open={contactFormOpen}
