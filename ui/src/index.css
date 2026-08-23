@@ -82,12 +82,20 @@ body {
     margin: 8px auto;
   }
 
-  /* Same argument for the controls: a search box pinned to 420px inside a card that is
-     336px wide pushes its own row sideways. */
+  /*
+   * Same argument for the controls, with one caveat worth knowing before relying on it:
+   * this only bites where the control's parent has a width of its own — a Form.Item inside
+   * a Col, which is most of the filter forms. It does nothing for a control sitting in an
+   * antd Space, because there `100%` resolves against a `.ant-space-item` that is itself
+   * sized by its content, and 100% of 420px is 420px. Capping the whole ancestor chain
+   * would fix that and is not worth the blast radius; a control that wide inside a Space
+   * gets a width of its own at the call site instead (see the Mailbox search box).
+   */
   .ant-select,
   .ant-input,
   .ant-input-affix-wrapper,
   .ant-input-number,
+  .ant-input-group-wrapper,
   .ant-picker {
     max-width: 100%;
   }
