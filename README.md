@@ -990,8 +990,17 @@ Render's default, so `API_HOST` resolves to a port you can also read in the file
   endpoints refuse anonymous callers either way; this is just not advertising them.
 - **Redeploys log you out unless `JWT_SECRET` is fixed.** The blueprint's `generateValue`
   generates it once and keeps it, which is the point.
-- **Pool settings.** The blueprint ships `DB_POOL_MAX=5`, `DB_POOL_MIN_IDLE=1`. If the
-  database suspends when idle, drop the minimum to 0 — see below.
+- **Pool settings assume a database that sleeps.** The blueprint ships `DB_POOL_MAX=5`,
+  `DB_POOL_MIN_IDLE=0`, `DB_POOL_IDLE_TIMEOUT_MS=30000`, so the pool drains to nothing and a
+  serverless Postgres (Neon, Supabase) is actually allowed to suspend. The cost is a cold
+  start on the first query after a quiet spell. Against an always-on database, raise the
+  minimum back to 5 and lengthen the timeout.
+- **`DB_HEALTH_CHECK=false`, for the same reason.** With the database in the health check,
+  the platform's own polling runs a query around the clock and the database never gets to
+  sleep — on a plan metered by compute hours, the entire allowance goes on health checks.
+  Health then means "the app is serving", and a database outage surfaces on real requests
+  instead. Set it to `true` on an always-on database, where it is worth having: a deploy
+  pointed at the wrong `DB_URL` fails its health check rather than coming up broken.
 
 ### Deploying by hand instead
 

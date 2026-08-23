@@ -101,9 +101,10 @@
 		</dependency>
 		<!--
 			Health endpoint. Render polls one to decide whether a deploy came up, and
-			pointing it at /actuator/health means "the app answered and its DataSource
-			works" rather than "a port is open". Only health is exposed - see
-			application.yml.
+			/actuator/health answers "the application is serving" rather than "a port is
+			open". Whether it also checks the database is DB_HEALTH_CHECK, and the answer
+			depends on whether that database is allowed to sleep - see application.yml.
+			Only health is exposed.
 		-->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>

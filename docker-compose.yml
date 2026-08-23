@@ -57,6 +57,10 @@ services:
       DB_POOL_MAX: ${DB_POOL_MAX:-10}
       DB_POOL_MIN_IDLE: ${DB_POOL_MIN_IDLE:-10}
       DB_POOL_IDLE_TIMEOUT_MS: ${DB_POOL_IDLE_TIMEOUT_MS:-600000}
+      # Whether /actuator/health also checks the database. On a database that suspends when
+      # idle, leave it false: a health check polled around the clock is a query polled
+      # around the clock, and the database never gets to sleep.
+      DB_HEALTH_CHECK: ${DB_HEALTH_CHECK:-true}
       # ---- the login ----
       # One account, and until AUTH_PASSWORD (or AUTH_PASSWORD_HASH) is set the api starts
       # normally and refuses every login, saying so in its log. There is deliberately no

@@ -116,6 +116,19 @@ management:
     # the mail configuration, which is where that belongs.
     mail:
       enabled: false
+    # The database check, on by default and worth keeping: a deploy that comes up with the
+    # wrong DB_URL then fails its health check and is never routed to, which is precisely
+    # what a health check is for.
+    #
+    # The cost lands on a database that suspends when idle - Neon, Supabase, an Aurora
+    # serverless. The platform polls this endpoint around the clock, each poll runs a query,
+    # and the database therefore never gets to sleep. On a plan metered by compute hours
+    # that is the whole allowance spent on health checks. Set DB_HEALTH_CHECK=false there;
+    # health then means "the app is serving", and a database outage surfaces on real
+    # requests instead - which is the honest place for it, since restarting the container
+    # was never going to fix a database that is down.
+    db:
+      enabled: ${DB_HEALTH_CHECK:true}
 
 # Pacing and safety rails for bulk circulars — see MailCampaignProperties for what
 # each one protects against. Off by default: the app refuses to send until you set

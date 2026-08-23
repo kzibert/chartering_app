@@ -53,14 +53,26 @@ services:
         sync: false
       - key: DB_PASSWORD
         sync: false
-      # Sized for a small always-on instance. A database that suspends when idle wants
-      # DB_POOL_MIN_IDLE=0 and a short idle timeout instead - see the README.
+      # Sized for a serverless Postgres on the other side of the network rather than a
+      # container next door. Draining to zero is the point: an idle pool holds connections
+      # open, and a provider that suspends when idle cannot suspend while it does. The cost
+      # is a cold start - a second or so - on the first query after a quiet spell.
+      #
+      # For an always-on database, DB_POOL_MIN_IDLE=5 and a longer idle timeout are better;
+      # nothing here has to change but these three numbers.
       - key: DB_POOL_MAX
         value: 5
       - key: DB_POOL_MIN_IDLE
-        value: 1
+        value: 0
       - key: DB_POOL_IDLE_TIMEOUT_MS
-        value: 300000
+        value: 30000
+      # Leave the database out of the health check on a database that sleeps. Otherwise the
+      # platform's own polling runs a query around the clock and the thing never suspends -
+      # on a plan metered by compute hours, the allowance goes entirely on health checks.
+      # Set this to true on an always-on database: a deploy pointed at the wrong DB_URL then
+      # fails its health check instead of coming up broken.
+      - key: DB_HEALTH_CHECK
+        value: false
 
       # ---- the login --------------------------------------------------------
       # BCrypt hash, not the password itself. The README has the one-liner that produces
