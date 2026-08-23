@@ -74,16 +74,79 @@ spring:
           writetimeout: 30000
 
 server:
-  port: 8081
+  # Render (and most PaaS) tell the container which port to listen on rather than letting it
+  # choose; PORT is that instruction. Unset — compose, local dev — it stays on 8081 and
+  # nothing about the existing setup changes.
+  port: ${PORT:8081}
 
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
+    enabled: ${SWAGGER_ENABLED:true}
+  api-docs:
+    enabled: ${SWAGGER_ENABLED:true}
+
+# Health only. It is the one endpoint a deploy platform polls to decide the instance came
+# up, and it is deliberately the only actuator endpoint reachable: the rest of them (env,
+# configprops, beans) would publish the configuration this app's secrets live in, and they
+# are not behind the login because the health check cannot log in.
+#
+# show-details=never keeps the body to {"status":"UP"} — enough for a health check, and it
+# does not tell an anonymous caller which database or mail host is failing.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+  health:
+    # OFF, and this one is not optional. Spring Boot's mail indicator opens a real SMTP
+    # connection every time the endpoint is polled, and with MAIL_ENABLED=false and no
+    # credentials — the default, and the state a first deploy comes up in — it fails. That
+    # takes the whole endpoint DOWN, which means 503, which means a deploy platform decides
+    # the instance never came up and never routes traffic to it.
+    #
+    # It is the wrong check even when mail is configured: whether Zoho is reachable says
+    # nothing about whether this application is serving, and a health poll every few seconds
+    # is a good way to hit a mailbox's connection limit. The Circulars tab already reports
+    # the mail configuration, which is where that belongs.
+    mail:
+      enabled: false
 
 # Pacing and safety rails for bulk circulars — see MailCampaignProperties for what
 # each one protects against. Off by default: the app refuses to send until you set
 # MAIL_ENABLED=true along with real credentials.
 chartering:
+  # The login. One account, no users table - see AuthProperties for why that is the right
+  # shape here and what would have to change if it stopped being.
+  #
+  # Nothing below has a working default: an unset AUTH_PASSWORD means every login is refused
+  # and the startup log says so. That is on purpose. A default password on an application
+  # reachable from the internet is the same as no password, and it is the kind of default
+  # nobody ever gets round to changing.
+  auth:
+    username: ${AUTH_USERNAME:admin}
+    # Prefer the hash: set AUTH_PASSWORD_HASH and the plaintext exists nowhere. See the
+    # README for the one-liner that generates one.
+    password-hash: ${AUTH_PASSWORD_HASH:}
+    password: ${AUTH_PASSWORD:}
+    # 32+ characters. Blank means a key generated at startup, which works but logs everyone
+    # out on every restart - fine locally, wrong anywhere else.
+    jwt-secret: ${JWT_SECRET:}
+    token-ttl-minutes: ${AUTH_TOKEN_TTL_MINUTES:720}
+    max-failed-attempts: ${AUTH_MAX_FAILED_ATTEMPTS:5}
+    lockout-seconds: ${AUTH_LOCKOUT_SECONDS:300}
+
+  # Only relevant when the browser talks to the api on a different origin than it loaded
+  # from - a Vite dev server, or a UI deployed apart from the api. Behind the ui's nginx
+  # proxy every call is same-origin and none of this applies.
+  cors:
+    allowed-origins: ${CORS_ORIGINS:*}
+
   mail:
     enabled: ${MAIL_ENABLED:false}
     from-address: ${MAIL_FROM:}

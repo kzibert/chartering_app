@@ -57,6 +57,28 @@ services:
       DB_POOL_MAX: ${DB_POOL_MAX:-10}
       DB_POOL_MIN_IDLE: ${DB_POOL_MIN_IDLE:-10}
       DB_POOL_IDLE_TIMEOUT_MS: ${DB_POOL_IDLE_TIMEOUT_MS:-600000}
+      # ---- the login ----
+      # One account, and until AUTH_PASSWORD (or AUTH_PASSWORD_HASH) is set the api starts
+      # normally and refuses every login, saying so in its log. There is deliberately no
+      # working default: a default password on something reachable from a network is the
+      # same as no password.
+      #
+      # JWT_SECRET signs the tokens. Left unset the api generates a key at boot, which
+      # works but logs you out on every `up -d --force-recreate` - fine locally, wrong
+      # anywhere else. 32 characters minimum.
+      AUTH_USERNAME: ${AUTH_USERNAME:-admin}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-}
+      AUTH_PASSWORD_HASH: ${AUTH_PASSWORD_HASH:-}
+      JWT_SECRET: ${JWT_SECRET:-}
+      AUTH_TOKEN_TTL_MINUTES: ${AUTH_TOKEN_TTL_MINUTES:-720}
+      AUTH_MAX_FAILED_ATTEMPTS: ${AUTH_MAX_FAILED_ATTEMPTS:-5}
+      AUTH_LOCKOUT_SECONDS: ${AUTH_LOCKOUT_SECONDS:-300}
+      # Only matters when the browser reaches the api on a different origin than it loaded
+      # from. Behind the ui's nginx proxy it never does.
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      # Swagger. On by default because this compose file is the local setup; the Render
+      # blueprint turns it off.
+      SWAGGER_ENABLED: ${SWAGGER_ENABLED:-true}
       # The zone the API treats as local. Everything it timestamps — circulation history,
       # the campaign log — and every "today" it counts is wall-clock time in this zone; a
       # container with no TZ would run on UTC and roll the day over at the wrong hour.
@@ -127,5 +149,12 @@ services:
     restart: unless-stopped
     depends_on:
       - api
+    # nginx's config is rendered from a template at container start, so where the api lives
+    # and which port to listen on are environment, not a baked-in file. The Dockerfile's
+    # defaults are exactly these two values - they are written out here so that what this
+    # container is doing is readable without opening the Dockerfile.
+    environment:
+      API_HOST: api:8081
+      PORT: 80
     ports:
       - "${UI_PORT:-8082}:80"

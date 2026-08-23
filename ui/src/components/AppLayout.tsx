@@ -1,5 +1,5 @@
 import { ReactNode } from 'react';
-import { Badge, Layout, Menu, Typography } from 'antd';
+import { Badge, Button, Layout, Menu, Space, Typography } from 'antd';
 import {
   DashboardOutlined,
   ContainerOutlined,
@@ -9,10 +9,14 @@ import {
   SendOutlined,
   MailOutlined,
   SettingOutlined,
+  LogoutOutlined,
+  UserOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useCurrentList } from '../circulations/store';
 import { useMailboxStatus } from '../mailbox/store';
+import { clearToken } from '../auth/store';
 
 const { Sider, Header, Content } = Layout;
 
@@ -22,9 +26,16 @@ const KEYS = [
   '/settings',
 ];
 
-export default function AppLayout({ children }: { children: ReactNode }) {
+export default function AppLayout({
+  children,
+  username,
+}: {
+  children: ReactNode;
+  username?: string;
+}) {
   const navigate = useNavigate();
   const location = useLocation();
+  const queryClient = useQueryClient();
   const { entries } = useCurrentList();
   const status = useMailboxStatus();
   const selected = KEYS.includes(location.pathname) ? location.pathname : '/';
@@ -75,6 +86,17 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     { key: '/settings', icon: <SettingOutlined />, label: 'Settings' },
   ];
 
+  /**
+   * Logging out is throwing the token away — the server keeps no session to end, so there
+   * is nothing to tell it. Clearing the query cache with it matters more than it looks:
+   * without that, the cached vessels and mailbox messages would still be sitting in memory
+   * behind the login screen and would flash up for a moment on the next login.
+   */
+  const logout = () => {
+    clearToken();
+    queryClient.clear();
+  };
+
   return (
     <Layout style={{ minHeight: '100vh' }}>
       {/* Pinned to the viewport, not to the page: without this the sider grows to the
@@ -113,10 +135,29 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         </div>
       </Sider>
       <Layout>
-        <Header style={{ background: '#fff', paddingInline: 24 }}>
-          <Typography.Title level={4} style={{ margin: '16px 0' }}>
+        <Header
+          style={{
+            background: '#fff',
+            paddingInline: 24,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 16,
+          }}
+        >
+          <Typography.Title level={4} style={{ margin: 0 }}>
             Maritella chartering application
           </Typography.Title>
+          <Space size="middle">
+            {username && (
+              <Typography.Text type="secondary">
+                <UserOutlined /> {username}
+              </Typography.Text>
+            )}
+            <Button icon={<LogoutOutlined />} onClick={logout}>
+              Log out
+            </Button>
+          </Space>
         </Header>
         <Content style={{ margin: 24 }}>{children}</Content>
       </Layout>

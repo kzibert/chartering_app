@@ -62,6 +62,20 @@ arrives from a backup you restore yourself (see
 docker compose down        # stop; nothing here holds state
 ```
 
+**Set a password before the first start.** The whole application is behind a login and
+there is no default password — without one the api starts, logs `no password configured`
+and refuses every attempt:
+
+```bash
+# in .env
+AUTH_USERNAME=admin
+AUTH_PASSWORD=whatever-you-like        # local only; deployments use AUTH_PASSWORD_HASH
+JWT_SECRET=$(openssl rand -base64 48)  # 32+ chars, or you are logged out on every restart
+```
+
+See [The login](#the-login) for what those do and how to avoid keeping the password in
+plaintext.
+
 Override credentials/ports by copying `.env.example` to `.env`.
 
 **Time is local, not UTC.** Both containers run on `TZ` (default `Europe/Warsaw`), so every
@@ -79,14 +93,100 @@ docker compose up -d --force-recreate api db
 
 ```
 docker-compose.yml       # api + ui only (compose project "chartering") - no database
+render.yaml              # Render blueprint: the same two containers, deployed
 .env.example             # DB connection, credential and port overrides
 api/                     # Spring Boot backend, package com.chartering (multi-stage Dockerfile)
   src/main/resources/db/migration/     # THE SCHEMA. Flyway migrations, applied on api startup
     V1__baseline_schema.sql            #   23 tables, 3 views, 49 indexes, pg_trgm - no data
 (no db/ folder: this repo carries no database, no dumps and no operational runbooks)
 ui/                      # React SPA (multi-stage: node build -> nginx)
+  default.conf.template              # nginx config, rendered at container start from PORT / API_HOST
 logs/                    # campaign send log, bind-mounted from the api container (gitignored)
 ```
+
+## The login
+
+Every endpoint under `/api` refuses a request that does not carry a valid token, and the SPA
+shows a login screen until it has one. There is **one account**, configured from the
+environment — no users table, no registration, no password reset.
+
+That is the right shape for what this is. The database has no concept of an owner: every row
+is visible to whoever is logged in, and nothing in it is attributed to an account. A users
+table would add a schema, a migration and an admin screen while changing nothing about who
+can see what. The login exists to stop the internet reaching the data, and one credential
+does that. `AuthProperties` is where a second account would start if one is ever needed —
+nothing else in the app asks who the caller is.
+
+```bash
+# in .env
+AUTH_USERNAME=admin
+AUTH_PASSWORD=whatever-you-like
+JWT_SECRET=...                    # 32 chars minimum
+docker compose up -d --force-recreate api
+```
+
+### The password
+
+Two ways to set it, and the second is the one for anything deployed:
+
+| Variable | What it is | Use it |
+|---|---|---|
+| `AUTH_PASSWORD` | The password in plaintext, hashed at startup | Locally |
+| `AUTH_PASSWORD_HASH` | A BCrypt hash | Everywhere else |
+
+The hash form means the plaintext exists nowhere — not in `.env`, not in a Render
+environment group, not in your shell history. Generate one with nothing installed but
+Docker:
+
+```bash
+docker run --rm httpd:alpine htpasswd -nbBC 10 admin 'your-password'
+# admin:$2y$10$Q1n...   <- take everything after the first colon
+```
+
+Spring Security accepts the `$2y$` prefix `htpasswd` writes. **Quote it when it goes into
+`.env`**: compose expands `$VAR` inside values and a BCrypt hash is mostly `$` signs, so
+`AUTH_PASSWORD_HASH='$2y$10$...'` — single quotes — or every `$` doubled. Getting this wrong
+looks exactly like a wrong password.
+
+Set both and the hash wins.
+
+### Sessions
+
+Login returns a **JWT**, signed HS256 with `JWT_SECRET`, which the browser keeps in
+`localStorage` and sends as `Authorization: Bearer …` on every request. It carries a username
+and an expiry and nothing else — a JWT is signed, not encrypted, so anything in it is
+readable by whoever holds it.
+
+- `JWT_SECRET` **must be at least 32 characters**; the api refuses to start with a shorter
+  one rather than quietly weakening the signature. `openssl rand -base64 48`.
+- Left unset, the api generates a key at boot and warns. Everything works, but the key is
+  different next time, so every restart logs you out.
+- `AUTH_TOKEN_TTL_MINUTES` (default 720 — 12 hours) is how long a session lasts.
+- **There is no logout endpoint and no revocation.** A stateless token is valid until it
+  expires or the signing key changes; logging out is the browser throwing its copy away.
+  Revoking early would mean a table read on every single request, to close a window the TTL
+  already closes. Changing `JWT_SECRET` and restarting invalidates every outstanding session
+  at once, which is the button to press if a token ever leaks.
+- Five wrong passwords in a row and the login endpoint stops answering for five minutes
+  (`AUTH_MAX_FAILED_ATTEMPTS`, `AUTH_LOCKOUT_SECONDS`). A successful login clears the count.
+
+### What is left open
+
+Three things answer without a token, on purpose:
+
+| Path | Why |
+|---|---|
+| `POST /api/v1/auth/login` | Obviously |
+| `/actuator/health` | A deploy platform's health check cannot log in. Returns `{"status":"UP"}` and nothing else — no database host, no mail host |
+| `/swagger-ui/**`, `/v3/api-docs/**` | Documentation, not data. `SWAGGER_ENABLED=false` turns both into 404s, and the Render blueprint does |
+
+Everything else is `authenticated()` by default, so a controller added next month is behind
+the login without anyone remembering to put it there. `SecurityConfig` is the one file that
+decides otherwise.
+
+CSRF protection is off, which is correct *because* the token is in a header rather than a
+cookie: a cross-site request cannot set one. That equivalence stops holding the moment the
+token moves into a cookie.
 
 ## Circulars (bulk email)
 
@@ -759,7 +859,17 @@ thread), plus CRUD on `/api/v1/mailbox/folders` and `/api/v1/mailbox/rules` and
 ## Local dev (without Docker)
 
 - **API:** needs JDK 21 + Maven and a Postgres on `localhost:5433`, which is exactly what the `dev` profile defaults to and exactly what `../chartering-db` publishes. Start that, then `cd api && mvn spring-boot:run` — the database will be empty and the app you are about to start is what migrates it. To work against the hosted database instead, set `DB_URL` / `DB_USER` / `DB_PASSWORD` in the environment.
-- **UI:** needs Node 20. `cd ui && npm install && npm run dev` → http://localhost:5173 (Vite proxies `/api` → `localhost:8081`).
+- **UI:** needs Node 20. `cd ui && npm install && npm run dev` → http://localhost:5173 (Vite proxies `/api` → `localhost:8081`, so the login is same-origin here too and `CORS_ORIGINS` stays irrelevant).
+
+`mvn spring-boot:run` does not read `.env` — that file is compose's. Set the login in the
+environment, or every request the dev UI makes comes back 401:
+
+```bash
+AUTH_PASSWORD=dev JWT_SECRET=a-development-signing-key-32-chars-long mvn spring-boot:run
+```
+
+Leaving `JWT_SECRET` out is fine locally; the api generates one per start, and you log in
+again after each restart.
 
 ## Changing the schema
 
@@ -809,6 +919,85 @@ Two things that bite when taking one:
   easiest way and needs nothing installed.
 - **Check the result before trusting it.** `pg_restore -l` on the archive should list table
   data. A dump that exists is not the same as a dump that restores.
+
+## Deploying to Render
+
+`render.yaml` is a blueprint for the same two containers compose builds — the api and the
+nginx-served ui — as two Render web services. **Render dashboard → New → Blueprint →** point
+it at this repo.
+
+Applying it prompts for everything marked `sync: false` (the database connection and the
+login) and generates `JWT_SECRET` itself. Nothing secret is in the file, and nothing secret
+should be added to it: it is committed.
+
+### What has to be true first
+
+**A database has to exist.** The blueprint deliberately does not create one — same reasoning
+as compose having no `db` service, and with a stronger edge here: a `databases:` block would
+create a new empty Postgres on *every* blueprint apply. Use a Render Postgres or the hosted
+database you already have, and give the api three values:
+
+```
+DB_URL       jdbc:postgresql://HOST:5432/DATABASE?sslmode=require
+DB_USER      ...
+DB_PASSWORD  ...
+```
+
+A **JDBC** url, not the `postgresql://user:pass@host/db` string the provider shows you. For a
+Render Postgres, take the host off its Info tab — the **internal** one if the database is in
+the same region, which is faster and never leaves Render's network.
+
+`pg_trgm` has to be available before the app connects: `CREATE EXTENSION IF NOT EXISTS
+pg_trgm;` once, as an admin. Flyway then builds the schema on first boot — every table
+present, every table empty. Data comes from a backup you restore
+([Backing up](#backing-up-and-getting-data-into-a-fresh-environment)).
+
+**A password hash.** `AUTH_PASSWORD_HASH`, not `AUTH_PASSWORD` — see
+[The login](#the-login). Render's environment editor does not expand `$`, so paste the hash
+as it comes out of `htpasswd`, unquoted.
+
+### How the two services find each other
+
+The ui's nginx proxies `/api/` to the api over Render's private network, so the browser only
+ever makes same-origin requests and the api needs no public traffic of its own. The address
+comes from `API_HOST`, which the blueprint fills from the api service:
+
+```yaml
+- key: API_HOST
+  fromService: { type: web, name: chartering-api, property: hostport }
+```
+
+That is why `ui/nginx.conf` became `ui/default.conf.template`: the nginx image renders it
+with `envsubst` at container start, so one image serves compose (`api:8081`) and Render
+(whatever `hostport` resolves to) without a rebuild. If a blueprint apply rejects
+`hostport`, set `API_HOST` to `chartering-api:8081` by hand — it is the same value.
+
+`PORT` is pinned in the blueprint for both services (8081 and 80) rather than left to
+Render's default, so `API_HOST` resolves to a port you can also read in the file.
+
+### Things that behave differently there than on compose
+
+- **The filesystem is ephemeral.** The campaign log (`logs/campaign-current.log`) is
+  bind-mounted to the host under compose and simply lost on restart under Render. The
+  circulation *history* is unaffected — that lives in the database. Add a Render disk if the
+  log matters.
+- **A free instance sleeps.** After 15 minutes idle it spins down, and the next request pays
+  a cold start of roughly a minute. That is bad for a browser tab and much worse for a
+  circular: the IMAP poll and the campaign runner are scheduled jobs, and a sleeping instance
+  is not running them. Use a paid instance for anything that has to keep sending; `starter`
+  is what the blueprint asks for.
+- **`SWAGGER_ENABLED=false`.** No published map of the API from a public instance. The
+  endpoints refuse anonymous callers either way; this is just not advertising them.
+- **Redeploys log you out unless `JWT_SECRET` is fixed.** The blueprint's `generateValue`
+  generates it once and keeps it, which is the point.
+- **Pool settings.** The blueprint ships `DB_POOL_MAX=5`, `DB_POOL_MIN_IDLE=1`. If the
+  database suspends when idle, drop the minimum to 0 — see below.
+
+### Deploying by hand instead
+
+The blueprint is optional; two Docker web services created in the dashboard do the same
+thing. Root directory `api/` and `ui/`, Dockerfile path `./Dockerfile` in each, health check
+`/actuator/health` on the api, and the environment variables above.
 
 ## Running against a hosted database
 

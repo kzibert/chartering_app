@@ -17,6 +17,7 @@
 	<properties>
 		<java.version>21</java.version>
 		<springdoc.version>2.7.0</springdoc.version>
+		<jjwt.version>0.12.6</jjwt.version>
 		<!--
 			Connection the flyway-maven-plugin uses. Not the application's: the app reads
 			application.yml and these are only for the command-line goals, which run
@@ -62,6 +63,51 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-mail</artifactId>
+		</dependency>
+		<!--
+			Authentication. Spring Security here is doing one job: refusing every request
+			that does not carry a valid token, and hashing the one password with BCrypt.
+			Its session, CSRF and form-login machinery is all switched off in
+			SecurityConfig - a stateless API with a Bearer token needs none of it.
+		-->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security</artifactId>
+		</dependency>
+		<!--
+			Signing and verifying the token. jjwt rather than Spring's own oauth2-jose
+			resource server: there is no authorization server, no key rotation and no
+			scopes here - just an HS256 signature over a username and an expiry - and the
+			resource-server stack would be a great deal of configuration around the same
+			few lines. impl and jackson are runtime-only by jjwt's own design; only the
+			-api artifact is compiled against.
+		-->
+		<dependency>
+			<groupId>io.jsonwebtoken</groupId>
+			<artifactId>jjwt-api</artifactId>
+			<version>${jjwt.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>io.jsonwebtoken</groupId>
+			<artifactId>jjwt-impl</artifactId>
+			<version>${jjwt.version}</version>
+			<scope>runtime</scope>
+		</dependency>
+		<dependency>
+			<groupId>io.jsonwebtoken</groupId>
+			<artifactId>jjwt-jackson</artifactId>
+			<version>${jjwt.version}</version>
+			<scope>runtime</scope>
+		</dependency>
+		<!--
+			Health endpoint. Render polls one to decide whether a deploy came up, and
+			pointing it at /actuator/health means "the app answered and its DataSource
+			works" rather than "a port is open". Only health is exposed - see
+			application.yml.
+		-->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-actuator</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>org.springdoc</groupId>

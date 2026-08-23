@@ -1,0 +1,55 @@
+# nginx config as a template, not as a finished file.
+#
+# The official nginx image runs envsubst over everything in /etc/nginx/templates/ at
+# container start and writes the result into /etc/nginx/conf.d/. That is what lets the same
+# image serve compose - where the api is a container called "api" on 8081 - and Render,
+# where it is a service reachable by another name on another port, without a rebuild.
+#
+# Only PORT and API_HOST are substituted (NGINX_ENVSUBST_FILTER in the Dockerfile pins that
+# down). nginx's own runtime variables below - $host, $scheme, $proxy_add_x_forwarded_for -
+# are left exactly as written, which is the whole reason for the filter: without it envsubst
+# would happily replace any of them that happened to match an environment variable name.
+server {
+    listen ${PORT};
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Reverse-proxy API calls to the api service. Same-origin from the browser's point of
+    # view, so no CORS is involved and the bearer token rides on a normal request.
+    location /api/ {
+        proxy_pass http://${API_HOST}/api/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # Behind Render's TLS terminator the api would otherwise believe it is on plain
+        # http, and generate http:// links in Swagger.
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Campaign preflight and the IMAP sync are slower than a default 60s read timeout
+        # allows for; a circular that takes 90 seconds to preflight should not 504.
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+
+    # SPA: serve index.html for client-side routes.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # index.html must not be cached, or a redeploy leaves browsers loading the old bundle
+    # by name - and those names change on every build, so the stale index points at files
+    # that no longer exist. The hashed assets under /assets/ are safe to cache forever
+    # precisely because their names change.
+    location = /index.html {
+        add_header Cache-Control "no-store, must-revalidate";
+    }
+
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
+    # This app is now reachable from the internet. Neither header does much on its own;
+    # both are free.
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+}

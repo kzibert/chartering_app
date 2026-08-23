@@ -1,0 +1,120 @@
+# Render blueprint: the same two containers compose builds, deployed as two web services.
+#
+#   Render dashboard -> New -> Blueprint -> point at this repo
+#
+# Applying it prompts for every value marked `sync: false` below - the database connection
+# and the login - and generates the JWT signing key. Nothing secret is in this file, and
+# nothing secret should ever be added to it: it is committed.
+#
+# THE DATABASE IS NOT HERE, for the same reason it is not in docker-compose.yml. Render's
+# managed Postgres is one option and an existing hosted database is another; either way it
+# is three environment variables and this file does not need to know which. Adding a
+# `databases:` block here would create a new, empty one on every blueprint apply.
+#
+# Flyway builds the schema on first boot, so a brand-new database comes up with every table
+# present and empty. Data arrives from a backup you restore yourself - see the README.
+
+services:
+  # ---------------------------------------------------------------------------
+  # api - Spring Boot
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: chartering-api
+    runtime: docker
+    dockerfilePath: ./api/Dockerfile
+    dockerContext: ./api
+    plan: starter
+    region: frankfurt
+    # "Did the deploy come up" answered by the app rather than by the port being open.
+    # /actuator/health is the only actuator endpoint exposed and is deliberately outside
+    # the login - a health check cannot log in.
+    healthCheckPath: /actuator/health
+    envVars:
+      # Render dictates the port through PORT; application.yml reads it and falls back to
+      # 8081 everywhere else. Pinned to 8081 rather than left to Render's default so that
+      # the ui's API_HOST below is a value you can also read here.
+      - key: PORT
+        value: 8081
+      - key: SPRING_PROFILES_ACTIVE
+        value: docker
+      # Wall-clock zone for timestamps and for where "today" starts. See the README.
+      - key: TZ
+        value: Europe/Warsaw
+
+      # ---- the database -----------------------------------------------------
+      # JDBC url, not the postgresql:// one the provider shows you, and TLS is not
+      # optional on a hosted database:
+      #   jdbc:postgresql://HOST:5432/DATABASE?sslmode=require
+      # For a Render Postgres, take the host from its Info tab (use the INTERNAL host if
+      # the database is in this same region - it is faster and never leaves Render).
+      - key: DB_URL
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      # Sized for a small always-on instance. A database that suspends when idle wants
+      # DB_POOL_MIN_IDLE=0 and a short idle timeout instead - see the README.
+      - key: DB_POOL_MAX
+        value: 5
+      - key: DB_POOL_MIN_IDLE
+        value: 1
+      - key: DB_POOL_IDLE_TIMEOUT_MS
+        value: 300000
+
+      # ---- the login --------------------------------------------------------
+      # BCrypt hash, not the password itself. The README has the one-liner that produces
+      # one; AUTH_PASSWORD would work too and is worse, because anything that can read the
+      # environment then reads the password.
+      - key: AUTH_USERNAME
+        sync: false
+      - key: AUTH_PASSWORD_HASH
+        sync: false
+      # Render generates this once and keeps it. That "once" is the point: change the
+      # signing key and every token already issued stops verifying, which logs the browser
+      # out. Left unset the app generates one per boot and every redeploy logs you out.
+      - key: JWT_SECRET
+        generateValue: true
+
+      # ---- posture ----------------------------------------------------------
+      # No API documentation on a public instance. Not because the endpoints are secret -
+      # they refuse anonymous callers either way - but a published map of them is a
+      # courtesy this deployment owes nobody.
+      - key: SWAGGER_ENABLED
+        value: false
+      # The ui is same-origin through its own nginx, so nothing legitimate needs CORS.
+      # Narrow rather than "*" - and narrow to a value that matches nothing, since the
+      # browser never makes a cross-origin call here.
+      - key: CORS_ORIGINS
+        value: https://chartering-ui.onrender.com
+
+      # ---- circulars, mailbox, Brevo ----------------------------------------
+      # Deliberately absent. The app starts without them and the Circulars tab says what
+      # is missing; add them in the Render dashboard (Environment) when you want the desk
+      # to send, rather than answering fifteen prompts at blueprint time. .env.example is
+      # the annotated list of what they are.
+      - key: MAIL_ENABLED
+        value: false
+
+  # ---------------------------------------------------------------------------
+  # ui - React build served by nginx, which also proxies /api to the api service
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: chartering-ui
+    runtime: docker
+    dockerfilePath: ./ui/Dockerfile
+    dockerContext: ./ui
+    plan: starter
+    region: frankfurt
+    envVars:
+      - key: PORT
+        value: 80
+      # Where nginx forwards /api/. `hostport` is the api's private address inside
+      # Render - it never leaves their network, so the api needs no public exposure of
+      # its own for the ui to reach it. If a blueprint apply rejects this key, set
+      # API_HOST to `chartering-api:8081` by hand; it is the same value.
+      - key: API_HOST
+        fromService:
+          type: web
+          name: chartering-api
+          property: hostport

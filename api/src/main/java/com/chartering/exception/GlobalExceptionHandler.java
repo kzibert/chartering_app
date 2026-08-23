@@ -48,6 +48,21 @@ public class GlobalExceptionHandler {
         return body(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
     }
 
+    /**
+     * Wrong credentials, or the login endpoint temporarily refusing to answer after too many
+     * attempts. One status and one message for all of those — see AuthService.
+     */
+    @ExceptionHandler(AuthenticationFailedException.class)
+    public ResponseEntity<Map<String, Object>> handleAuthFailed(AuthenticationFailedException ex) {
+        return body(HttpStatus.UNAUTHORIZED, ex.getMessage());
+    }
+
+    /** No password configured server-side: nobody can log in until one is. */
+    @ExceptionHandler(AuthNotConfiguredException.class)
+    public ResponseEntity<Map<String, Object>> handleAuthNotConfigured(AuthNotConfiguredException ex) {
+        return body(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
+    }
+
     /** Conflicting state, e.g. starting a campaign while one is already running. */
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalState(IllegalStateException ex) {
