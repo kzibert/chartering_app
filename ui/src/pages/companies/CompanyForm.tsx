@@ -1,17 +1,33 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Checkbox, Form, Input, Modal, Space } from 'antd';
 import { useCompanyMutations } from '../../api/hooks';
+import RecordActions from '../../components/RecordActions';
 import type { CompanyRequest, CompanyResponse } from '../../api/types';
 
 interface Props {
   open: boolean;
   editing?: CompanyResponse | null;
   onClose: () => void;
+  /**
+   * The company was deleted from in here. The form closes itself either way; this is for a
+   * caller that also has a drawer open on the same company, which would otherwise be left
+   * showing a record the server no longer has.
+   */
+  onDeleted?: () => void;
 }
 
-export default function CompanyForm({ open, editing, onClose }: Props) {
+export default function CompanyForm({ open, editing, onClose, onDeleted }: Props) {
   const [form] = Form.useForm<CompanyRequest>();
-  const { create, update } = useCompanyMutations();
+  const { create, update, remove, confirm, ban } = useCompanyMutations();
+
+  /**
+   * The record as the server last described it — see the same field on VesselForm. The
+   * `editing` prop is a snapshot of the clicked row and does not move when the flags do.
+   */
+  const [record, setRecord] = useState<CompanyResponse | null>(editing ?? null);
+  useEffect(() => {
+    if (open) setRecord(editing ?? null);
+  }, [open, editing]);
 
   useEffect(() => {
     if (open) {
@@ -75,6 +91,45 @@ export default function CompanyForm({ open, editing, onClose }: Props) {
           <Input.TextArea rows={2} />
         </Form.Item>
       </Form>
+
+      {/* Only for a company that exists: there is nothing to confirm, ban or delete about
+          one that has not been saved yet. */}
+      {record && (
+        <RecordActions
+          entity="company"
+          name={record.name}
+          confirmed={record.confirmed}
+          confirmedAt={record.confirmedAt}
+          confirmedBy={record.confirmedBy}
+          confirmLoading={confirm.isPending}
+          onConfirm={(body) =>
+            confirm.mutate({ id: record.id, confirmed: true, body }, { onSuccess: setRecord })
+          }
+          onUnconfirm={() =>
+            confirm.mutate({ id: record.id, confirmed: false }, { onSuccess: setRecord })
+          }
+          banned={record.banned}
+          banLoading={ban.isPending}
+          onToggleBan={(banned) => ban.mutate({ id: record.id, banned }, { onSuccess: setRecord })}
+          deleteLoading={remove.isPending}
+          /*
+           * Not a figure of speech: people.company_id and contacts.company_id are both
+           * ON DELETE CASCADE (V1__baseline_schema.sql), so deleting a company really does
+           * take its people and their addresses with it. Vessels it owns survive — that FK
+           * is SET NULL — and the mail is only unlinked. Worth spelling out on the button,
+           * because none of it is visible from the company row.
+           */
+          deleteWarning="Everyone filed under this company goes with it, and their email addresses and phone numbers with them. Vessels it owns are kept but lose their owner; past mail is kept but unlinked."
+          onDelete={() =>
+            remove.mutate(record.id, {
+              onSuccess: () => {
+                onClose();
+                onDeleted?.();
+              },
+            })
+          }
+        />
+      )}
     </Modal>
   );
 }

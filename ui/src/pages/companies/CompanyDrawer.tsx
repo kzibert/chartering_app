@@ -23,7 +23,6 @@ import {
   useCompany,
   useCompanyContacts,
   useCompanyVessels,
-  useCompanyMutations,
   useContactMutations,
   useVesselMutations,
 } from '../../api/hooks';
@@ -33,7 +32,6 @@ import { ContactRowExpansion } from '../../components/ContactRowExpansion';
 import CompanyPeopleTab from './CompanyPeopleTab';
 import VesselRoleTag, { ROLE_OPTIONS } from '../../components/VesselRoleTag';
 import EditToolbar, { useEditMode } from '../../components/EditToolbar';
-import BanButton from '../../components/BanButton';
 import VesselDrawer from '../vessels/VesselDrawer';
 import VesselForm from '../vessels/VesselForm';
 import { LinkVesselModal } from '../vessels/VesselOwnerModals';
@@ -61,15 +59,9 @@ interface Props {
 
 export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClose, onEdit }: Props) {
   const { data, isLoading } = useCompany(companyId);
-  const { confirm, remove, ban } = useCompanyMutations();
   const c = data?.company;
 
   const [vesselId, setVesselId] = useState<number>();
-
-  // Keyed on companyId like the tabs' own edit modes: the drawer stays mounted as you move
-  // from company to company, so without the reset you would still be armed to unconfirm on
-  // the next one you opened.
-  const [statusEditing, setStatusEditing] = useEditMode(companyId);
 
   // Controlled so opening a person from the dashboard can land on the People tab;
   // as a side effect each company starts on its own initial tab rather than
@@ -119,38 +111,23 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
       width={720}
       title={c?.name ?? 'Company'}
       onClose={onClose}
-      extra={
-        c && (
-          <Space>
-            <Button onClick={() => onEdit(c)}>Edit</Button>
-            <BanButton
-              banned={c.banned}
-              loading={ban.isPending}
-              onToggle={(b) => ban.mutate({ id: c.id, banned: b })}
-            />
-            <Button danger loading={remove.isPending} onClick={() => remove.mutate(c.id, { onSuccess: onClose })}>
-              Delete
-            </Button>
-          </Space>
-        )
-      }
+      // Just Edit. Ban and Delete moved inside it, where confirm went too — the header of
+      // a drawer you opened to read something is no place for a one-click delete.
+      extra={c && <Button onClick={() => onEdit(c)}>Edit</Button>}
     >
       {isLoading || !c ? (
         <Spin />
       ) : (
         <>
-          {/* The toggle sits with the tags it governs, not on a row of its own — the same
-              way each tab below has its own. Every Edit in this drawer belongs to the thing
-              beside it, and the header's Edit (which opens the form) is one of those. */}
+          {/* Status only. ConfirmTag without `editing` is a tag and nothing more, and the
+              control for it now lives in the edit form. */}
           <Space style={{ marginBottom: 12 }} wrap>
             <ConfirmTag
-              editing={statusEditing}
               confirmed={c.confirmed}
               confirmedAt={c.confirmedAt}
               confirmedBy={c.confirmedBy}
-              loading={confirm.isPending}
-              onConfirm={(body) => confirm.mutate({ id: c.id, confirmed: true, body })}
-              onUnconfirm={() => confirm.mutate({ id: c.id, confirmed: false })}
+              onConfirm={() => undefined}
+              onUnconfirm={() => undefined}
             />
             {c.noWorkingEmail && (
               <Tooltip title="Every email address on file for this company is flagged not working">
@@ -164,11 +141,6 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
             {c.charterer && <Tag color="green">charterer</Tag>}
             {c.broker && <Tag color="gold">broker</Tag>}
             {c.agent && <Tag color="purple">agent</Tag>}
-            <EditToolbar
-              editing={statusEditing}
-              onToggle={setStatusEditing}
-              style={{ marginBottom: 0 }}
-            />
           </Space>
           {c.notes && (
             <Typography.Paragraph style={{ marginBottom: 12, whiteSpace: 'pre-wrap' }}>
@@ -230,6 +202,8 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
             editing={editingVessel}
             defaults={vesselDefaults}
             onClose={() => setVesselFormOpen(false)}
+            // The nested vessel drawer, if one is open on the vessel just deleted.
+            onDeleted={() => setVesselId(undefined)}
           />
           <LinkVesselModal
             open={linkVesselOpen}

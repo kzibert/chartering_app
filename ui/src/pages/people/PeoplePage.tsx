@@ -354,7 +354,12 @@ export default function PeoplePage() {
         onClose={() => setCompanyDrawerId(undefined)}
         onEdit={(c) => { setEditingCompany(c); setCompanyFormOpen(true); }}
       />
-      <CompanyForm open={companyFormOpen} editing={editingCompany} onClose={() => setCompanyFormOpen(false)} />
+      <CompanyForm
+        open={companyFormOpen}
+        editing={editingCompany}
+        onClose={() => setCompanyFormOpen(false)}
+        onDeleted={() => setCompanyDrawerId(undefined)}
+      />
       <ContactForm
         open={contactFormOpen}
         editing={editingContact}

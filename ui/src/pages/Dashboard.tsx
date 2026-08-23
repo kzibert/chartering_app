@@ -112,14 +112,24 @@ export default function Dashboard() {
         onClose={() => setVesselId(undefined)}
         onEdit={(v) => { setEditingVessel(v); setVesselFormOpen(true); }}
       />
-      <VesselForm open={vesselFormOpen} editing={editingVessel} onClose={() => setVesselFormOpen(false)} />
+      <VesselForm
+        open={vesselFormOpen}
+        editing={editingVessel}
+        onClose={() => setVesselFormOpen(false)}
+        onDeleted={() => setVesselId(undefined)}
+      />
       <CompanyDrawer
         companyId={companyId}
         initialTab={companyTab}
         onClose={() => setCompanyId(undefined)}
         onEdit={(c) => { setEditingCompany(c); setCompanyFormOpen(true); }}
       />
-      <CompanyForm open={companyFormOpen} editing={editingCompany} onClose={() => setCompanyFormOpen(false)} />
+      <CompanyForm
+        open={companyFormOpen}
+        editing={editingCompany}
+        onClose={() => setCompanyFormOpen(false)}
+        onDeleted={() => setCompanyId(undefined)}
+      />
       <PersonDrawer
         personId={personId}
         onClose={() => setPersonId(undefined)}

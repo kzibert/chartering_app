@@ -5,6 +5,7 @@ import { peopleApi } from './people';
 import { contactsApi } from './contacts';
 import { lookupsApi } from './lookups';
 import { settingsApi } from './settings';
+import { forgetRecent, type RecentKind } from '../recent/store';
 import type {
   CompanyFilter,
   CompanyRequest,
@@ -24,6 +25,42 @@ function useInvalidator() {
   return (...keys: string[]) => {
     keys.forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
     qc.invalidateQueries({ queryKey: ['dashboard'] });
+  };
+}
+
+/**
+ * Mark a deleted record's detail query as gone, by writing null over it.
+ *
+ * The two obvious moves both end up fetching the dead id, and both were measured doing it:
+ *
+ * - **invalidate** refetches every matching *active* query at once, and a drawer still
+ *   mounted on the record is exactly such a query;
+ * - **removeQueries** leaves that same mounted observer holding nothing, so it fetches for
+ *   itself — the removal happens before React has flushed the state change that would have
+ *   unmounted it.
+ *
+ * Either way the delete's own cleanup asks the server for the id it has just deleted, and
+ * the 404 lands in the notification tray while the user is still looking at the
+ * confirmation popup. Writing null is what stops it: the observer *has* data, so it has no
+ * reason to fetch, and the drawer falls through to the empty branch it already has for a
+ * record that will not load.
+ *
+ * It also works when nothing clears the id at all — deleting a person from a row on the
+ * People tab while their drawer sits open behind it — which is why the fix lives here
+ * rather than in a rule about closing drawers first. The entry is garbage-collected on the
+ * normal timer once nothing is observing it.
+ *
+ * The dashboard's "recently opened" trail is pruned at the same time, and for the same
+ * reason: it is the one place that still holds a link to a record after it has gone from
+ * every list, and following that link would otherwise land on the tombstone and sit there
+ * loading forever. The three cache keys are named to match RecentKind exactly so this
+ * cannot be wired up wrong.
+ */
+function useMarkDeleted() {
+  const qc = useQueryClient();
+  return (key: RecentKind, id: number) => {
+    qc.setQueryData([key, id], null);
+    forgetRecent(key, id);
   };
 }
 
@@ -56,6 +93,7 @@ export const useVessel = (id?: number) =>
 
 export function useVesselMutations() {
   const invalidate = useInvalidator();
+  const markDeleted = useMarkDeleted();
   // 'company' is included because the company drawer lists a company's fleet from
   // ['company', id, 'vessels'] — writes made there (or any owner change) would
   // otherwise leave that list stale.
@@ -70,7 +108,11 @@ export function useVesselMutations() {
   });
   const remove = useMutation({
     mutationFn: (id: number) => vesselsApi.remove(id),
-    onSuccess: () => invalidate(...touched),
+    // Not `touched`: that includes 'vessel', which would refetch the vessel just deleted.
+    onSuccess: (_deleted, id) => {
+      markDeleted('vessel', id);
+      invalidate('vessels', 'company');
+    },
   });
   const confirm = useMutation({
     mutationFn: (v: { id: number; confirmed: boolean; body?: ConfirmRequest }) =>
@@ -127,6 +169,7 @@ export const useCompanyVessels = (id?: number) =>
 
 export function useCompanyMutations() {
   const invalidate = useInvalidator();
+  const markDeleted = useMarkDeleted();
   const create = useMutation({
     mutationFn: (body: CompanyRequest) => companiesApi.create(body),
     onSuccess: () => invalidate('companies'),
@@ -137,7 +180,18 @@ export function useCompanyMutations() {
   });
   const remove = useMutation({
     mutationFn: (id: number) => companiesApi.remove(id),
-    onSuccess: () => invalidate('companies'),
+    /*
+     * Deleting a company takes its people and their contacts with it — people.company_id
+     * and contacts.company_id are both ON DELETE CASCADE — and leaves its vessels behind
+     * with a null owner. Invalidating 'companies' alone was never enough: the People tab
+     * would go on listing people who no longer exist. 'company' is deliberately absent
+     * from the list, because markDeleted() has just written this one off and invalidating
+     * the prefix would fetch it straight back.
+     */
+    onSuccess: (_deleted, id) => {
+      markDeleted('company', id);
+      invalidate('companies', 'people', 'contacts', 'vessels', 'vessel');
+    },
   });
   const confirm = useMutation({
     mutationFn: (v: { id: number; confirmed: boolean; body?: ConfirmRequest }) =>
@@ -176,6 +230,7 @@ export const usePersonContacts = (personId?: number) =>
 
 export function usePersonMutations() {
   const invalidate = useInvalidator();
+  const markDeleted = useMarkDeleted();
   // Contact rows embed the person's name/greeting, and the company + vessel drawers
   // render those rows from their own query keys — so a person edit has to invalidate
   // more than 'people' or the drawer keeps showing the old name.
@@ -190,7 +245,12 @@ export function usePersonMutations() {
   });
   const remove = useMutation({
     mutationFn: (id: number) => peopleApi.remove(id),
-    onSuccess: () => invalidate(...touched),
+    // Not `touched`: that includes 'person', which would refetch the person just deleted
+    // and 404 into the notification tray while their drawer is still closing.
+    onSuccess: (_deleted, id) => {
+      markDeleted('person', id);
+      invalidate('people', 'contacts', 'company', 'vessel');
+    },
   });
   // Also invalidates the circulation lists: flagging somebody changes which rows a list
   // will actually send to, and the lists page reads that off the server.
