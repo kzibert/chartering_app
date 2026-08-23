@@ -172,6 +172,7 @@ export default function FooterManagerModal({ open, onClose }: Props) {
               columns={columns}
               dataSource={footersQ.data}
               pagination={false}
+              scroll={{ x: true }}
             />
           ) : (
             <Empty description="No footers yet" />

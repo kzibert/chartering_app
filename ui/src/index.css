@@ -1,0 +1,144 @@
+/*
+ * The only stylesheet in the app. Everything else is inline styles and antd tokens, and
+ * that stays true — what lands here is the handful of rules that cannot be expressed that
+ * way: things keyed off a media query, and overrides of antd's own class names.
+ */
+
+html {
+  /* Safari on iOS otherwise inflates text when the phone is turned to landscape, which
+     re-flows a table mid-read. */
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  /* A page that scrolls sideways on a phone is nearly always an accident — one element
+     that ignored its container — and it makes every vertical swipe feel broken. Wide
+     content is given its own scroller instead (see .responsive-scroll-x). */
+  overflow-x: hidden;
+}
+
+/* Wide-by-nature content — a preformatted campaign log, a rendered mail body — scrolls
+   inside itself rather than pushing the page out. */
+.responsive-scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 767px) {
+  /*
+   * iOS Safari zooms the page whenever a focused field's text is under 16px, and never
+   * zooms back out. antd's controls are 14px, so without this every tap into a search box
+   * leaves the user pinching to get back. The 16px applies to the input text only — labels
+   * and everything around it keep antd's scale.
+   *
+   * !important is load-bearing, not laziness: antd v5 emits its styles at runtime as
+   * `.ant-input.css-<hash>` — two classes on the same element — so a plain `.ant-input`
+   * here loses on specificity no matter where the file sits in the cascade.
+   */
+  .ant-input,
+  .ant-input-affix-wrapper .ant-input,
+  .ant-input-number-input,
+  .ant-select-selector,
+  .ant-select-selection-item,
+  .ant-select-selection-search-input,
+  .ant-picker-input > input,
+  textarea.ant-input {
+    font-size: 16px !important;
+  }
+
+  /* antd sizes Select's inner box from its font-size; bumping the text alone leaves the
+     control too short for it. */
+  .ant-select-single .ant-select-selector {
+    height: auto !important;
+    min-height: 32px;
+  }
+
+  /* Card padding is a quarter of the width of a phone screen at antd's default. */
+  .ant-card-body {
+    padding: 12px;
+  }
+  .ant-card-small > .ant-card-body {
+    padding: 8px;
+  }
+
+  /* A drawer's own padding on top of the app's margins wastes the little width there is. */
+  .ant-drawer-body {
+    padding: 12px;
+  }
+
+  /*
+   * Every fixed panel width in the app is capped here rather than at each call site.
+   * antd does not clamp these: a `width={720}` Drawer keeps its 720px on a 390px screen
+   * and simply hangs off the side, and a Modal does the same. Two rules cover every one of
+   * them, including the ones added after this was written — which is the point, since a
+   * width that has to be remembered is a width that will be forgotten.
+   */
+  .ant-drawer-content-wrapper {
+    max-width: 100vw;
+  }
+  .ant-modal {
+    max-width: calc(100vw - 16px);
+    margin: 8px auto;
+  }
+
+  /* Same argument for the controls: a search box pinned to 420px inside a card that is
+     336px wide pushes its own row sideways. */
+  .ant-select,
+  .ant-input,
+  .ant-input-affix-wrapper,
+  .ant-input-number,
+  .ant-picker {
+    max-width: 100%;
+  }
+
+  /*
+   * Card and Drawer headers are a title beside an `extra` slot, and antd lays them out as
+   * one non-wrapping flex row. Several pages put three or four buttons in `extra` — the
+   * vessel drawer's Edit/Ban/Delete, the Circulars header — and without wrapping they
+   * crush the title down to an ellipsis to make room for themselves.
+   */
+  .ant-card-head-wrapper,
+  .ant-drawer-header-title {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .ant-card-head {
+    padding-inline: 12px;
+  }
+
+  /* Descriptions in the default horizontal layout put label and value in one row and get
+     unreadable at this width. */
+  .ant-descriptions-row > th,
+  .ant-descriptions-row > td {
+    padding-bottom: 6px;
+  }
+
+  /* Any table that survives to the phone (the ones inside drawers) scrolls in its own box
+     rather than widening the page. */
+  .ant-table-wrapper {
+    max-width: 100%;
+  }
+}
+
+/*
+ * The bottom navigation bar. Fixed, so it survives a long scroll, and padded out of the
+ * home-indicator strip on iPhones — env() is 0 everywhere else, so this costs nothing on
+ * hardware without one.
+ */
+.mobile-tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  background: #fff;
+  border-top: 1px solid rgba(5, 5, 5, 0.08);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.mobile-tabbar button {
+  flex: 1 1 0;
+  min-width: 0;
+}

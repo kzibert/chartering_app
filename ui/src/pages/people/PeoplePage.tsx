@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Button,
-  Card,
   Checkbox,
   Col,
   Form,
@@ -11,15 +10,16 @@ import {
   Row,
   Select,
   Space,
-  Table,
   Tag,
   Tooltip,
   Typography,
 } from 'antd';
-import { MailOutlined, PhoneOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons';
+import { MailOutlined, PhoneOutlined, PlusOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { usePeopleSearch, usePersonMutations, useContactMutations } from '../../api/hooks';
 import { useTableControls } from '../../components/useTableControls';
+import ResponsiveTable from '../../components/ResponsiveTable';
+import FilterPanel, { countActiveFilters } from '../../components/FilterPanel';
 import { usePersistedFilters } from '../../components/usePersistedState';
 import { CONFIRMED_OPTIONS } from '../../components/filterOptions';
 import CompanySelect from '../../components/CompanySelect';
@@ -176,8 +176,48 @@ export default function PeoplePage() {
 
   return (
     <>
-      <Card size="small" style={{ marginBottom: 16 }}>
-        <Form form={form} layout="vertical" onFinish={applyFilters}>
+      {/* The Form wraps the panel rather than sitting inside it: on a phone the fields
+          render into a drawer, which is a portal at the end of <body>, and only a Form
+          above them in the React tree still reaches them there. */}
+      <Form form={form} layout="vertical" onFinish={applyFilters}>
+        <FilterPanel
+          form={form}
+          activeCount={countActiveFilters(filters)}
+          onReset={() => { form.resetFields(); applyFilters({}); }}
+          actions={
+            <>
+              <Button icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true); }}>
+                New person
+              </Button>
+              <AddToListActions
+                entity="people"
+                rowsArePeople
+                selectedIds={selectedIds}
+                totalMatching={query.data?.totalElements ?? 0}
+                collect={(ids, confirmedOnly) => collectApi.fromPeople(filters, ids, confirmedOnly)}
+                onCleared={() => setSelectedIds([])}
+              />
+              <EditToolbar editing={editMode} onToggle={setEditMode} />
+            </>
+          }
+          extras={
+            <>
+              <Form.Item name="legacy" noStyle initialValue="">
+                <Select
+                  style={{ width: 180 }}
+                  options={[
+                    { value: '', label: 'Source: all' },
+                    { value: false, label: 'New (app)' },
+                    { value: true, label: 'Legacy (imported)' },
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item name="includeBanned" valuePropName="checked" noStyle>
+                <Checkbox>Include banned (Russian-rooted)</Checkbox>
+              </Form.Item>
+            </>
+          }
+        >
           <Row gutter={12}>
             <Col xs={12} md={5}>
               <Form.Item name="name" label="Name" tooltip="Full name or greeting name">
@@ -213,39 +253,10 @@ export default function PeoplePage() {
               </Form.Item>
             </Col>
           </Row>
-          <Space wrap>
-            <Button type="primary" htmlType="submit" icon={<SearchOutlined />}>Search</Button>
-            <Button onClick={() => { form.resetFields(); applyFilters({}); }}>Reset</Button>
-            <Button icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true); }}>
-              New person
-            </Button>
-            <AddToListActions
-              entity="people"
-              rowsArePeople
-              selectedIds={selectedIds}
-              totalMatching={query.data?.totalElements ?? 0}
-              collect={(ids, confirmedOnly) => collectApi.fromPeople(filters, ids, confirmedOnly)}
-              onCleared={() => setSelectedIds([])}
-            />
-            <EditToolbar editing={editMode} onToggle={setEditMode} />
-            <Form.Item name="legacy" noStyle initialValue="">
-              <Select
-                style={{ width: 180 }}
-                options={[
-                  { value: '', label: 'Source: all' },
-                  { value: false, label: 'New (app)' },
-                  { value: true, label: 'Legacy (imported)' },
-                ]}
-              />
-            </Form.Item>
-            <Form.Item name="includeBanned" valuePropName="checked" noStyle>
-              <Checkbox>Include banned (Russian-rooted)</Checkbox>
-            </Form.Item>
-          </Space>
-        </Form>
-      </Card>
+        </FilterPanel>
+      </Form>
 
-      <Table<PersonDetailResponse>
+      <ResponsiveTable<PersonDetailResponse>
         rowKey={(r) => r.person.id}
         size="small"
         loading={query.isLoading}
@@ -253,6 +264,40 @@ export default function PeoplePage() {
         dataSource={rows}
         pagination={tc.pagination(query.data?.totalElements ?? 0)}
         onChange={tc.onChange}
+        mobile={{
+          title: (r) => (
+            <Space size={4} wrap>
+              {r.person.fullName}
+              {r.person.hasLeft && <Tag color="red">left</Tag>}
+            </Space>
+          ),
+          // The company is what tells two people with the same name apart, so it is the
+          // line under the name rather than one box among the fields.
+          subtitle: (r) => r.person.companyName ?? '—',
+          fields: (r) => [
+            r.person.jobTitle && { label: 'Job title', value: r.person.jobTitle },
+            r.person.greetingName && {
+              label: 'Greeting',
+              value: <GreetingName title={r.person.title} name={r.person.greetingName} />,
+            },
+            { label: 'Contacts', value: <ContactSummary contacts={r.contacts} /> },
+          ],
+          actions: (r) => (
+            <Space size={4} wrap>
+              <Button size="small" onClick={() => { setEditing(r.person); setFormOpen(true); }}>
+                Edit
+              </Button>
+              <LeftCompanyButton p={r.person} />
+              <Popconfirm title="Delete this person?" onConfirm={() => remove.mutate(r.person.id)}>
+                <Button size="small" danger>Delete</Button>
+              </Popconfirm>
+            </Space>
+          ),
+          // The addresses are the reason you opened a person, so the expander says how
+          // many are behind it rather than a generic "Details".
+          expandLabel: (r) =>
+            `${r.contacts.length} contact${r.contacts.length === 1 ? '' : 's'}`,
+        }}
         rowSelection={{
           selectedRowKeys: selectedIds,
           // Ticks on other pages are no longer in dataSource; without this, paging away

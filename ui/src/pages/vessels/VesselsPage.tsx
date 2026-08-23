@@ -1,9 +1,11 @@
 import { useState } from 'react';
-import { Button, Card, Checkbox, Col, Form, Input, InputNumber, Row, Select, Space, Table, Tag } from 'antd';
-import { PlusOutlined, SearchOutlined } from '@ant-design/icons';
+import { Button, Checkbox, Col, Form, Input, InputNumber, Row, Select, Space, Tag } from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useVessels, useVesselTypes, useFlags } from '../../api/hooks';
 import { useTableControls } from '../../components/useTableControls';
+import ResponsiveTable from '../../components/ResponsiveTable';
+import FilterPanel, { countActiveFilters } from '../../components/FilterPanel';
 import { usePersistedFilters } from '../../components/usePersistedState';
 import { CONFIRMED_OPTIONS } from '../../components/filterOptions';
 import ConfirmTag from '../../components/ConfirmTag';
@@ -96,8 +98,46 @@ export default function VesselsPage() {
 
   return (
     <>
-      <Card size="small" style={{ marginBottom: 16 }}>
-        <Form form={form} layout="vertical" onFinish={applyFilters}>
+      {/* The Form wraps the panel rather than sitting inside it: on a phone the fields
+          render into a drawer, which is a portal at the end of <body>, and only a Form
+          above them in the React tree still reaches them there. */}
+      <Form form={form} layout="vertical" onFinish={applyFilters}>
+        <FilterPanel
+          form={form}
+          activeCount={countActiveFilters(filters)}
+          onReset={() => { form.resetFields(); applyFilters({}); }}
+          actions={
+            <>
+              <Button icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true); }}>New vessel</Button>
+              <AddToListActions
+                entity="vessels"
+                selectedIds={selectedIds}
+                totalMatching={query.data?.totalElements ?? 0}
+                collect={(ids, confirmedOnly) =>
+                  collectApi.fromVessels(filters, ids, confirmedOnly)
+                }
+                onCleared={() => setSelectedIds([])}
+              />
+            </>
+          }
+          extras={
+            <>
+              <Form.Item name="legacy" noStyle initialValue="">
+                <Select
+                  style={{ width: 180 }}
+                  options={[
+                    { value: '', label: 'Source: all' },
+                    { value: false, label: 'New (app)' },
+                    { value: true, label: 'Legacy (imported)' },
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item name="includeBanned" valuePropName="checked" noStyle>
+                <Checkbox>Include banned (Russian-rooted)</Checkbox>
+              </Form.Item>
+            </>
+          }
+        >
           <Row gutter={12}>
             <Col xs={12} md={6}><Form.Item name="name" label="Name"><Input allowClear /></Form.Item></Col>
             <Col xs={12} md={6}><Form.Item name="imoNumber" label="IMO"><Input allowClear /></Form.Item></Col>
@@ -142,37 +182,10 @@ export default function VesselsPage() {
               </Form.Item>
             </Col>
           </Row>
-          <Space wrap>
-            <Button type="primary" htmlType="submit" icon={<SearchOutlined />}>Search</Button>
-            <Button onClick={() => { form.resetFields(); applyFilters({}); }}>Reset</Button>
-            <Button icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true); }}>New vessel</Button>
-            <AddToListActions
-              entity="vessels"
-              selectedIds={selectedIds}
-              totalMatching={query.data?.totalElements ?? 0}
-              collect={(ids, confirmedOnly) =>
-                collectApi.fromVessels(filters, ids, confirmedOnly)
-              }
-              onCleared={() => setSelectedIds([])}
-            />
-            <Form.Item name="legacy" noStyle initialValue="">
-              <Select
-                style={{ width: 180 }}
-                options={[
-                  { value: '', label: 'Source: all' },
-                  { value: false, label: 'New (app)' },
-                  { value: true, label: 'Legacy (imported)' },
-                ]}
-              />
-            </Form.Item>
-            <Form.Item name="includeBanned" valuePropName="checked" noStyle>
-              <Checkbox>Include banned (Russian-rooted)</Checkbox>
-            </Form.Item>
-          </Space>
-        </Form>
-      </Card>
+        </FilterPanel>
+      </Form>
 
-      <Table<VesselResponse>
+      <ResponsiveTable<VesselResponse>
         rowKey="id"
         size="small"
         loading={query.isLoading}
@@ -181,6 +194,47 @@ export default function VesselsPage() {
         pagination={tc.pagination(query.data?.totalElements ?? 0)}
         onChange={tc.onChange}
         scroll={{ x: 1300 }}
+        // The figures are the whole reason this page exists — you are matching a cargo to
+        // a hull — so the card carries all of them rather than a chosen two. Ones with
+        // nothing on file drop out instead of printing a row of dashes.
+        mobile={{
+          title: (v) => (
+            <Space size={4} wrap>
+              {v.name}
+              {!v.legacy && <Tag color="green">new</Tag>}
+              {v.banned && <Tag color="red">banned</Tag>}
+            </Space>
+          ),
+          subtitle: (v) => v.ownerName ?? 'No owner on file',
+          fields: (v) => [
+            v.imoNumber != null && { label: 'IMO', value: v.imoNumber },
+            v.deadweightTonnage != null && { label: 'DWT', value: v.deadweightTonnage },
+            v.deadweightCargoCapacity != null && { label: 'DWCC', value: v.deadweightCargoCapacity },
+            v.grainCapacityM3 != null && { label: 'Grain m³', value: v.grainCapacityM3 },
+            v.baleCapacityM3 != null && { label: 'Bale m³', value: v.baleCapacityM3 },
+            v.maximumDraft != null && { label: 'Draft', value: v.maximumDraft },
+            v.yearBuilt != null && { label: 'Year', value: v.yearBuilt },
+            v.vesselType != null && { label: 'Type', value: v.vesselType },
+            v.flag != null && { label: 'Flag', value: v.flag },
+          ],
+          actions: (v) => (
+            <ConfirmTag
+              confirmed={v.confirmed}
+              confirmedAt={v.confirmedAt}
+              confirmedBy={v.confirmedBy}
+              loading={confirm.isPending}
+              onConfirm={(body) => confirm.mutate({ id: v.id, confirmed: true, body })}
+              onUnconfirm={() => confirm.mutate({ id: v.id, confirmed: false })}
+            />
+          ),
+        }}
+        mobileSort={[
+          { field: 'name', label: 'Name' },
+          { field: 'deadweightTonnage', label: 'DWT' },
+          { field: 'deadweightCargoCapacity', label: 'DWCC' },
+          { field: 'grainCapacityM3', label: 'Grain' },
+          { field: 'yearBuilt', label: 'Year built' },
+        ]}
         rowSelection={{
           selectedRowKeys: selectedIds,
           // preserveSelectedRowKeys keeps ticks from other pages, which are no longer in

@@ -12,9 +12,9 @@ import {
   Input,
   Menu,
   Popconfirm,
+  Drawer,
   Skeleton,
   Space,
-  Table,
   Tree,
   Tag,
   Tooltip,
@@ -25,6 +25,7 @@ import {
   CheckCircleOutlined,
   DeleteOutlined,
   EditOutlined,
+  FilterOutlined,
   FolderOpenOutlined,
   FolderOutlined,
   InboxOutlined,
@@ -48,6 +49,8 @@ import {
 } from '../../mailbox/store';
 import { usePersistedState } from '../../components/usePersistedState';
 import { useTableControls } from '../../components/useTableControls';
+import ResponsiveTable from '../../components/ResponsiveTable';
+import { useIsMobile } from '../../responsive/useIsMobile';
 import CompanyDrawer from '../companies/CompanyDrawer';
 import MessageDrawer from './MessageDrawer';
 import FoldersRulesModal from './FoldersRulesModal';
@@ -121,6 +124,10 @@ export default function MailboxPage() {
   const [companyId, setCompanyId] = useState<number>();
   const [manageOpen, setManageOpen] = useState(false);
   const [picked, setPicked] = useState<number[]>([]);
+  const isMobile = useIsMobile();
+  // The rail is two folder trees and does not fold down to anything smaller; on a phone it
+  // is a drawer, opened by a button that names the folder you are in.
+  const [railOpen, setRailOpen] = useState(false);
 
   const table = useTableControls({ size: 25, sort: 'receivedAt,desc' }, 'mailbox');
   const folders = useMailFolders();
@@ -163,6 +170,8 @@ export default function MailboxPage() {
     setFilters((f) => ({ ...f, ...patch }));
     setPicked([]);
     table.resetPage();
+    // Picking a folder is the one thing the phone's rail drawer is open for.
+    setRailOpen(false);
   };
 
   const runSearch = (value: string) => update({ search: value.trim() });
@@ -393,6 +402,77 @@ export default function MailboxPage() {
     },
   ];
 
+  /**
+   * The two folder trees. A Card in the page on a desktop, a drawer on a phone: this is
+   * 250px of tree that does not fold down to anything smaller, and stacking it above the
+   * messages would put a screenful of folders between the user and their mail every time
+   * the tab is opened.
+   */
+  const rail = (
+    <>
+      <Menu
+        mode="inline"
+        selectedKeys={scopeKey ? [scopeKey] : []}
+        items={appItems.slice(0, 1)}
+        style={{ borderInlineEnd: 0 }}
+        onClick={() => update({ scope: 'all' })}
+      />
+
+      <RailSection
+        title="In the mailbox"
+        hint="The folders as they are on the mail server, refreshed on every sync. This is
+              where the mailbox's own filters put each message as it arrived — the app
+              mirrors that and never moves anything on the server."
+      />
+      {serverFolders.isLoading ? (
+        <div style={{ padding: 12 }}>
+          <Skeleton active paragraph={{ rows: 4 }} title={false} />
+        </div>
+      ) : serverTree.length === 0 ? (
+        <Typography.Text type="secondary" style={{ display: 'block', padding: '4px 12px 10px' }}>
+          Not listed yet — they appear after the first sync.
+        </Typography.Text>
+      ) : (
+        <Tree
+          treeData={serverTree}
+          blockNode
+          defaultExpandAll
+          selectedKeys={typeof filters.scope === 'object' ? [filters.scope.server] : []}
+          onSelect={(keys) => {
+            // Clicking the selected row again would otherwise clear the scope and show
+            // nothing, which is not a state the rail can express.
+            if (keys.length) update({ scope: { server: String(keys[0]) } });
+          }}
+          style={{ padding: '0 8px 8px' }}
+        />
+      )}
+
+      <RailSection
+        title="Filed by this app"
+        hint="The app's own folders and the rules that fill them. They file a copy of the
+              filing, so to speak: a message keeps sitting in the mailbox folder it
+              arrived in, and nothing here is ever written back to the server."
+      />
+      <Menu
+        mode="inline"
+        selectedKeys={scopeKey && scopeKey !== 'all' ? [scopeKey] : []}
+        items={appItems.slice(1)}
+        style={{ borderInlineEnd: 0 }}
+        onClick={({ key }) => update({ scope: key === 'inbox' ? key : Number(key) })}
+      />
+      <div style={{ padding: 8, borderTop: '1px solid rgba(5,5,5,0.06)' }}>
+        <Button
+          block
+          size="small"
+          icon={<SettingOutlined />}
+          onClick={() => setManageOpen(true)}
+        >
+          Folders &amp; rules
+        </Button>
+      </div>
+    </>
+  );
+
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
       <SyncBar
@@ -402,72 +482,15 @@ export default function MailboxPage() {
       />
 
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
-        <Card
-          size="small"
-          style={{ width: 250, flex: '0 0 250px' }}
-          styles={{ body: { padding: 0 } }}
-        >
-          <Menu
-            mode="inline"
-            selectedKeys={scopeKey ? [scopeKey] : []}
-            items={appItems.slice(0, 1)}
-            style={{ borderInlineEnd: 0 }}
-            onClick={() => update({ scope: 'all' })}
-          />
-
-          <RailSection
-            title="In the mailbox"
-            hint="The folders as they are on the mail server, refreshed on every sync. This is
-                  where the mailbox's own filters put each message as it arrived — the app
-                  mirrors that and never moves anything on the server."
-          />
-          {serverFolders.isLoading ? (
-            <div style={{ padding: 12 }}>
-              <Skeleton active paragraph={{ rows: 4 }} title={false} />
-            </div>
-          ) : serverTree.length === 0 ? (
-            <Typography.Text type="secondary" style={{ display: 'block', padding: '4px 12px 10px' }}>
-              Not listed yet — they appear after the first sync.
-            </Typography.Text>
-          ) : (
-            <Tree
-              treeData={serverTree}
-              blockNode
-              defaultExpandAll
-              selectedKeys={typeof filters.scope === 'object' ? [filters.scope.server] : []}
-              onSelect={(keys) => {
-                // Clicking the selected row again would otherwise clear the scope and show
-                // nothing, which is not a state the rail can express.
-                if (keys.length) update({ scope: { server: String(keys[0]) } });
-              }}
-              style={{ padding: '0 8px 8px' }}
-            />
-          )}
-
-          <RailSection
-            title="Filed by this app"
-            hint="The app's own folders and the rules that fill them. They file a copy of the
-                  filing, so to speak: a message keeps sitting in the mailbox folder it
-                  arrived in, and nothing here is ever written back to the server."
-          />
-          <Menu
-            mode="inline"
-            selectedKeys={scopeKey && scopeKey !== 'all' ? [scopeKey] : []}
-            items={appItems.slice(1)}
-            style={{ borderInlineEnd: 0 }}
-            onClick={({ key }) => update({ scope: key === 'inbox' ? key : Number(key) })}
-          />
-          <div style={{ padding: 8, borderTop: '1px solid rgba(5,5,5,0.06)' }}>
-            <Button
-              block
-              size="small"
-              icon={<SettingOutlined />}
-              onClick={() => setManageOpen(true)}
-            >
-              Folders &amp; rules
-            </Button>
-          </div>
-        </Card>
+        {!isMobile && (
+          <Card
+            size="small"
+            style={{ width: 250, flex: '0 0 250px' }}
+            styles={{ body: { padding: 0 } }}
+          >
+            {rail}
+          </Card>
+        )}
 
         <Card size="small" style={{ flex: 1, minWidth: 0 }}>
           <Space direction="vertical" size="small" style={{ width: '100%' }}>
@@ -485,6 +508,11 @@ export default function MailboxPage() {
               }}
             >
               <Space wrap>
+                {isMobile && (
+                  <Button icon={<FilterOutlined />} onClick={() => setRailOpen(true)}>
+                    {scopeName}
+                  </Button>
+                )}
                 <Input.Search
                   allowClear
                   value={typed}
@@ -568,7 +596,7 @@ export default function MailboxPage() {
               </Space>
             )}
 
-            <Table<MailMessage>
+            <ResponsiveTable<MailMessage>
               rowKey="id"
               size="small"
               // Without this the browser sizes columns by content, and one message with a
@@ -581,6 +609,55 @@ export default function MailboxPage() {
               dataSource={rows}
               pagination={table.pagination(messages.data?.totalElements ?? 0)}
               onChange={table.onChange}
+              // Sender first, then subject and snippet — the order every mail app on a
+              // phone uses, and the order the eye already expects to find them in.
+              mobile={{
+                title: (m) => (
+                  <Space size={6} align="center">
+                    {!m.read && <Badge status="processing" />}
+                    <Typography.Text strong={!m.read}>
+                      {m.fromName || m.fromAddress}
+                    </Typography.Text>
+                    {m.hasAttachments && <PaperClipOutlined style={{ color: '#8c8c8c' }} />}
+                  </Space>
+                ),
+                subtitle: (m) => (
+                  <>
+                    <div style={{ ...CLAMP, color: 'rgba(0,0,0,.85)' }}>
+                      <Typography.Text strong={!m.read}>
+                        {m.subject || '(no subject)'}
+                      </Typography.Text>
+                    </div>
+                    {m.snippet && (
+                      <div style={{ ...CLAMP, fontSize: 12, color: '#8c8c8c' }}>{m.snippet}</div>
+                    )}
+                  </>
+                ),
+                fields: (m) => [
+                  { label: 'Received', value: <RelativeDate value={m.receivedAt} /> },
+                  m.companyId
+                    ? {
+                        label: 'Company',
+                        value: (
+                          <Typography.Link
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setCompanyId(m.companyId);
+                            }}
+                          >
+                            {m.companyName}
+                          </Typography.Link>
+                        ),
+                      }
+                    : { label: 'Company', value: 'unknown sender' },
+                  m.folderName != null && { label: 'Filed in', value: m.folderName },
+                  m.imapFolder != null && {
+                    label: 'Mailbox folder',
+                    value: serverNames.get(m.imapFolder) ?? m.imapFolder,
+                  },
+                ],
+              }}
+              mobileSort={[{ field: 'receivedAt', label: 'Received' }]}
               rowSelection={{
                 selectedRowKeys: picked,
                 onChange: (keys) => setPicked(keys as number[]),
@@ -603,6 +680,17 @@ export default function MailboxPage() {
           </Space>
         </Card>
       </div>
+
+      <Drawer
+        open={isMobile && railOpen}
+        onClose={() => setRailOpen(false)}
+        placement="left"
+        width={280}
+        title="Folders"
+        styles={{ body: { padding: 0 } }}
+      >
+        {rail}
+      </Drawer>
 
       <MessageDrawer
         messageId={openId}

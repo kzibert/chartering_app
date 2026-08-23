@@ -1,9 +1,11 @@
 import { useState } from 'react';
-import { Button, Card, Checkbox, Col, Form, Input, Row, Select, Space, Table, Tag, Tooltip } from 'antd';
-import { PlusOutlined, SearchOutlined, WarningOutlined } from '@ant-design/icons';
+import { Button, Checkbox, Col, Form, Input, Row, Select, Space, Tag, Tooltip } from 'antd';
+import { PlusOutlined, WarningOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useCompanies, useRegions, usePorts, useTonnageCategories, useCompanyMutations } from '../../api/hooks';
 import { useTableControls } from '../../components/useTableControls';
+import ResponsiveTable from '../../components/ResponsiveTable';
+import FilterPanel, { countActiveFilters } from '../../components/FilterPanel';
 import { usePersistedFilters } from '../../components/usePersistedState';
 import { CONFIRMED_OPTIONS } from '../../components/filterOptions';
 import ConfirmTag from '../../components/ConfirmTag';
@@ -94,10 +96,74 @@ export default function CompaniesPage() {
     },
   ];
 
+  const resetFilters = () => {
+    form.resetFields();
+    applyFilters({});
+  };
+
   return (
     <>
-      <Card size="small" style={{ marginBottom: 16 }}>
-        <Form form={form} layout="vertical" onFinish={applyFilters}>
+      {/* The Form wraps the panel rather than sitting inside it: on a phone the fields
+          render into a drawer, which is a portal at the end of <body>, and only a Form
+          above them in the React tree still reaches them there. */}
+      <Form form={form} layout="vertical" onFinish={applyFilters}>
+        <FilterPanel
+          form={form}
+          activeCount={countActiveFilters(filters)}
+          onReset={resetFilters}
+          actions={
+            <>
+              <Button icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true); }}>New company</Button>
+              <AddToListActions
+                entity="companies"
+                selectedIds={selectedIds}
+                totalMatching={query.data?.totalElements ?? 0}
+                collect={(ids, confirmedOnly) => collectApi.fromCompanies(filters, ids, confirmedOnly)}
+                onCleared={() => setSelectedIds([])}
+              />
+            </>
+          }
+          extras={
+            <>
+              <Tooltip title="Companies that have email addresses but every one is flagged not working">
+                <Button
+                  icon={<WarningOutlined />}
+                  danger
+                  type={deadOnly ? 'primary' : 'default'}
+                  onClick={() => {
+                    // Shows *all* such companies, so it clears the other filters rather than
+                    // narrowing by whatever search happened to be active (persisted filters
+                    // would otherwise make this look empty). Toggling off returns to the
+                    // unfiltered list.
+                    form.resetFields();
+                    if (deadOnly) {
+                      applyFilters({});
+                    } else {
+                      form.setFieldValue('noWorkingEmail', true);
+                      applyFilters({ noWorkingEmail: true });
+                    }
+                  }}
+                >
+                  {deadOnly ? 'Showing: no working email' : 'No working email'}
+                </Button>
+              </Tooltip>
+              <Form.Item name="noWorkingEmail" valuePropName="checked" hidden><Checkbox /></Form.Item>
+              <Form.Item name="legacy" noStyle initialValue="">
+                <Select
+                  style={{ width: 180 }}
+                  options={[
+                    { value: '', label: 'Source: all' },
+                    { value: false, label: 'New (app)' },
+                    { value: true, label: 'Legacy (imported)' },
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item name="includeBanned" valuePropName="checked" noStyle>
+                <Checkbox>Include banned (Russian-rooted)</Checkbox>
+              </Form.Item>
+            </>
+          }
+        >
           <Row gutter={12}>
             <Col xs={12} md={6}><Form.Item name="name" label="Name"><Input allowClear /></Form.Item></Col>
             <Col xs={12} md={6}><Form.Item name="city" label="City"><Input allowClear /></Form.Item></Col>
@@ -139,58 +205,10 @@ export default function CompaniesPage() {
               </Form.Item>
             </Col>
           </Row>
-          <Space wrap>
-            <Button type="primary" htmlType="submit" icon={<SearchOutlined />}>Search</Button>
-            <Button onClick={() => { form.resetFields(); applyFilters({}); }}>Reset</Button>
-            <Button icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true); }}>New company</Button>
-            <AddToListActions
-              entity="companies"
-              selectedIds={selectedIds}
-              totalMatching={query.data?.totalElements ?? 0}
-              collect={(ids, confirmedOnly) => collectApi.fromCompanies(filters, ids, confirmedOnly)}
-              onCleared={() => setSelectedIds([])}
-            />
-            <Tooltip title="Companies that have email addresses but every one is flagged not working">
-              <Button
-                icon={<WarningOutlined />}
-                danger
-                type={deadOnly ? 'primary' : 'default'}
-                onClick={() => {
-                  // Shows *all* such companies, so it clears the other filters rather than
-                  // narrowing by whatever search happened to be active (persisted filters
-                  // would otherwise make this look empty). Toggling off returns to the
-                  // unfiltered list.
-                  form.resetFields();
-                  if (deadOnly) {
-                    applyFilters({});
-                  } else {
-                    form.setFieldValue('noWorkingEmail', true);
-                    applyFilters({ noWorkingEmail: true });
-                  }
-                }}
-              >
-                {deadOnly ? 'Showing: no working email' : 'No working email'}
-              </Button>
-            </Tooltip>
-            <Form.Item name="noWorkingEmail" valuePropName="checked" hidden><Checkbox /></Form.Item>
-            <Form.Item name="legacy" noStyle initialValue="">
-              <Select
-                style={{ width: 180 }}
-                options={[
-                  { value: '', label: 'Source: all' },
-                  { value: false, label: 'New (app)' },
-                  { value: true, label: 'Legacy (imported)' },
-                ]}
-              />
-            </Form.Item>
-            <Form.Item name="includeBanned" valuePropName="checked" noStyle>
-              <Checkbox>Include banned (Russian-rooted)</Checkbox>
-            </Form.Item>
-          </Space>
-        </Form>
-      </Card>
+        </FilterPanel>
+      </Form>
 
-      <Table<CompanyResponse>
+      <ResponsiveTable<CompanyResponse>
         rowKey="id"
         size="small"
         loading={query.isLoading}
@@ -198,6 +216,40 @@ export default function CompaniesPage() {
         dataSource={query.data?.content ?? []}
         pagination={tc.pagination(query.data?.totalElements ?? 0)}
         onChange={tc.onChange}
+        mobile={{
+          title: (c) => (
+            <Space size={4} wrap>
+              {c.name}
+              {c.noWorkingEmail && <Tag color="red">no working email</Tag>}
+              {c.solo && <Tag color="geekblue">solo</Tag>}
+              {!c.legacy && <Tag color="green">new</Tag>}
+              {c.banned && <Tag color="red">banned</Tag>}
+            </Space>
+          ),
+          subtitle: (c) => c.cityName ?? 'No city on file',
+          fields: (c) => {
+            const roles = [
+              c.shipowner && 'owner',
+              c.charterer && 'charterer',
+              c.broker && 'broker',
+              c.agent && 'agent',
+            ].filter(Boolean);
+            // One field, not four: the roles are read together ("owner + broker"), and as
+            // separate boxes they would take two rows of the card to say the same thing.
+            return [roles.length > 0 && { label: 'Roles', value: roles.join(', ') }];
+          },
+          actions: (c) => (
+            <ConfirmTag
+              confirmed={c.confirmed}
+              confirmedAt={c.confirmedAt}
+              confirmedBy={c.confirmedBy}
+              loading={confirm.isPending}
+              onConfirm={(body) => confirm.mutate({ id: c.id, confirmed: true, body })}
+              onUnconfirm={() => confirm.mutate({ id: c.id, confirmed: false })}
+            />
+          ),
+        }}
+        mobileSort={[{ field: 'name', label: 'Name' }]}
         rowSelection={{
           selectedRowKeys: selectedIds,
           // Ticks on other pages are no longer in dataSource; without this, paging away
