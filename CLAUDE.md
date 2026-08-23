@@ -179,6 +179,13 @@ every fixed Drawer/Modal width is capped centrally (antd does not clamp them, so
 iOS Safari zooms in on focus and never zooms back out. That override needs `!important`:
 antd v5 emits `.ant-input.css-<hash>`, two classes, and loses to nothing less.
 
+The control width cap in that file is **not** a general safety net, whatever it looks like.
+A percentage max-width only bites when the parent has a width of its own, so it works
+inside a Form.Item in a Col and does nothing inside an antd `Space`, where it resolves
+against an item sized by its own content. Give a wide control in a Space an explicit
+mobile width at the call site — that is why the Mailbox search box takes a row of its own
+on a phone rather than trusting the stylesheet to rein it in.
+
 ## Conventions
 
 The code in this repo carries unusually long explanatory comments on the *why* of a decision

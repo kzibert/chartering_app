@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { Button, Space } from 'antd';
 import { EditOutlined } from '@ant-design/icons';
 
@@ -26,6 +26,7 @@ export default function EditToolbar({
   onToggle,
   extra,
   children,
+  style,
 }: {
   editing: boolean;
   onToggle: (on: boolean) => void;
@@ -37,9 +38,15 @@ export default function EditToolbar({
   extra?: ReactNode;
   /** Controls shown only while editing — typically the "Add …" button(s). */
   children?: ReactNode;
+  /**
+   * Overrides the row's own spacing. For the drawers, which sit this toggle *inside* the
+   * status strip it governs rather than on a row above a list — the bottom margin that
+   * separates a toolbar from its list only knocks it out of line there.
+   */
+  style?: CSSProperties;
 }) {
   return (
-    <Space style={{ marginBottom: 8 }} wrap>
+    <Space style={{ marginBottom: 8, ...style }} wrap>
       <Button
         size="small"
         type={editing ? 'primary' : 'default'}

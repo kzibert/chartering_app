@@ -403,6 +403,29 @@ export default function MailboxPage() {
   ];
 
   /**
+   * The search box, declared once and rendered in one of two places.
+   *
+   * On a desktop it sits in the toolbar row with the checkboxes, at a width that fits the
+   * placeholder. On a phone that same row cannot hold it: 420px of search plus the folder
+   * button overflows a 390px screen, and the Search button — the one part of the control
+   * that has to stay reachable — is what hangs off the right edge. Capping it in CSS does
+   * not help, because a percentage width inside antd's Space resolves against an item that
+   * is itself sized by its content. A row of its own is what actually fixes it, and it
+   * reads better besides: the search is the thing this tab is used for.
+   */
+  const searchBox = (
+    <Input.Search
+      allowClear
+      value={typed}
+      onChange={(e) => setTyped(e.target.value)}
+      onSearch={runSearch}
+      placeholder={isMobile ? 'Search mail…' : 'Address, person, company, or words from the subject…'}
+      style={{ width: isMobile ? '100%' : 420 }}
+      enterButton
+    />
+  );
+
+  /**
    * The two folder trees. A Card in the page on a desktop, a drawer on a phone: this is
    * 250px of tree that does not fold down to anything smaller, and stacking it above the
    * messages would put a screenful of folders between the user and their mail every time
@@ -494,6 +517,8 @@ export default function MailboxPage() {
 
         <Card size="small" style={{ flex: 1, minWidth: 0 }}>
           <Space direction="vertical" size="small" style={{ width: '100%' }}>
+            {/* Full width, and above everything else — see searchBox. */}
+            {isMobile && searchBox}
             {/* The filters on the left and the one action on the right, rather than all of
                 it in one Space: "Mark all read" acts on everything these controls select,
                 so it belongs at the end of the row that defines it — and away from the
@@ -513,15 +538,7 @@ export default function MailboxPage() {
                     {scopeName}
                   </Button>
                 )}
-                <Input.Search
-                  allowClear
-                  value={typed}
-                  onChange={(e) => setTyped(e.target.value)}
-                  onSearch={runSearch}
-                  placeholder="Address, person, company, or words from the subject…"
-                  style={{ width: 420 }}
-                  enterButton
-                />
+                {!isMobile && searchBox}
                 <Tooltip
                   title="Also search inside the message text. Not indexed — every stored body is
                          scanned — so it is left off unless you ask for it."

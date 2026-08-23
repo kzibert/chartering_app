@@ -9,6 +9,7 @@ import MainContactButton from './MainContactButton';
 import CircToggleButton from './CircToggleButton';
 import NoCircToggleButton from './NoCircToggleButton';
 import WorkingToggleButton from './WorkingToggleButton';
+import ConfirmContactButton from './ConfirmContactButton';
 import { WhatsappChatLink, WhatsappCheckButton } from './WhatsappButtons';
 import { useContactRowExpansion } from './ContactRowExpansion';
 import { useContactMutations } from '../api/hooks';
@@ -29,7 +30,7 @@ const NEUTRAL_SALUTATION = 'Good day';
  * already says the address has no person behind it, and a general greeting follows from
  * that — printing it beside every such row is a second label for the same fact.
  *
- * **Why the write controls hide.** There are nine of them, and rendering all nine on every
+ * **Why the write controls hide.** There are ten of them, and rendering all ten on every
  * row turned a company with six contacts into fifty-odd buttons wrapping over two lines
  * each — a wall that had to be read before the addresses could be. They now open under the
  * row that was clicked, one row at a time (see `ContactRowExpansion`). The row itself keeps
@@ -50,11 +51,11 @@ export default function ContactLine({
   /** Substring to mark in the value — the term this row was searched by. */
   highlight?: string;
   /**
-   * Gates every control that writes to the contact — main, circ, no-circ, not-working, the
-   * WhatsApp check, edit, ban, delete — behind a click on the row, and shows the disclosure
-   * that says so. Add-to-list is deliberately not gated: it only builds the local email
-   * list. Neither is the WhatsApp chat link, which only opens a chat with a number already
-   * flagged.
+   * Gates every control that writes to the contact — main, circ, no-circ, not-working,
+   * confirm, the WhatsApp check, edit, ban, delete — behind a click on the row, and shows
+   * the disclosure that says so. Add-to-list is deliberately not gated: it only builds the
+   * local email list. Neither is the WhatsApp chat link, which only opens a chat with a
+   * number already flagged.
    */
   editing?: boolean;
   /**
@@ -177,6 +178,7 @@ export default function ContactLine({
             <CircToggleButton ct={ct} />
             <NoCircToggleButton ct={ct} />
             <WorkingToggleButton ct={ct} />
+            <ConfirmContactButton ct={ct} />
             <WhatsappCheckButton ct={ct} />
             {onEdit && (
               <Tooltip title="Edit contact">
