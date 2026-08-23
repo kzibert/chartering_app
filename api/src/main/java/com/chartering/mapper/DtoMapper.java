@@ -55,6 +55,7 @@ public class DtoMapper {
                 p != null ? p.getFullName() : null,
                 p != null && p.isHasLeft(),
                 p != null ? p.getTitle() : null,
+                p != null ? p.getJobTitle() : null,
                 effectiveGreeting(ct),
                 blankToNull(ct.getGreetingName()),
                 p == null && ct.getCompany() != null,
@@ -92,7 +93,7 @@ public class DtoMapper {
     public PersonResponse toPersonResponse(Person p) {
         Company c = p.getCompany();
         return new PersonResponse(
-                p.getId(), p.getFullName(), p.getTitle(), p.getGreetingName(),
+                p.getId(), p.getFullName(), p.getTitle(), p.getJobTitle(), p.getGreetingName(),
                 c != null ? c.getId() : null,
                 c != null ? c.getName() : null,
                 p.getNotes(), p.isLegacy(), p.isHasLeft());

@@ -253,6 +253,9 @@ export default function CompanyPeopleTab({
                         </Tooltip>
                       )}
                       <GreetingName title={p.title} name={p.greetingName} type="success" />
+                      {p.jobTitle && (
+                        <Typography.Text type="secondary">{p.jobTitle}</Typography.Text>
+                      )}
                       <Typography.Text type="secondary">
                         {personContacts.length} contact{personContacts.length === 1 ? '' : 's'}
                       </Typography.Text>

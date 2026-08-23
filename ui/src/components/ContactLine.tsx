@@ -1,5 +1,5 @@
 import type { HTMLAttributes, ReactNode } from 'react';
-import { Button, List, Popconfirm, Space, Tag, Tooltip } from 'antd';
+import { Button, List, Popconfirm, Space, Tag, Tooltip, Typography } from 'antd';
 import { DeleteOutlined, EditOutlined, HolderOutlined, RightOutlined } from '@ant-design/icons';
 import CopyableValue from './CopyableValue';
 import GreetingName from './GreetingName';
@@ -18,9 +18,11 @@ import type { ContactResponse } from '../api/types';
 const NEUTRAL_SALUTATION = 'Good day';
 
 /**
- * One email/phone line. When `showGreeting` is set (default), a copiable English greeting
- * name is shown — handy when the list isn't already grouped by person (company Contacts
- * tab, vessel owner contacts).
+ * One email/phone line. When `showGreeting` is set (default), the person behind the address
+ * is described: a copiable English greeting name, and their job title when one is on file.
+ * Handy when the list isn't already grouped by person (company Contacts tab, vessel owner
+ * contacts). A list that groups by person turns it off — both facts belong to the person,
+ * and repeating them on each of their three rows says nothing the heading has not.
  *
  * A company-wide address (on a company, on nobody) carries a tag saying so. The opener it
  * will be merged with lives in the tag's tooltip rather than on the row: "company-wide"
@@ -74,6 +76,16 @@ export default function ContactLine({
     <Space wrap size={4}>
       {showGreeting && ct.greetingName && (
         <GreetingName title={ct.title} name={ct.greetingName} type="secondary" />
+      )}
+      {/* The person's position, not the address's. Muted rather than tagged: the tags on
+          this row are all flags that change how the address is treated, and a job title
+          changes nothing — it is there to tell you who you are writing to. */}
+      {showGreeting && ct.jobTitle && (
+        <Tooltip title={`${ct.personName ?? 'This person'}'s position at ${ct.companyName ?? 'the company'}. It belongs to the person, so it shows on every address and number of theirs — edit it on the person, not on this row.`}>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {ct.jobTitle}
+          </Typography.Text>
+        </Tooltip>
       )}
       {ct.personLeft && (
         <Tooltip

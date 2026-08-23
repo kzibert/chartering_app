@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Form, Input, Modal, Select, Space, Tooltip, Typography } from 'antd';
-import { UserAddOutlined } from '@ant-design/icons';
-import { useContactMutations } from '../../api/hooks';
+import { EditOutlined, UserAddOutlined } from '@ant-design/icons';
+import { useContactMutations, usePerson } from '../../api/hooks';
 import CompanySelect from '../../components/CompanySelect';
 import PersonSelect from '../../components/PersonSelect';
 import PersonForm from '../people/PersonForm';
-import type { ContactRequest, ContactResponse } from '../../api/types';
+import type { ContactRequest, ContactResponse, PersonResponse } from '../../api/types';
 
 interface Props {
   open: boolean;
@@ -32,6 +32,12 @@ export default function ContactForm({ open, editing, defaults, onClose }: Props)
   const [companyId, setCompanyId] = useState<number>();
   const [personId, setPersonId] = useState<number>();
   const [personFormOpen, setPersonFormOpen] = useState(false);
+  // null = the nested form is creating a new person; a person = it is editing that one.
+  const [personBeingEdited, setPersonBeingEdited] = useState<PersonResponse | null>(null);
+
+  // The selected person, for the read-only job title below. Job titles live on the person,
+  // so this form can show one but never save one — see the Form.Item's `extra`.
+  const { data: person } = usePerson(personId);
 
   // A person created from here belongs to whichever company this contact is on.
   const personDefaults = useMemo(() => ({ companyId }), [companyId]);
@@ -108,10 +114,54 @@ export default function ContactForm({ open, editing, defaults, onClose }: Props)
               <PersonSelect allowClear companyId={companyId} onChange={setPersonId} />
             </Form.Item>
             <Tooltip title="Create a new person">
-              <Button icon={<UserAddOutlined />} onClick={() => setPersonFormOpen(true)} />
+              <Button
+                icon={<UserAddOutlined />}
+                onClick={() => {
+                  setPersonBeingEdited(null);
+                  setPersonFormOpen(true);
+                }}
+              />
             </Tooltip>
           </Space.Compact>
         </Form.Item>
+
+        {/* Shown, not edited. The position is a fact about the person — their mobile and
+            their two mailboxes all carry the same one — so it is stored once on the person
+            and read here. Editing opens the person, which is where it can be changed for
+            all of their addresses at once. */}
+        {personId != null && (
+          <Form.Item
+            label="Job title"
+            tooltip="The position this person holds at the company. Stored on the person, so it shows on every address and number of theirs."
+            extra={
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Belongs to the person, not to this address — editing it changes it on all of
+                their emails and numbers.
+              </Typography.Text>
+            }
+          >
+            <Space size={4} wrap>
+              {person?.jobTitle ? (
+                <Typography.Text>{person.jobTitle}</Typography.Text>
+              ) : (
+                <Typography.Text type="secondary">Not set</Typography.Text>
+              )}
+              {person && (
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<EditOutlined />}
+                  onClick={() => {
+                    setPersonBeingEdited(person);
+                    setPersonFormOpen(true);
+                  }}
+                >
+                  {person.jobTitle ? 'Edit' : 'Add one'}
+                </Button>
+              )}
+            </Space>
+          </Form.Item>
+        )}
 
         {orphan && (
           <Alert
@@ -153,6 +203,7 @@ export default function ContactForm({ open, editing, defaults, onClose }: Props)
           the new person is selected straight away. */}
       <PersonForm
         open={personFormOpen}
+        editing={personBeingEdited}
         defaults={personDefaults}
         onCreated={(p) => {
           form.setFieldValue('personId', p.id);

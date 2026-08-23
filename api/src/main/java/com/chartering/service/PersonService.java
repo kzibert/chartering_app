@@ -149,9 +149,20 @@ public class PersonService {
     private void apply(Person p, PersonRequest req) {
         p.setFullName(req.getFullName());
         p.setTitle(req.getTitle());
+        p.setJobTitle(blankToNull(req.getJobTitle()));
         p.setGreetingName(req.getGreetingName());
         p.setNotes(req.getNotes());
         p.setCompany(resolveCompany(req.getCompanyId()));
+    }
+
+    /**
+     * A field cleared in the form arrives as "" rather than absent. Stored as null so
+     * "no position on file" is one value in the column and not two, and so the response —
+     * which omits nulls — leaves the field out instead of sending an empty string that
+     * every screen would have to test for separately.
+     */
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
     }
 
     private Company resolveCompany(Long companyId) {

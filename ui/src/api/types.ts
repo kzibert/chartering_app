@@ -114,7 +114,10 @@ export interface CompanyRequest {
 export interface PersonResponse {
   id: number;
   fullName: string;
+  /** honorific printed before the greeting name (Mr., Capt.) — never the job */
   title?: string;
+  /** the position held at the company — "Chartering Manager", "Operations" */
+  jobTitle?: string;
   greetingName?: string;
   companyId?: number;
   companyName?: string;
@@ -138,6 +141,7 @@ export interface PersonDetailResponse {
 export interface PersonRequest {
   fullName: string;
   title?: string;
+  jobTitle?: string;
   greetingName?: string;
   companyId?: number;
   notes?: string;
@@ -154,6 +158,14 @@ export interface ContactResponse {
    */
   personLeft: boolean;
   title?: string;
+  /**
+   * The position the person behind this address holds at the company. Read off the person
+   * server-side, never stored per address: one human's mobile and two mailboxes all carry
+   * the same position. Absent for a company-wide address, which has no person.
+   *
+   * Edited on the person, not here — the contact form shows it read-only.
+   */
+  jobTitle?: string;
   /**
    * The greeting to actually use: the contact's own when it has one, else the person's.
    * Everything downstream reads this — the contact row, the circulation list builder, the
