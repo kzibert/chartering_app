@@ -18,7 +18,16 @@ ui/dist/
 npm-debug.log*
 
 # Env overrides (commit .env.example, not .env)
+#
+# The negation is what makes this safe to widen: .env.* catches the backups that get
+# taken by hand before a risky change — .env.bak-before-jwt and whatever the next one
+# is called — which the bare `.env` rule did not match. Such a file holds the same
+# passwords the real one does and is one `git add -A` away from being published, so
+# the pattern has to cover names nobody has thought of yet rather than the one that
+# already exists. .env.example is the sole file here meant to be committed.
 .env
+.env.*
+!.env.example
 
 # Campaign send logs (bind-mounted from the api container) — operational data,
 # and they contain recipient addresses.
