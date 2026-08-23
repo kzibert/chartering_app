@@ -1,3 +1,13 @@
+# ---------------------------------------------------------------------------
+# local/ - everything on this machine that is not part of the repo
+# ---------------------------------------------------------------------------
+# Database exports, the credentials that go with them, rotated campaign logs,
+# the Windows launchers and internal notes all live under local/, with an index
+# in local/README.md. None of it is published; this rule is what keeps it that
+# way. The rules further down still match those files by name and extension on
+# their own, so a file that leaves local/ is still ignored.
+local/
+
 # Java / Maven
 api/target/
 *.class
@@ -13,6 +23,9 @@ npm-debug.log*
 # Campaign send logs (bind-mounted from the api container) — operational data,
 # and they contain recipient addresses.
 logs/
+# By name as well as by folder: rotated runs get archived to local/logs-archive/,
+# and the rule above only ever matched them while they sat in logs/.
+campaign-current*.log
 
 # Local launchers and internal notes. Kept on disk because they are useful here,
 # untracked because they are not part of what this repo publishes: the .bat files
