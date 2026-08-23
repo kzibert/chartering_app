@@ -32,6 +32,11 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
   // Owner contacts follow the same rules as the company drawer's Contacts tab:
   // read-only until Edit is on, which then reveals add/edit/delete and the
   // main / not-working toggles.
+  // Keyed on vesselId like every other edit mode in this drawer: the drawer stays mounted
+  // as you move from vessel to vessel, so without the reset you would still be armed to
+  // unconfirm on the next one you opened.
+  const [statusEditing, setStatusEditing] = useEditMode(vesselId);
+
   const { setLink, removeLink } = useVesselMutations();
   const [linksEditing, setLinksEditing] = useEditMode(vesselId);
   const [linkModalOpen, setLinkModalOpen] = useState(false);
@@ -86,8 +91,13 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
         <Spin />
       ) : (
         <>
+          {/* The toggle sits with the tags it governs, not on a row of its own — the same
+              way the Companies list below has its own. Each Edit in this drawer belongs to
+              the thing beside it, and the header's Edit (which opens the form) is a fourth
+              of those rather than an exception to it. */}
           <Space style={{ marginBottom: 12 }} wrap>
             <ConfirmTag
+              editing={statusEditing}
               confirmed={v.confirmed}
               confirmedAt={v.confirmedAt}
               confirmedBy={v.confirmedBy}
@@ -96,6 +106,11 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
               onUnconfirm={() => confirm.mutate({ id: v.id, confirmed: false })}
             />
             {v.banned && <Tag color="red">banned</Tag>}
+            <EditToolbar
+              editing={statusEditing}
+              onToggle={setStatusEditing}
+              style={{ marginBottom: 0 }}
+            />
           </Space>
           {/* One column on a phone: bordered Descriptions put label and value in the same
               row, so two of each across 360px leaves nothing legible in any of the four. */}

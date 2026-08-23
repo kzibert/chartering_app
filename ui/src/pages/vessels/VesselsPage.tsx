@@ -13,6 +13,7 @@ import MultiCheckSelect from '../../components/MultiCheckSelect';
 import { useVesselMutations } from '../../api/hooks';
 import { collectApi } from '../../api/circulations';
 import AddToListActions from '../../components/AddToListActions';
+import EditToolbar, { useEditMode } from '../../components/EditToolbar';
 import VesselDrawer from './VesselDrawer';
 import VesselForm from './VesselForm';
 import type { VesselFilter, VesselResponse } from '../../api/types';
@@ -42,6 +43,10 @@ export default function VesselsPage() {
   // Ticked rows for the bulk add. Kept across pages so a selection spanning two pages of
   // results survives paging — the ids are what the API is given, not the visible rows.
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  // Page-wide rather than per-row: confirming is something you do to a run of vessels you
+  // have just been through, and a mode that reset after every row would mean pressing Edit
+  // again for each one. Same reasoning as the People tab's contact editing.
+  const [editMode, setEditMode] = useEditMode(undefined);
 
   const query = useVessels({
     ...filters,
@@ -85,6 +90,7 @@ export default function VesselsPage() {
       key: 'confirmed',
       render: (_, v) => (
         <ConfirmTag
+          editing={editMode}
           confirmed={v.confirmed}
           confirmedAt={v.confirmedAt}
           confirmedBy={v.confirmedBy}
@@ -118,6 +124,7 @@ export default function VesselsPage() {
                 }
                 onCleared={() => setSelectedIds([])}
               />
+              <EditToolbar editing={editMode} onToggle={setEditMode} style={{ marginBottom: 0 }} />
             </>
           }
           extras={
@@ -219,6 +226,7 @@ export default function VesselsPage() {
           ],
           actions: (v) => (
             <ConfirmTag
+              editing={editMode}
               confirmed={v.confirmed}
               confirmedAt={v.confirmedAt}
               confirmedBy={v.confirmedBy}
