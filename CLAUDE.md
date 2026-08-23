@@ -151,6 +151,34 @@ One account. `AUTH_PASSWORD` (or `AUTH_PASSWORD_HASH`) plus a JWT signed with `J
 until one is set the api starts normally and refuses every login. Leaving `JWT_SECRET` unset
 generates a key per boot, which logs everyone out on each restart.
 
+### One UI, two layouts
+
+The same React tree serves a desktop and a phone; there is no second mobile app and no
+mobile build. `responsive/useIsMobile` is the single source of truth — viewport width under
+768px, the same number as antd's `md`, so the `xs`/`md` Cols in the filter forms and the
+shell always agree about which layout is on.
+
+Three pieces carry it:
+
+- **`components/ResponsiveTable`** — antd's `Table` on a desktop, a list of cards on a
+  phone. It takes the props `Table` takes plus a `mobile` prop describing the card
+  (title/subtitle/fields/actions). A page keeps **one** set of columns and handlers; adding
+  a column is adding it to both layouts. It also re-sends the active sorter with every page
+  change, because `useTableControls` reads an empty sorter as "sorting cleared".
+- **`components/FilterPanel`** — the filter card. Fields move into a bottom drawer behind a
+  Filters button on a phone, with a badge counting what is set. Put the `<Form>` *outside*
+  it: the drawer is a portal at the end of `<body>`, and only a Form above it in the React
+  tree still reaches those fields. It owns Search and Reset — pages no longer spell them.
+- **`components/AppLayout`** — the sider becomes a header, a nav drawer and a bottom tab
+  bar (Dashboard / Vessels / Companies / People / More).
+
+`src/index.css` is the only stylesheet, and holds just what inline styles cannot express:
+media queries, and overrides of antd's own class names. Two things there are load-bearing —
+every fixed Drawer/Modal width is capped centrally (antd does not clamp them, so a
+`width={720}` drawer hangs off a 390px screen), and inputs are forced to 16px on phones or
+iOS Safari zooms in on focus and never zooms back out. That override needs `!important`:
+antd v5 emits `.ant-input.css-<hash>`, two classes, and loses to nothing less.
+
 ## Conventions
 
 The code in this repo carries unusually long explanatory comments on the *why* of a decision

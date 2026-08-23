@@ -97,7 +97,9 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
             />
             {v.banned && <Tag color="red">banned</Tag>}
           </Space>
-          <Descriptions column={2} size="small" bordered>
+          {/* One column on a phone: bordered Descriptions put label and value in the same
+              row, so two of each across 360px leaves nothing legible in any of the four. */}
+          <Descriptions column={{ xs: 1, sm: 2 }} size="small" bordered>
             <Descriptions.Item label="IMO">{v.imoNumber ?? '—'}</Descriptions.Item>
             <Descriptions.Item label="Year">{v.yearBuilt ?? '—'}</Descriptions.Item>
             <Descriptions.Item label="DWT">{v.deadweightTonnage ?? '—'}</Descriptions.Item>

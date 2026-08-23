@@ -856,21 +856,24 @@ export default function CircularsPage() {
                       : 'success'
               }
             />
-            <Row gutter={16}>
-              <Col span={6}>
+            {/* Two by two on a phone: four of these across a 360px screen leaves each about
+                eighty pixels, and "Skipped (duplicates)" then takes three lines of title
+                above a one-digit number. */}
+            <Row gutter={[16, 12]}>
+              <Col xs={12} md={6}>
                 <Statistic title="Sent" value={status.sent} suffix={`/ ${status.total}`} />
               </Col>
-              <Col span={6}>
+              <Col xs={12} md={6}>
                 <Statistic
                   title="Failed"
                   value={status.failed}
                   valueStyle={status.failed ? { color: '#cf1322' } : undefined}
                 />
               </Col>
-              <Col span={6}>
+              <Col xs={12} md={6}>
                 <Statistic title="Skipped (duplicates)" value={status.skipped} />
               </Col>
-              <Col span={6}>
+              <Col xs={12} md={6}>
                 <Statistic
                   title={running ? 'Time remaining' : 'Finished'}
                   value={
@@ -922,6 +925,7 @@ export default function CircularsPage() {
                   label: 'Campaign log',
                   children: (
                     <pre
+                      className="responsive-scroll-x"
                       style={{
                         margin: 0,
                         maxHeight: 320,

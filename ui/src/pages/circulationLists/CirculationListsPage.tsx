@@ -10,7 +10,6 @@ import {
   Popconfirm,
   Segmented,
   Space,
-  Table,
   Tag,
   Tooltip,
   Typography,
@@ -29,6 +28,7 @@ import {
   ClearOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import ResponsiveTable from '../../components/ResponsiveTable';
 import * as XLSX from 'xlsx';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { circulationListsApi } from '../../api/circulations';
@@ -551,7 +551,7 @@ export default function CirculationListsPage() {
                 </Button>
               </Empty>
             ) : (
-              <Table<CirculationListEntry>
+              <ResponsiveTable<CirculationListEntry>
                 rowKey="id"
                 size="small"
                 loading={viewingCurrent ? current.isLoading : savedQuery.isLoading}
@@ -559,6 +559,34 @@ export default function CirculationListsPage() {
                 dataSource={filtered}
                 pagination={filtered.length > 50 ? { pageSize: 50, showSizeChanger: false } : false}
                 scroll={{ x: true }}
+                // The cells stay editable as cards: a list is a prepared document, and
+                // fixing a greeting on the train is exactly the sort of thing a phone is
+                // for. Tapping the text opens antd's inline editor the same as on a row.
+                mobile={{
+                  title: (r) => (
+                    <Space size={4} wrap>
+                      {editableCell('email')(r.email, r)}
+                      {r.personLeft && <Tag color="red">left the company</Tag>}
+                    </Space>
+                  ),
+                  subtitle: (r) => [r.personName, r.companyName].filter(Boolean).join(' — ') || '—',
+                  fields: (r) => [
+                    { label: 'Title', value: editableCell('title')(r.title, r) },
+                    { label: 'Greeting', value: editableCell('greetingName')(r.greetingName, r) },
+                    { label: 'Person', value: editableCell('personName')(r.personName, r) },
+                    { label: 'Company', value: editableCell('companyName')(r.companyName, r) },
+                  ],
+                  actions: (r) => (
+                    <Button
+                      size="small"
+                      danger
+                      icon={<DeleteOutlined />}
+                      onClick={() => removeEntry.mutate(r.id)}
+                    >
+                      Remove from list
+                    </Button>
+                  ),
+                }}
                 // Both views have a button scoped by the ticks: a saved list moves rows to
                 // and from the current one, the current list pushes rows into a saved one.
                 rowSelection={{

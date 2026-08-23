@@ -6,7 +6,6 @@ import {
   Popconfirm,
   Space,
   Spin,
-  Table,
   Select,
   Tabs,
   Tag,
@@ -19,6 +18,7 @@ import {
   SwapOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import ResponsiveTable from '../../components/ResponsiveTable';
 import {
   useCompany,
   useCompanyContacts,
@@ -328,13 +328,61 @@ function CompanyVesselsTab({
           </Button>
         </Tooltip>
       </EditToolbar>
-      <Table<CompanyVesselResponse>
+      <ResponsiveTable<CompanyVesselResponse>
         rowKey={(r) => r.vessel.id}
         size="small"
         loading={isLoading}
         dataSource={data ?? []}
         pagination={false}
         columns={columns}
+        mobile={{
+          // A link, not a row click: on the desktop table only the name opens the vessel,
+          // and making the whole card a target would collide with the buttons on it.
+          title: (r) => (
+            <Typography.Link onClick={() => onOpenVessel(r.vessel.id)}>
+              {r.vessel.name}
+            </Typography.Link>
+          ),
+          subtitle: (r) =>
+            editMode ? (
+              <Select
+                size="small"
+                style={{ width: 140 }}
+                value={r.role}
+                options={ROLE_OPTIONS}
+                onChange={(role) => setLink.mutate({ vesselId: r.vessel.id, companyId: id, role })}
+              />
+            ) : (
+              <VesselRoleTag role={r.role} />
+            ),
+          fields: (r) => [
+            r.vessel.deadweightTonnage != null && {
+              label: 'DWT',
+              value: r.vessel.deadweightTonnage,
+            },
+            r.vessel.yearBuilt != null && { label: 'Year', value: r.vessel.yearBuilt },
+            r.vessel.vesselType != null && { label: 'Type', value: r.vessel.vesselType },
+          ],
+          actions: (r) =>
+            editMode ? (
+              <Space size={4} wrap>
+                <Button size="small" onClick={() => onEditVessel(r.vessel)}>Edit</Button>
+                <Popconfirm
+                  title="Detach this vessel?"
+                  onConfirm={() => removeLink.mutate({ vesselId: r.vessel.id, companyId: id })}
+                >
+                  <Button size="small" icon={<SwapOutlined />}>Detach</Button>
+                </Popconfirm>
+                <Popconfirm
+                  title="Delete this vessel?"
+                  description="This removes the vessel from the database entirely."
+                  onConfirm={() => remove.mutate(r.vessel.id)}
+                >
+                  <Button size="small" danger>Delete</Button>
+                </Popconfirm>
+              </Space>
+            ) : null,
+        }}
       />
     </>
   );

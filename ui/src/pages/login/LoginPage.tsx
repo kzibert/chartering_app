@@ -41,10 +41,12 @@ export default function LoginPage() {
         alignItems: 'center',
         justifyContent: 'center',
         background: '#f0f2f5',
-        padding: 24,
+        padding: 16,
       }}
     >
-      <Card style={{ width: 380, boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
+      {/* maxWidth rather than width: on a 360px phone a 380px card is wider than the
+          screen it is centred in, and the login box is the first thing anyone sees. */}
+      <Card style={{ width: '100%', maxWidth: 380, boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
           <Typography.Title level={3} style={{ marginBottom: 4 }}>
             ⚓ Chartering

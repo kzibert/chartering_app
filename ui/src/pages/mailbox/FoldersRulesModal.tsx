@@ -217,6 +217,10 @@ function FoldersTab() {
         columns={columns}
         dataSource={rows}
         pagination={false}
+        // Scrolls in its own box on a narrow screen instead of squashing every column to
+        // one word. Folders and rules are configuration, not something read on a phone —
+        // a scrollable table is the honest amount of effort for them.
+        scroll={{ x: true }}
         loading={folders.isLoading}
         locale={{ emptyText: <Empty description="No folders yet" /> }}
       />
@@ -354,6 +358,7 @@ function RulesTab({ onEdit }: { onEdit: (rule: MailRule | null) => void }) {
         columns={columns}
         dataSource={rules.data ?? []}
         pagination={false}
+        scroll={{ x: true }}
         loading={rules.isLoading}
         locale={{ emptyText: <Empty description="No rules yet — new mail all stays in the Inbox" /> }}
       />
