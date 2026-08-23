@@ -956,24 +956,45 @@ present, every table empty. Data comes from a backup you restore
 [The login](#the-login). Render's environment editor does not expand `$`, so paste the hash
 as it comes out of `htpasswd`, unquoted.
 
-### How the two services find each other
+### One container and one CDN, not two containers
 
-The ui's nginx proxies `/api/` to the api over Render's private network, so the browser only
-ever makes same-origin requests and the api needs no public traffic of its own. The address
-comes from `API_HOST`, which the blueprint fills from the api service:
+The api is a Docker web service. **The ui is a static site**, and that is worth
+understanding rather than just copying, because it is not a downgrade — the ui was always
+static.
+
+`npm run build` turns the whole SPA into two files: an `index.html` and one JavaScript
+bundle. React runs in the browser from there; nothing about the ui executes on a server. So
+the nginx container was doing two jobs, and only one of them needed a server at all:
+
+| nginx's job | On Render |
+|---|---|
+| Hand `dist/` to the browser | A CDN does it, free, and it never sleeps |
+| Forward `/api/` so the browser sees one origin | A rewrite rule in `render.yaml` |
+
+The rewrite is ordinary routing, and **the order matters in a way that fails silently**:
 
 ```yaml
-- key: API_HOST
-  fromService: { type: web, name: chartering-api, property: hostport }
+routes:
+  - { type: rewrite, source: /api/*, destination: https://chartering-api.onrender.com/api/* }
+  - { type: rewrite, source: /*,     destination: /index.html }
 ```
 
-That is why `ui/nginx.conf` became `ui/default.conf.template`: the nginx image renders it
-with `envsubst` at container start, so one image serves compose (`api:8081`) and Render
-(whatever `hostport` resolves to) without a rebuild. If a blueprint apply rejects
-`hostport`, set `API_HOST` to `chartering-api:8081` by hand — it is the same value.
+The second rule is the SPA fallback — `/vessels` is a React route, not a file. It matches
+everything, so if it came first it would answer `/api/v1/vessels` with `index.html` and the
+app would get HTML where it expected JSON on every call.
 
-`PORT` is pinned in the blueprint for both services (8081 and 80) rather than left to
-Render's default, so `API_HOST` resolves to a port you can also read in the file.
+**If a rewrite cannot reach an off-site destination,** the fallback is to let the browser
+call the api by name. `VITE_API_BASE_URL` on the ui build does that; the calls become
+cross-origin, which is exactly what `CORS_ORIGINS` on the api allows, and the blueprint
+already points it at the ui. Unset — compose, `npm run dev` — the base stays `/api/v1` and
+nothing changes.
+
+This is why the free tier suits the shape: **a static site is not an instance.** It never
+sleeps and never draws on the free instance-hour allowance, so only the api sleeps, and its
+cold start begins after the page is already on screen rather than before it.
+
+`ui/Dockerfile` and `ui/default.conf.template` are untouched by any of this. They are still
+how compose runs the ui locally, and still the way back if this moves to a paid instance.
 
 ### Things that behave differently there than on compose
 
@@ -981,11 +1002,15 @@ Render's default, so `API_HOST` resolves to a port you can also read in the file
   bind-mounted to the host under compose and simply lost on restart under Render. The
   circulation *history* is unaffected — that lives in the database. Add a Render disk if the
   log matters.
-- **A free instance sleeps.** After 15 minutes idle it spins down, and the next request pays
-  a cold start of roughly a minute. That is bad for a browser tab and much worse for a
-  circular: the IMAP poll and the campaign runner are scheduled jobs, and a sleeping instance
-  is not running them. Use a paid instance for anything that has to keep sending; `starter`
-  is what the blueprint asks for.
+- **The api sleeps.** The blueprint asks for `plan: free`, so after 15 minutes idle the
+  instance spins down and the next request pays a cold start of roughly a minute. The ui does
+  not sleep — it is a static site, not an instance.
+
+  What sleeps with the api is **everything on a schedule**. The IMAP poll and the campaign
+  runner are not running while it is down, so the mailbox does not refresh in the background
+  and a circular cannot go out to a sleeping instance. That is the actual cost of the free
+  tier here, and it is fine for a desk that gets opened deliberately. `plan: starter` is the
+  same file with one word changed.
 - **`SWAGGER_ENABLED=false`.** No published map of the API from a public instance. The
   endpoints refuse anonymous callers either way; this is just not advertising them.
 - **Redeploys log you out unless `JWT_SECRET` is fixed.** The blueprint's `generateValue`
@@ -1004,9 +1029,12 @@ Render's default, so `API_HOST` resolves to a port you can also read in the file
 
 ### Deploying by hand instead
 
-The blueprint is optional; two Docker web services created in the dashboard do the same
-thing. Root directory `api/` and `ui/`, Dockerfile path `./Dockerfile` in each, health check
-`/actuator/health` on the api, and the environment variables above.
+The blueprint is optional. In the dashboard that is:
+
+- **api** — a Docker web service, root directory `api/`, Dockerfile `./Dockerfile`, health
+  check `/actuator/health`, and the environment variables above.
+- **ui** — a static site, root directory `ui/`, build command `npm ci && npm run build`,
+  publish directory `dist`, plus the two redirect/rewrite rules in the order given above.
 
 ## Running against a hosted database
 

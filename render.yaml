@@ -23,7 +23,14 @@ services:
     runtime: docker
     dockerfilePath: ./api/Dockerfile
     dockerContext: ./api
-    plan: starter
+    # Free, and the trade is real: the instance sleeps after 15 minutes idle and the next
+    # request pays a cold start of about a minute. What sleeps with it is everything on a
+    # schedule - the IMAP poll and the campaign runner are not running while it is down, so
+    # a circular cannot be sent to a sleeping instance and the mailbox does not refresh in
+    # the background. Fine for a desk that is opened deliberately; not fine for anything
+    # that has to keep sending unattended. `starter` is the same file with this one word
+    # changed.
+    plan: free
     region: frankfurt
     # "Did the deploy come up" answered by the app rather than by the port being open.
     # /actuator/health is the only actuator endpoint exposed and is deliberately outside
@@ -94,9 +101,12 @@ services:
       # courtesy this deployment owes nobody.
       - key: SWAGGER_ENABLED
         value: false
-      # The ui is same-origin through its own nginx, so nothing legitimate needs CORS.
-      # Narrow rather than "*" - and narrow to a value that matches nothing, since the
-      # browser never makes a cross-origin call here.
+      # Load-bearing only if the ui ends up calling this service by name rather than
+      # through a rewrite - see the ui service below, which explains the two shapes. Set to
+      # the ui's address either way: it costs nothing when the calls are same-origin, and it
+      # is the difference between working and not when they are not.
+      #
+      # Change this if Render assigns the ui a different hostname than the one below.
       - key: CORS_ORIGINS
         value: https://chartering-ui.onrender.com
 
@@ -109,24 +119,47 @@ services:
         value: false
 
   # ---------------------------------------------------------------------------
-  # ui - React build served by nginx, which also proxies /api to the api service
+  # ui - the built SPA on Render's CDN. No container, no instance, no sleep.
   # ---------------------------------------------------------------------------
+  # The ui was always static; the nginx container around it was doing two jobs and only one
+  # of them needed a server. `npm run build` produces two files - an index.html and one
+  # bundle - and React runs in the browser from there. Serving those is a CDN's job.
+  #
+  # The other job was proxying /api so the browser saw a single origin, and the `routes`
+  # block below is what replaces it. That matters more than the saved container: a static
+  # site is not an instance, so it never sleeps and never spends the free instance-hour
+  # allowance. Only the api sleeps, and the wait starts after the page is already on screen.
+  #
+  # ui/Dockerfile and ui/default.conf.template stay exactly as they are - that is still how
+  # compose runs this locally, and still the way back if this ever moves to a paid instance.
   - type: web
     name: chartering-ui
-    runtime: docker
-    dockerfilePath: ./ui/Dockerfile
-    dockerContext: ./ui
-    plan: starter
-    region: frankfurt
-    envVars:
-      - key: PORT
-        value: 80
-      # Where nginx forwards /api/. `hostport` is the api's private address inside
-      # Render - it never leaves their network, so the api needs no public exposure of
-      # its own for the ui to reach it. If a blueprint apply rejects this key, set
-      # API_HOST to `chartering-api:8081` by hand; it is the same value.
-      - key: API_HOST
-        fromService:
-          type: web
-          name: chartering-api
-          property: hostport
+    runtime: static
+    rootDir: ui
+    # ci, not install: it builds exactly what package-lock.json pins rather than resolving
+    # something newer on a machine that is not yours.
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+
+    routes:
+      # ORDER MATTERS, and getting it wrong is silent. The SPA fallback below matches
+      # everything; if it came first it would answer /api/v1/vessels with index.html, and
+      # the app would see HTML where it expected JSON on every single call.
+      - type: rewrite
+        source: /api/*
+        destination: https://chartering-api.onrender.com/api/*
+      # Client-side routing: /vessels is a React route, not a file, so every path that is
+      # not a real asset has to be answered with the app itself.
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+    # THE FALLBACK, if the rewrite above turns out not to accept an off-site destination.
+    # Uncomment it, and the browser calls the api by name instead of being proxied to it.
+    # That makes the calls cross-origin, which is exactly what CORS_ORIGINS on the api
+    # already allows - it is set to this site's address up there. Nothing else changes, and
+    # the /api/* route above becomes dead weight rather than a problem.
+    #
+    # envVars:
+    #   - key: VITE_API_BASE_URL
+    #     value: https://chartering-api.onrender.com

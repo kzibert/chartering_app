@@ -2,9 +2,21 @@ import axios from 'axios';
 import { notification } from 'antd';
 import { clearToken, getToken } from '../auth/store';
 
-// Relative base: Vite proxies /api in dev, nginx proxies /api in the container.
+/**
+ * Relative by default — Vite proxies /api in dev, nginx proxies it in the container, and a
+ * static host with a rewrite rule proxies it too. In all three the browser sees one origin
+ * and CORS never enters into it.
+ *
+ * VITE_API_BASE_URL is for the fourth case: the bundle served from somewhere with nothing
+ * in front of the API to proxy for it — a static site whose host cannot rewrite. Then the
+ * calls have to name the API outright, which makes them cross-origin, which is what
+ * CORS_ORIGINS on the API exists to allow. Baked in at build time, so switching it means a
+ * rebuild; that is fine, because the address only changes when the deployment does.
+ */
+const API_BASE = import.meta.env.VITE_API_BASE_URL?.replace(/\/+$/, '') ?? '';
+
 export const client = axios.create({
-  baseURL: '/api/v1',
+  baseURL: `${API_BASE}/api/v1`,
 });
 
 // Every request carries the bearer token, if there is one. Read per request rather than set
