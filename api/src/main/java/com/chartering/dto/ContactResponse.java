@@ -18,6 +18,14 @@ public record ContactResponse(
         boolean personLeft,
         String title,
         /**
+         * The position the person behind this address holds at the company. Read off the
+         * person, never stored here: one human's mobile and two mailboxes all carry the
+         * same position, and three copies of it would be three chances to disagree.
+         *
+         * <p>Null for a company-wide address, which has no person to hold a job.
+         */
+        String jobTitle,
+        /**
          * The greeting to actually use for this address: the contact's own when it has one,
          * otherwise the person's. Everything downstream reads this one — the circulation
          * list builder, the WhatsApp link, the contact row — so a company-wide address with

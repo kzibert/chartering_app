@@ -9,6 +9,27 @@ const TITLE_OPTIONS = ['Mr.', 'Mrs.', 'Ms.', 'Miss', 'Capt.', 'Dr.', 'Eng.', 'Pr
   (t) => ({ value: t }),
 );
 
+/**
+ * Suggestions only — the field stays free text, because the positions in this trade are not
+ * a closed list and a dropdown that cannot express someone's actual job gets filled in with
+ * the nearest wrong answer.
+ */
+const JOB_TITLE_OPTIONS = [
+  'Chartering Manager',
+  'Chartering Broker',
+  'Chartering Officer',
+  'Operations Manager',
+  'Operations',
+  'Managing Director',
+  'General Manager',
+  'Commercial Manager',
+  'Fleet Manager',
+  'Port Agent',
+  'Owner',
+  'Director',
+  'Accountant',
+].map((t) => ({ value: t }));
+
 interface Props {
   open: boolean;
   editing?: PersonResponse | null;
@@ -50,6 +71,7 @@ export default function PersonForm({ open, editing, defaults, onCreated, onClose
         form.setFieldsValue({
           fullName: editing.fullName,
           title: editing.title,
+          jobTitle: editing.jobTitle,
           greetingName: editing.greetingName,
           companyId: editing.companyId,
           notes: editing.notes,
@@ -94,6 +116,16 @@ export default function PersonForm({ open, editing, defaults, onCreated, onClose
         </Form.Item>
         <Form.Item name="title" label="Title" tooltip="Honorific shown before the greeting name (e.g. Mr., Capt.)">
           <AutoComplete options={TITLE_OPTIONS} allowClear placeholder="e.g. Mr." filterOption />
+        </Form.Item>
+        {/* Deliberately next to Title, which is the honorific — seeing the two fields side
+            by side is the clearest statement that they are different things. */}
+        <Form.Item
+          name="jobTitle"
+          label="Job title"
+          tooltip="The position held at the company — e.g. Chartering Manager. Shown on every address and number of theirs; not the honorific above."
+          rules={[{ max: 120, message: 'Job title must be at most 120 characters' }]}
+        >
+          <AutoComplete options={JOB_TITLE_OPTIONS} allowClear placeholder="e.g. Chartering Manager" filterOption />
         </Form.Item>
         <Form.Item
           name="greetingName"

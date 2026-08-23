@@ -90,6 +90,11 @@ export default function PersonDrawer({ personId, onClose, onEdit, onOpenCompany 
         <>
           <Space style={{ marginBottom: 12 }} wrap>
             {p.greetingName && <GreetingName title={p.title} name={p.greetingName} type="success" />}
+            {p.jobTitle && (
+              <Tooltip title="Position at this company. It belongs to the person, so every address and number below carries it.">
+                <Tag>{p.jobTitle}</Tag>
+              </Tooltip>
+            )}
             {p.companyName &&
               (onOpenCompany && p.companyId != null ? (
                 <Typography.Link onClick={() => onOpenCompany(p.companyId!)}>

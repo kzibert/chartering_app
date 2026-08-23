@@ -1,0 +1,17 @@
+-- The position a person holds at their company - "Chartering Manager", "Operations",
+-- "Managing Director". Distinct from people.title, which is the honorific (Mr./Capt.)
+-- printed before the greeting name; the two are never interchangeable and neither one
+-- can be derived from the other.
+--
+-- On the person rather than on the contact. A position is a fact about the human, and
+-- one person commonly has three addresses - work email, mobile, a second mailbox. Held
+-- on contacts it would be the same sentence typed three times, free to drift apart and
+-- with nothing to say which copy was right. Contacts read it through their person, the
+-- way they already read has_left and the greeting fallback.
+--
+-- Nullable: it is not known for most of the imported rows, and an address that belongs
+-- to a company rather than to anyone in particular has no person to hold one at all.
+--
+-- 120 chars, matching greeting_name. Long enough for "Deputy Head of Chartering and
+-- Operations" and short enough that a pasted paragraph is rejected rather than stored.
+ALTER TABLE public.people ADD COLUMN job_title character varying(120);

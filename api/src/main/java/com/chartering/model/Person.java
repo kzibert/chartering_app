@@ -21,6 +21,24 @@ public class Person {
     @Column(name = "title")
     private String title;
 
+    /**
+     * The position this person holds at {@link #company} — "Chartering Manager",
+     * "Operations", "Managing Director".
+     *
+     * <p>Nothing to do with {@link #title}, which is the honorific printed before the
+     * greeting name. Neither can be derived from the other, and a screen showing one where
+     * the other belongs is wrong in a way that reads as correct.
+     *
+     * <p>Kept here rather than on each contact because a position is a fact about the
+     * person: their mobile and their two mailboxes all carry the same one, and holding
+     * three copies of it is three chances to disagree. Contacts read it through the person,
+     * as they already do for {@link #hasLeft} and the greeting fallback. A company-wide
+     * address — a chartering@ desk, filed under no person — therefore has none, which is
+     * right: a desk is not a job somebody holds.
+     */
+    @Column(name = "job_title")
+    private String jobTitle;
+
     /** English first name used for greetings in circulation emails. */
     @Column(name = "greeting_name")
     private String greetingName;

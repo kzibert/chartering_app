@@ -115,6 +115,19 @@ export default function PeoplePage() {
       ),
     },
     {
+      // Its own column rather than a line under the name: it is the field you scan a list
+      // of people by when you are looking for whoever does chartering there.
+      title: 'Job title',
+      key: 'jobTitle',
+      width: 180,
+      render: (_, r) =>
+        r.person.jobTitle ? (
+          <Typography.Text>{r.person.jobTitle}</Typography.Text>
+        ) : (
+          <Typography.Text type="secondary">—</Typography.Text>
+        ),
+    },
+    {
       title: 'Greeting',
       key: 'greeting',
       width: 180,
