@@ -4,13 +4,20 @@ import com.chartering.dto.ContactImportPreview;
 import com.chartering.dto.ContactImportPreview.ImportCompany;
 import com.chartering.dto.ContactImportPreview.ImportContact;
 import com.chartering.dto.ContactImportPreview.ImportPerson;
+import com.chartering.dto.ContactImportRequest;
+import com.chartering.dto.ContactImportRequest.ImportCompanyRequest;
+import com.chartering.dto.ContactImportRequest.ImportContactRequest;
+import com.chartering.dto.ContactImportRequest.ImportPersonRequest;
 import com.chartering.model.Company;
+import com.chartering.model.Contact;
+import com.chartering.model.Person;
 import com.chartering.repository.CompanyRepository;
 import com.chartering.repository.ContactRepository;
 import com.chartering.repository.PersonRepository;
 import com.chartering.service.imports.ContactCsvParser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.springframework.mock.web.MockMultipartFile;
 
@@ -45,13 +52,15 @@ class ContactImportServiceTest {
             """;
 
     private CompanyRepository companyRepository;
+    private PersonRepository personRepository;
+    private ContactRepository contactRepository;
     private ContactImportService service;
 
     @BeforeEach
     void setUp() {
         companyRepository = Mockito.mock(CompanyRepository.class);
-        PersonRepository personRepository = Mockito.mock(PersonRepository.class);
-        ContactRepository contactRepository = Mockito.mock(ContactRepository.class);
+        personRepository = Mockito.mock(PersonRepository.class);
+        contactRepository = Mockito.mock(ContactRepository.class);
         Mockito.when(companyRepository.findByLowercaseNames(Mockito.any())).thenReturn(List.of());
         Mockito.when(companyRepository.findAll()).thenReturn(List.of());
         service = new ContactImportService(
@@ -163,6 +172,37 @@ class ContactImportServiceTest {
         assertThat(fednav.matchType()).isEqualTo("similar");
         assertThat(fednav.matchedId()).isEqualTo(7L);
         assertThat(fednav.warnings()).anySatisfy(w -> assertThat(w).contains("Close but not identical"));
+    }
+
+    /**
+     * The one thing about a written row that cannot be read back off the file afterwards.
+     * Legacy says "carried over from the old database" and the importer sets it false on
+     * purpose, so without this flag an export of eighty addresses is indistinguishable from
+     * eighty typed by hand — and the Source filter on the People tab has nothing to ask.
+     */
+    @Test
+    void marksEveryAddressItWritesAsHavingComeFromAFile() {
+        Mockito.when(companyRepository.save(Mockito.any())).thenAnswer(inv -> {
+            Company saved = inv.getArgument(0);
+            saved.setId(1L);
+            return saved;
+        });
+        Mockito.when(personRepository.save(Mockito.any())).thenAnswer(inv -> inv.getArgument(0));
+        Mockito.when(contactRepository.findByCompanyIds(Mockito.any())).thenReturn(List.of());
+
+        service.commit(new ContactImportRequest(
+                List.of(new ImportCompanyRequest("c1", "FEDNAV", null, null, null, null, null,
+                        List.of(new ImportContactRequest("email", "chartering@fednav.com", null)))),
+                List.of(new ImportPersonRequest("p1", "c1", "Tom Cardon", null, null, null, null, null,
+                        List.of(new ImportContactRequest("phone", "+32.3.821.13.35", "Work"))))));
+
+        ArgumentCaptor<Contact> written = ArgumentCaptor.forClass(Contact.class);
+        Mockito.verify(contactRepository, Mockito.times(2)).save(written.capture());
+        assertThat(written.getAllValues())
+                .extracting(Contact::getContactValue, Contact::isFromFile, Contact::isLegacy)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("chartering@fednav.com", true, false),
+                        org.assertj.core.groups.Tuple.tuple("+32.3.821.13.35", true, false));
     }
 
     private ContactImportPreview preview() {

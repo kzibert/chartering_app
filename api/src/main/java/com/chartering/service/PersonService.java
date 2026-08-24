@@ -1,6 +1,7 @@
 package com.chartering.service;
 
 import com.chartering.dto.ContactResponse;
+import com.chartering.dto.ContactSource;
 import com.chartering.dto.PageResponse;
 import com.chartering.dto.PersonDetailResponse;
 import com.chartering.dto.PersonRequest;
@@ -177,13 +178,13 @@ public class PersonService {
                 PersonSpecification.companyIdEquals(f.companyId()),
                 PersonSpecification.nameContains(f.name()),
                 PersonSpecification.hasContactMatching(
-                        f.contactValue(), f.contactKind(), f.confirmed(), f.includeBanned(), f.legacy()));
+                        f.contactValue(), f.contactKind(), f.confirmed(), f.includeBanned(), f.source()));
     }
 
     /** Filter holder so the controller stays readable with many optional params. */
     public record PeopleFilter(
             String name, Long companyId,
             String contactValue, String contactKind,
-            Boolean confirmed, boolean includeBanned, Boolean legacy) {
+            Boolean confirmed, boolean includeBanned, ContactSource source) {
     }
 }

@@ -1,4 +1,5 @@
 import { App, Button, Popconfirm, Tooltip } from 'antd';
+import type { ButtonProps } from 'antd';
 import { UserDeleteOutlined } from '@ant-design/icons';
 import { usePersonMutations } from '../api/hooks';
 import type { PersonResponse } from '../api/types';
@@ -18,7 +19,23 @@ import type { PersonResponse } from '../api/types';
  * Behind a confirmation on the way in, none on the way out: taking somebody off every
  * circulation is worth a deliberate second, while putting them back is not.
  */
-export default function LeftCompanyButton({ p }: { p: PersonResponse }) {
+export default function LeftCompanyButton({
+  p,
+  size = 'small',
+  type = 'text',
+  onChanged,
+}: {
+  p: PersonResponse;
+  /** Sized for a row by default; the person form asks for the full-size version. */
+  size?: ButtonProps['size'];
+  type?: ButtonProps['type'];
+  /**
+   * The person as the server describes them after the flag moved. A list re-renders from
+   * its own refetch and needs nothing here, but a form holds a snapshot of the row that was
+   * clicked — without this the button it sits in would still be offering what it just did.
+   */
+  onChanged?: (p: PersonResponse) => void;
+}) {
   const { setHasLeft } = usePersonMutations();
   const { message } = App.useApp();
 
@@ -27,19 +44,21 @@ export default function LeftCompanyButton({ p }: { p: PersonResponse }) {
     setHasLeft.mutate(
       { id: p.id, hasLeft: !p.hasLeft },
       {
-        onSuccess: () =>
+        onSuccess: (updated) => {
+          onChanged?.(updated);
           message.success(
             p.hasLeft
               ? `${p.fullName} is back at ${where} — their addresses can be circulated to again`
               : `${p.fullName} marked as having left ${where} — their addresses are now out of every circulation`,
-          ),
+          );
+        },
       },
     );
 
   const button = (
     <Button
-      type="text"
-      size="small"
+      type={type}
+      size={size}
       aria-label={p.hasLeft ? `Mark ${p.fullName} as still here` : `Mark ${p.fullName} as having left`}
       loading={setHasLeft.isPending}
       icon={<UserDeleteOutlined style={p.hasLeft ? { color: '#cf1322' } : undefined} />}

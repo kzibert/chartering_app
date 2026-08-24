@@ -94,6 +94,21 @@ public class Contact {
     private boolean legacy = false;
 
     /**
+     * true = this address arrived in a contacts file, through the importer.
+     *
+     * <p>A different question from {@link #legacy}, which means "carried over from the old
+     * database". The importer deliberately sets that one false - an address met at a trade
+     * fair last month is new data whichever door it came in through - so without this there
+     * is nothing to tell eighty addresses out of a file apart from eighty typed by hand,
+     * which is exactly what somebody reviewing an import wants to see.
+     *
+     * <p>Written once, at create. Nothing edits it afterwards: where a row came from does
+     * not change later.
+     */
+    @Column(name = "from_file", nullable = false)
+    private boolean fromFile = false;
+
+    /**
      * The company's default contact of this kind — at most one main email and one main
      * phone per company (enforced by ux_contacts_main_per_company_kind). Bulk email-list
      * actions prefer it and fall back to the company's first email when nothing is flagged.

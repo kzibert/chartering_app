@@ -1,16 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Collapse, Drawer, List, Popconfirm, Space, Spin, Tag, Tooltip, Typography } from 'antd';
+import { Button, Collapse, Drawer, List, Space, Spin, Tag, Tooltip, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
-import {
-  useContactMutations,
-  usePerson,
-  usePersonContacts,
-  usePersonMutations,
-} from '../../api/hooks';
+import { useContactMutations, usePerson, usePersonContacts } from '../../api/hooks';
 import ContactLine from '../../components/ContactLine';
 import EditToolbar, { useEditMode } from '../../components/EditToolbar';
 import GreetingName from '../../components/GreetingName';
-import LeftCompanyButton from '../../components/LeftCompanyButton';
 import RecordHistory from '../../components/RecordHistory';
 import ContactForm from '../contacts/ContactForm';
 import { recordRecent } from '../../recent/store';
@@ -32,7 +26,6 @@ interface Props {
 export default function PersonDrawer({ personId, onClose, onEdit, onOpenCompany }: Props) {
   const { data: p, isLoading } = usePerson(personId);
   const { data: contacts, isLoading: loadingContacts } = usePersonContacts(personId);
-  const { remove } = usePersonMutations();
   const { remove: removeContact } = useContactMutations();
 
   const [editing, setEditing] = useEditMode(personId);
@@ -71,19 +64,12 @@ export default function PersonDrawer({ personId, onClose, onEdit, onOpenCompany 
       width={560}
       title={p?.fullName ?? 'Person'}
       onClose={onClose}
-      extra={
-        p && (
-          <Space>
-            <Button onClick={() => onEdit(p)}>Edit</Button>
-            <Popconfirm
-              title="Delete this person?"
-              onConfirm={() => remove.mutate(p.id, { onSuccess: onClose })}
-            >
-              <Button danger loading={remove.isPending}>Delete</Button>
-            </Popconfirm>
-          </Space>
-        )
-      }
+      /*
+       * Edit only. Delete and the left-the-company toggle live at the foot of the edit form
+       * now, with the vessel's and the company's — this drawer is where you come to read a
+       * person, and both of those were one click away from a screen opened for that.
+       */
+      extra={p && <Button onClick={() => onEdit(p)}>Edit</Button>}
     >
       {isLoading || !p ? (
         <Spin />
@@ -105,12 +91,13 @@ export default function PersonDrawer({ personId, onClose, onEdit, onOpenCompany 
                 <Tag>{p.companyName}</Tag>
               ))}
             {!p.legacy && <Tag color="green">new</Tag>}
+            {/* The tag stays: it explains why every address below is out of circulation.
+                Setting and clearing it is in the edit form. */}
             {p.hasLeft && (
-              <Tooltip title={`No longer at ${p.companyName ?? 'this company'}. Every address and number below is out of circulations — left out of collection, and skipped at send time even when already on a list.`}>
+              <Tooltip title={`No longer at ${p.companyName ?? 'this company'}. Every address and number below is out of circulations — left out of collection, and skipped at send time even when already on a list. Edit the person to put them back.`}>
                 <Tag color="red">left the company</Tag>
               </Tooltip>
             )}
-            <LeftCompanyButton p={p} />
           </Space>
           {p.notes && (
             <Typography.Paragraph style={{ marginBottom: 12, whiteSpace: 'pre-wrap' }}>
