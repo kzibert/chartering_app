@@ -33,5 +33,13 @@ public class ContactRequest {
     @NotBlank(message = "contactValue is required")
     private String contactValue;
 
+    /**
+     * Work / Mobile / Direct / Fax / Home / Other. Phones only — an email has no
+     * equivalent. Free text on purpose: an unrecognised word from an import is a label
+     * worth keeping, not a request worth refusing.
+     */
+    @Size(max = 20, message = "label must be at most 20 characters")
+    private String label;
+
     private String notes;
 }

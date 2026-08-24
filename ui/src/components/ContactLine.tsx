@@ -106,7 +106,11 @@ export default function ContactLine({
           <Tag color="cyan">company-wide</Tag>
         </Tooltip>
       )}
-      <Tag color={ct.contactKind === 'email' ? 'blue' : 'default'}>{ct.contactKind}</Tag>
+      {/* The label replaces the bare "phone" tag when there is one: "Mobile" says
+          everything "phone" said and the one thing it could not. */}
+      <Tag color={ct.contactKind === 'email' ? 'blue' : 'default'}>
+        {ct.contactKind === 'phone' && ct.label ? ct.label.toLowerCase() : ct.contactKind}
+      </Tag>
       <CopyableValue value={ct.contactValue} highlight={highlight} />
       {ct.main && <Tag color="gold">main</Tag>}
       {ct.circ && (

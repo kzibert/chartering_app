@@ -21,6 +21,14 @@ interface Props {
 /** How an address with no greeting is opened — MailTemplateService.NEUTRAL_SALUTATION. */
 const NEUTRAL_SALUTATION = 'Good day';
 
+/**
+ * The labels offered for a phone. Suggestions rather than a closed set: the column is free
+ * text so that an import can keep whatever word its source used, and a dropdown that
+ * refused to show "Switchboard" because this list does not have it would throw away the
+ * only thing the file had to say about the number.
+ */
+const PHONE_LABELS = ['Work', 'Mobile', 'Direct', 'Home', 'Fax', 'Other'];
+
 export default function ContactForm({ open, editing, defaults, onClose }: Props) {
   const [form] = Form.useForm<ContactRequest>();
   const { create, update } = useContactMutations();
@@ -31,6 +39,9 @@ export default function ContactForm({ open, editing, defaults, onClose }: Props)
   // prop, which it would override.
   const [companyId, setCompanyId] = useState<number>();
   const [personId, setPersonId] = useState<number>();
+  // The label field only exists for phones, so the form has to react to the kind rather
+  // than just record it. Same mirroring reason as the two above.
+  const [kind, setKind] = useState<string>();
   const [personFormOpen, setPersonFormOpen] = useState(false);
   // null = the nested form is creating a new person; a person = it is editing that one.
   const [personBeingEdited, setPersonBeingEdited] = useState<PersonResponse | null>(null);
@@ -51,6 +62,7 @@ export default function ContactForm({ open, editing, defaults, onClose }: Props)
           companyId: editing.companyId,
           contactKind: editing.contactKind,
           contactValue: editing.contactValue,
+          label: editing.label,
           // The stored override, never the effective greeting: showing the person's here
           // would save a frozen copy of it onto the contact on the next save.
           greetingName: editing.ownGreetingName,
@@ -58,11 +70,13 @@ export default function ContactForm({ open, editing, defaults, onClose }: Props)
         });
         setCompanyId(editing.companyId);
         setPersonId(editing.personId);
+        setKind(editing.contactKind);
       } else {
         form.setFieldsValue(defaults ?? {});
         // Keeps the person dropdown scoped to the prefilled company.
         setCompanyId(defaults?.companyId);
         setPersonId(defaults?.personId);
+        setKind(defaults?.contactKind);
       }
     }
   }, [open, editing, defaults, form]);
@@ -92,11 +106,31 @@ export default function ContactForm({ open, editing, defaults, onClose }: Props)
     >
       <Form form={form} layout="vertical" onFinish={submit}>
         <Form.Item name="contactKind" label="Kind" rules={[{ required: true, message: 'kind is required' }]}>
-          <Select options={[{ value: 'email', label: 'email' }, { value: 'phone', label: 'phone' }]} />
+          <Select
+            options={[{ value: 'email', label: 'email' }, { value: 'phone', label: 'phone' }]}
+            onChange={setKind}
+          />
         </Form.Item>
         <Form.Item name="contactValue" label="Value" rules={[{ required: true, message: 'value is required' }]}>
           <Input placeholder="email address or phone number" />
         </Form.Item>
+
+        {/* Phones only. "Work email" is a guess about the person rather than a fact about
+            the address, so an email is offered no label to carry — and the server drops one
+            anyway if the kind is changed out from under it. */}
+        {kind === 'phone' && (
+          <Form.Item
+            name="label"
+            label="Kind of line"
+            tooltip="What sort of number this is. A free-text list rather than a fixed one, so a label off an imported file is kept as it was written."
+          >
+            <Select
+              allowClear
+              placeholder="Not recorded"
+              options={PHONE_LABELS.map((l) => ({ value: l, label: l }))}
+            />
+          </Form.Item>
+        )}
         <Form.Item name="companyId" label="Company">
           <CompanySelect allowClear onChange={setCompanyId} />
         </Form.Item>

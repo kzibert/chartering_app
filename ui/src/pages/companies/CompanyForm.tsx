@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Checkbox, Form, Input, Modal, Space } from 'antd';
+import { Checkbox, Col, Form, Input, Modal, Row, Space } from 'antd';
 import { useCompanyMutations } from '../../api/hooks';
 import RecordActions from '../../components/RecordActions';
 import type { CompanyRequest, CompanyResponse } from '../../api/types';
@@ -40,6 +40,8 @@ export default function CompanyForm({ open, editing, onClose, onDeleted }: Props
           broker: editing.broker,
           agent: editing.agent,
           cityName: editing.cityName,
+          country: editing.country,
+          website: editing.website,
           notes: editing.notes,
         });
       } else {
@@ -68,8 +70,26 @@ export default function CompanyForm({ open, editing, onClose, onDeleted }: Props
         <Form.Item name="name" label="Name" rules={[{ required: true, message: 'name is required' }]}>
           <Input />
         </Form.Item>
-        <Form.Item name="cityName" label="City">
-          <Input />
+        {/* City and country together: they are one answer to "where are they", and a
+            country on its own line reads as a separate subject. */}
+        <Row gutter={12}>
+          <Col xs={12}>
+            <Form.Item name="cityName" label="City">
+              <Input />
+            </Form.Item>
+          </Col>
+          <Col xs={12}>
+            <Form.Item name="country" label="Country">
+              <Input maxLength={100} />
+            </Form.Item>
+          </Col>
+        </Row>
+        <Form.Item
+          name="website"
+          label="Website"
+          tooltip="Stored without the https:// — it is added when the address is turned into a link."
+        >
+          <Input maxLength={255} placeholder="fednav.com" />
         </Form.Item>
         <Form.Item label="Roles">
           <Space size="large">

@@ -7,6 +7,17 @@ spring:
   # DataSource, so by the time validate below has an opinion the database is
   # already at the newest migration this build carries. Adding a column is a new
   # file in db/migration and a restart - see the README.
+  # Uploading a contacts export is the only thing here that posts a file. Spring's
+  # default cap is 1 MB, which ContactImportController's own 5 MB check would never
+  # be reached to enforce - the container refuses the request first, and the error
+  # it raises is not the one the user needs to read. Raised to match the controller,
+  # so the message about what a contacts export should look like is the message
+  # they get.
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
+
   flyway:
     enabled: true
     locations: classpath:db/migration

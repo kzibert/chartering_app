@@ -27,6 +27,7 @@ import {
   useVesselMutations,
 } from '../../api/hooks';
 import ConfirmTag from '../../components/ConfirmTag';
+import RecordHistory from '../../components/RecordHistory';
 import ContactLine from '../../components/ContactLine';
 import { ContactRowExpansion } from '../../components/ContactRowExpansion';
 import CompanyPeopleTab from './CompanyPeopleTab';
@@ -47,7 +48,7 @@ import type {
   VesselResponse,
 } from '../../api/types';
 
-type TabKey = 'vessels' | 'people' | 'contacts';
+type TabKey = 'vessels' | 'people' | 'contacts' | 'history';
 
 interface Props {
   companyId?: number;
@@ -135,13 +136,29 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
               </Tooltip>
             )}
             {c.banned && <Tag color="red">banned</Tag>}
-            {c.cityName && <Tag>{c.cityName}</Tag>}
+            {(c.cityName || c.country) && (
+              <Tag>{[c.cityName, c.country].filter(Boolean).join(', ')}</Tag>
+            )}
             {c.solo && <Tag color="geekblue">solo entrepreneur</Tag>}
             {c.shipowner && <Tag color="blue">owner</Tag>}
             {c.charterer && <Tag color="green">charterer</Tag>}
             {c.broker && <Tag color="gold">broker</Tag>}
             {c.agent && <Tag color="purple">agent</Tag>}
           </Space>
+          {/* The scheme is added here rather than stored: it is the one part of a website
+              that never tells you anything, and a stored "https://" is a thing to strip
+              every time the value is shown or compared. */}
+          {c.website && (
+            <Typography.Paragraph style={{ marginBottom: 8 }}>
+              <Typography.Link
+                href={/^https?:\/\//i.test(c.website) ? c.website : `https://${c.website}`}
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                {c.website}
+              </Typography.Link>
+            </Typography.Paragraph>
+          )}
           {c.notes && (
             <Typography.Paragraph style={{ marginBottom: 12, whiteSpace: 'pre-wrap' }}>
               <Typography.Text type="secondary">Notes: </Typography.Text>
@@ -186,6 +203,21 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
                     id={c.id}
                     onAddContact={() => openContactForm(null)}
                     onEditContact={(ct) => openContactForm(ct)}
+                  />
+                ),
+              },
+              {
+                key: 'history',
+                label: 'History',
+                // The company's own record only. Its people and their addresses each keep
+                // their own history under their own record, which is where somebody looking
+                // for "who changed this phone number" would go — folding them all in here
+                // would bury a rename of the company under a hundred contact edits.
+                children: (
+                  <RecordHistory
+                    entityType="company"
+                    entityId={c.id}
+                    note="Changes to the company record itself. Its people and their addresses each keep their own history, under that record."
                   />
                 ),
               },

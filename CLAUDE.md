@@ -76,7 +76,9 @@ Three things bite here:
 
 - **Numbering starts above 2.** The databases in use were adopted at `baseline-version: 2`,
   so Flyway records anything at or below V2 as already applied and silently never runs it.
-  `V1__baseline_schema.sql` and `V3__add_person_job_title.sql` exist; the next one is V4.
+  `V1__baseline_schema.sql`, `V3__add_person_job_title.sql`,
+  `V4__add_company_country_website_and_contact_label.sql` and `V5__add_data_changes.sql`
+  exist; the next one is V6.
 - **`db/migration/.gitattributes` marks `*.sql` as `-text`** and must stay. Flyway checksums migrations,
   and a rewritten line ending is a changed checksum — an app that will not start in whichever
   environment did not apply the file first. Source files in this repo are a mix of CRLF and
@@ -105,7 +107,78 @@ must use the raw one, or saving pins a frozen copy of the person's greeting onto
 Contact flags are not interchangeable and each means something specific: `main` (one per
 company per kind), `circ` (use this in circulations), `noCirc` (never bulk-mail this, but it
 is still the right address to write to by hand), `working` (false = bounced/disconnected),
-`banned`, `hasWhatsapp` (recorded by hand — WhatsApp cannot be queried).
+`banned`, `hasWhatsapp` (recorded by hand — WhatsApp cannot be queried). `label` (Work,
+Mobile, Direct, Fax) is phones-only and free text, so an imported label survives whatever
+word its source used; an email carrying one would be a guess about the person rather than a
+fact about the address, and the service clears it on a kind change.
+
+### Importing a contacts file
+
+`POST /contacts/import/preview` parses an export and reports what it would do; `POST
+/contacts/import` writes the preview as the user left it. Nothing is stored between the
+two — the whole parse travels to the browser and back, so there is no staging table, no
+import id, and an abandoned review costs nothing.
+
+The review step is not ceremony. A real export arrives with a company named by its own
+advertising slogan, a website column holding an email address, one mailbox listed against
+two managers, and phone labels buried inside a comma-joined cell
+(`Work,+32.3.821.13.35,Mobile,+32.475.89.02.67`, where a label governs every number after
+it until the next one). All of that parses cleanly and all of it is wrong, so the screen
+that shows the result before it is a result is the feature.
+
+Three rules worth knowing:
+
+- **An address listed against two people at one company becomes company-wide** — person
+  null, company set, the `chartering@` shape `RecipientSelectionService` already groups on
+  its own. Filing it under whichever row came first would make the choice an accident of
+  ordering; duplicating it would mail the desk twice.
+- **A matched company or person is never overwritten, only gap-filled.** The file is a lead
+  sheet, not a source of record: a city somebody typed beats one scraped off a signature
+  block, and losing it silently is the worse failure.
+- **Everything lands unconfirmed and unflagged** — not main, not `circ`. Eighty addresses
+  arriving pre-flagged for circulation is one send away from a bounce storm.
+
+Company matching is exact (case-insensitive) or nothing; a name that differs only by its
+legal form comes back flagged `similar` as a *suggestion*, never applied silently, because
+two firms a broker keeps apart must not be merged by an importer.
+
+### The change log
+
+Every write to an audited entity lands in `data_changes` — one row per changed field for an
+update, one row carrying a JSON snapshot for a create or a delete. `field_name` tells the
+two shapes apart.
+
+Nothing calls it. A Hibernate post-insert/update/delete listener (`audit/`) reads the state
+arrays Hibernate already has and writes through **plain JDBC on the transaction's own
+connection**. All three parts are load-bearing:
+
+- **The listener, not the services** — the before value is already loaded, so there is no
+  second query and nothing for a service to remember. A change made from a form, the
+  importer or a one-off fixup is logged identically, because they all end in a flush.
+- **JDBC, not the EntityManager** — persisting during a flush appends to the action queue
+  being drained, which is how a flush becomes a `ConcurrentModificationException`.
+- **The same connection** — the log commits with the data or dies with it. A log that can
+  survive its own rollback records edits that never happened.
+
+Do not move this to a `beforeCommit` hook. Spring's `JpaTransactionManager` fires those
+*before* the session flushes, so the hook would run before the updates it describes exist.
+
+`AuditedEntities` is a **whitelist**, and that is deliberate: auditing `mail_messages` would
+write more history per sync than the sync writes messages, to record a machine copying a
+mailbox to itself. Synced mail, circulation runs (already history), list entries (a working
+document) and the reference tables are out. Adding an entity is one line there and nothing
+else.
+
+`ChangeContext.describe("…")` names the current transaction's change set — the importer uses
+it, so eighty creates read as one event. Every row of a transaction shares a change-set id
+and one timestamp.
+
+**Reverting is one field of one update, and only that.** A create's undo is a cascading
+delete (`people.company_id` and `contacts.company_id` are both `ON DELETE CASCADE`); a
+delete's undo either reuses an id the sequence has moved past or takes a new one and leaves
+every reference dangling. Both are data-repair jobs with the snapshot in hand, not buttons.
+A revert is refused if the field changed again since, and is itself logged as an ordinary
+edit.
 
 ### Who a circular actually goes to
 

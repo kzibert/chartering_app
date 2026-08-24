@@ -15,6 +15,9 @@ public record CompanyResponse(
         /** one-person business; set by hand, never inferred */
         boolean solo,
         String cityName,
+        String country,
+        /** bare host as stored, with no scheme — the UI adds one to link it */
+        String website,
         String notes,
         boolean confirmed,
         OffsetDateTime confirmedAt,

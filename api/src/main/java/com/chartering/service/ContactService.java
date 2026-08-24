@@ -259,6 +259,10 @@ public class ContactService {
         }
         ct.setContactKind(req.getContactKind());
         ct.setContactValue(req.getContactValue());
+        // Phones only. An email carrying "Work" would be a label about the person rather
+        // than about the address, and clearing it on a kind change is the honest move —
+        // the field was describing a number that this row no longer is.
+        ct.setLabel("phone".equalsIgnoreCase(req.getContactKind()) ? blankToNull(req.getLabel()) : null);
         ct.setNotes(req.getNotes());
         // Blank is stored as null, not as "": the two would read the same on screen but
         // differently in the merge, where an empty string is a greeting somebody chose and
