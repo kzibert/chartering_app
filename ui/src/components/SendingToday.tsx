@@ -1,5 +1,5 @@
 import { Alert, Progress, Space, Statistic, Tag, Tooltip, Typography } from 'antd';
-import { CloudOutlined, MailOutlined, SendOutlined } from '@ant-design/icons';
+import { CloudOutlined, MailOutlined, MessageOutlined, SendOutlined } from '@ant-design/icons';
 import type { CirculationToday } from '../api/types';
 
 /**
@@ -9,10 +9,17 @@ import type { CirculationToday } from '../api/types';
  * numbers for the same day — the compact form is a row of tags for a card header, the full
  * form is a panel. Both read the same query.
  *
- * The two halves are sourced differently and that is not an accident: SMTP offers no way to
- * ask a mailbox what it has already sent, so the mailbox figure can only be counted locally,
- * while Brevo's allowance is spent by everything on the account and so has to be read from
- * Brevo. The UI says which is which rather than presenting them as one number.
+ * The parts are sourced differently and that is not an accident. What this app sent through
+ * SMTP it counts itself, because SMTP offers no way to ask a mailbox what it has already
+ * sent. Brevo's allowance is spent by everything on the account, so that half has to be read
+ * from Brevo. And what the mailbox has sent *without* this app — a reply typed in Outlook,
+ * in the webmail, on a phone — is read out of the Sent folder the mailbox sync already
+ * mirrors, which is the only place it appears at all.
+ *
+ * Those last two overlap on purpose and must never be added: the provider files this app's
+ * own SMTP circulars into that same Sent folder, so "mailbox today" already contains most of
+ * "via SMTP" — by an amount only the provider knows. The UI says which is which rather than
+ * presenting them as one number.
  *
  * Brevo's own two figures are likewise kept apart. `remaining` is live and exact; `sent` is an
  * aggregated report that counts accepted messages — including suppressed ones that cost no
@@ -36,6 +43,16 @@ function quotaColour(used: number, limit: number): string {
  */
 function usedToday(limit: number, remaining: number): number {
   return Math.max(0, Math.min(limit, limit - remaining));
+}
+
+/** How long ago the Sent folder was read, in words a tooltip can end a sentence with. */
+function syncedAgo(at?: string): string {
+  if (!at) return 'not yet synced';
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(at).getTime()) / 60000));
+  if (minutes < 1) return 'synced just now';
+  if (minutes < 60) return `synced ${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+  const hours = Math.round(minutes / 60);
+  return `synced ${hours} hour${hours === 1 ? '' : 's'} ago`;
 }
 
 export function SendingTodayTags({ today }: { today?: CirculationToday }) {
@@ -73,11 +90,48 @@ export function SendingTodayTags({ today }: { today?: CirculationToday }) {
         </Tag>
       </Tooltip>
 
-      <Tooltip title="Sent from your own mailbox over SMTP today. Nothing can report your mailbox's own daily cap, so check this against it yourself.">
-        <Tag icon={<SendOutlined />} color="blue" style={{ marginInlineEnd: 0 }}>
-          {today.viaMailbox} mailbox
-        </Tag>
-      </Tooltip>
+      {/* What the mailbox itself has sent, which is the figure to read against its daily
+          cap — it counts the replies and the mail this app never saw. It replaces the
+          app-only SMTP tag rather than joining it: the two overlap, and the app-only number
+          is still one sentence away, in the tooltip above. Where there is no Sent folder to
+          read, the old tag is what is left to show. */}
+      {today.mailbox?.sent != null ? (
+        <Tooltip
+          title={
+            <>
+              {today.mailbox.sent} message{today.mailbox.sent === 1 ? '' : 's'} in your
+              mailbox's {today.mailbox.sentFolder ?? 'Sent'} folder today, whoever sent them —
+              this app's {today.viaMailbox} SMTP circular
+              {today.viaMailbox === 1 ? '' : 's'}, the {today.mailbox.replies} repl
+              {today.mailbox.replies === 1 ? 'y' : 'ies'} sent from here, and anything you
+              wrote in Outlook or the webmail. Read from the folder, so it is only as current
+              as the sync: {syncedAgo(today.mailbox.folderSyncedAt)}. Nothing can report your
+              mailbox's own daily cap, so check this against it yourself.
+            </>
+          }
+        >
+          <Tag icon={<SendOutlined />} color="blue" style={{ marginInlineEnd: 0 }}>
+            {today.mailbox.sent} mailbox
+          </Tag>
+        </Tooltip>
+      ) : (
+        <Tooltip title="Sent from your own mailbox over SMTP today, counted by this app. Your mailbox reports no Sent folder, so replies written elsewhere cannot be counted here. Nothing can report your mailbox's own daily cap either, so check this against it yourself.">
+          <Tag icon={<SendOutlined />} color="blue" style={{ marginInlineEnd: 0 }}>
+            {today.viaMailbox} mailbox
+          </Tag>
+        </Tooltip>
+      )}
+
+      {/* This app's own replies, exact from the moment they leave — the mailbox figure
+          beside it only learns about them at the next sync. Shown whenever there are any,
+          and the tooltip is what says the two overlap rather than stack. */}
+      {today.mailbox != null && today.mailbox.replies > 0 && (
+        <Tooltip title="Replies sent from this app today, counted as they went out. They are inside the mailbox figure as well, once that folder syncs.">
+          <Tag icon={<MessageOutlined />} color="cyan" style={{ marginInlineEnd: 0 }}>
+            {today.mailbox.replies} replied
+          </Tag>
+        </Tooltip>
+      )}
 
       {brevo && (
         <Tooltip
@@ -132,9 +186,9 @@ export function SendingTodayPanel({ today }: { today?: CirculationToday }) {
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
       <Space size="large" wrap>
-        <Statistic title="Sent today (this app)" value={today.sent} prefix={<MailOutlined />} />
+        <Statistic title="Circulars sent today" value={today.sent} prefix={<MailOutlined />} />
         <Statistic
-          title="From your mailbox"
+          title="Of those, over SMTP"
           value={today.viaMailbox}
           prefix={<SendOutlined />}
           valueStyle={{ color: '#1677ff' }}
@@ -154,6 +208,48 @@ export function SendingTodayPanel({ today }: { today?: CirculationToday }) {
           />
         )}
       </Space>
+
+      {/* The mailbox's own day, kept in a row of its own rather than beside the circular
+          figures: it is a different question with a different source, and standing them in
+          one line invites exactly the addition the paragraph under it warns against. */}
+      {today.mailbox && (
+        <div>
+          <Space size="large" wrap>
+            <Statistic
+              title="Your mailbox today"
+              value={today.mailbox.sent ?? '—'}
+              prefix={<SendOutlined />}
+              valueStyle={{ color: '#1677ff' }}
+            />
+            <Statistic
+              title="Replies from this app"
+              value={today.mailbox.replies}
+              prefix={<MessageOutlined />}
+              valueStyle={{ color: '#08979c' }}
+            />
+          </Space>
+          <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+            {today.mailbox.sent != null ? (
+              <>
+                Everything your mailbox sent today, read out of its{' '}
+                <b>{today.mailbox.sentFolder ?? 'Sent'}</b> folder — the circulars this app
+                sent over SMTP, the replies sent from here, and whatever you wrote in Outlook,
+                the webmail or on your phone. It is only as current as the mailbox sync
+                ({syncedAgo(today.mailbox.folderSyncedAt)}), and it already contains the two
+                figures above it, so it is the one to read against your provider's daily cap —
+                never the sum. The replies count beside it is the exact one: it is written as
+                each reply goes out, and folds into the folder figure at the next sync.
+              </>
+            ) : (
+              <>
+                Your mailbox reports no Sent folder over IMAP, so what it sent outside this app
+                cannot be counted — a reply written in Outlook is invisible here. The replies
+                figure is this app's own, and is exact.
+              </>
+            )}
+          </Typography.Text>
+        </div>
+      )}
 
       {showQuota && (
         <div>

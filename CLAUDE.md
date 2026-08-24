@@ -77,8 +77,8 @@ Three things bite here:
 - **Numbering starts above 2.** The databases in use were adopted at `baseline-version: 2`,
   so Flyway records anything at or below V2 as already applied and silently never runs it.
   `V1__baseline_schema.sql`, `V3__add_person_job_title.sql`,
-  `V4__add_company_country_website_and_contact_label.sql`, `V5__add_data_changes.sql` and
-  `V6__add_contact_from_file.sql` exist; the next one is V7.
+  `V4__add_company_country_website_and_contact_label.sql`, `V5__add_data_changes.sql`,
+  `V6__add_contact_from_file.sql` and `V7__add_mail_replies.sql` exist; the next one is V8.
 - **`db/migration/.gitattributes` marks `*.sql` as `-text`** and must stay. Flyway checksums migrations,
   and a rewritten line ending is a changed checksum — an app that will not start in whichever
   environment did not apply the file first. Source files in this repo are a mix of CRLF and
@@ -223,6 +223,46 @@ server's own folder tree (mirrored into `mail_server_folders` each sync, system 
 matched by IMAP SPECIAL-USE rather than by name, since they may not be in English) and the
 app's own folders/rules. Every server folder is synced, so mail diverted by a server-side
 filter is still visible.
+
+**Replying is the one thing that writes** — and it writes over SMTP, not over IMAP. The sync
+stays read-only: nothing is appended to a folder, no flag is set. A reply goes out through
+the mailbox and comes *back* through the ordinary sync, as the provider's own copy in the
+Sent folder.
+
+- **Always the mailbox, never Brevo**, whichever provider circulars are set to. A reply has
+  to come from the address the correspondent wrote to and thread with what they sent;
+  Brevo is bulk infrastructure with its own envelope and reputation.
+- **The footer, the quote and the merge are applied server-side**, so what is stored as
+  having been sent is the string the mail server was handed. The composer holds only what
+  the user typed — which is also why a 100KB Outlook chain is not in the editor.
+- **`email_footers` carries two "default" flags**, `is_default` for circulars and
+  `is_reply_default` for replies, each with its own partial unique index. A circular closes
+  with the desk's full block; a reply inside somebody else's thread usually wants three
+  lines.
+- **`mail_replies` is not `mail_messages`.** That table is a mirror of the server, written
+  only by the sync; a row this app invented would be a message no folder holds. The reply
+  table exists anyway because it is written the moment the send returns (so the day's count
+  is right before the next poll), it survives a provider that keeps no Sent copy, and it is
+  the only record of *which* message was answered — In-Reply-To is not among the headers the
+  sync stores. Failures are not recorded: a reply that did not send is an error on a screen
+  still holding its text.
+
+### What "sent today" counts
+
+Three sources, three failure modes, and they are never added together.
+
+- **Circulars this app sent**, from `circulation_run_recipients` — split into SMTP and Brevo.
+- **Brevo's account-wide figures**, asked of Brevo, because its allowance is spent by
+  everything on the account.
+- **What the mailbox itself sent**, counted from the synced Sent folder — which is the only
+  way a reply written in Outlook, the webmail or on a phone can be counted at all, and the
+  reason the counter is honest about the mailbox's daily cap.
+
+The third overlaps the first: the provider files this app's own SMTP circulars into that
+same Sent folder (Zoho does; not every provider does), so adding them would double-count by
+an amount only the provider knows. The Sent-folder figure is also only as fresh as the last
+poll, which is why this app's own replies are counted separately from `mail_replies` as
+well — exact and immediate, and inside the folder figure once it syncs.
 
 ### Auth
 

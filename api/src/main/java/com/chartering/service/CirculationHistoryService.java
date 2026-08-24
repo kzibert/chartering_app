@@ -55,6 +55,9 @@ public class CirculationHistoryService {
     // Reporting only: the day counter pairs what this app sent with what Brevo says the
     // account has spent, and the second half is knowable only by asking Brevo.
     private final BrevoStatsService brevoStats;
+    // Reporting only, again: the third part of the day is what the mailbox sent without
+    // this app — replies typed in Outlook — which only the synced Sent folder knows.
+    private final MailboxService mailbox;
 
     /**
      * A run still marked RUNNING at startup belonged to a process that no longer exists —
@@ -334,7 +337,12 @@ public class CirculationHistoryService {
                 recipients.countRunsSendingBetween(CirculationRunRecipient.SENT, from, until),
                 viaMailbox, viaBrevo,
                 usage.configured() ? new BrevoUsageResponse(usage.sent(), usage.blocked(),
-                        usage.remaining(), usage.dailyLimit(), usage.error()) : null);
+                        usage.remaining(), usage.dailyLimit(), usage.error()) : null,
+                // Answered by the mailbox rather than by this service, because most of what
+                // it counts was sent by something else entirely: a reply typed in Outlook is
+                // outgoing volume this app would otherwise never know about, and it is spent
+                // out of the same daily allowance as everything above.
+                mailbox.sendingBetween(from, until));
     }
 
     /**

@@ -595,6 +595,26 @@ export interface CirculationToday {
    * spent, which is what the daily cap is actually enforced against.
    */
   brevo?: BrevoUsage;
+  /**
+   * What the mailbox itself sent today, whoever sent it — read out of its Sent folder, so
+   * a reply typed in Outlook is in here and a reply sent from this app arrives at the next
+   * sync. Absent only if the server reports no Sent folder at all.
+   *
+   * Never add it to `viaMailbox`: the provider files this app's own SMTP circulars into
+   * that same folder, so the two overlap by an amount only the provider knows.
+   */
+  mailbox?: MailboxSending;
+}
+
+/** The mailbox's own outgoing day. See CirculationToday.mailbox. */
+export interface MailboxSending {
+  /** The Sent folder as the server names it — often not the English word. */
+  sentFolder?: string;
+  /** Messages in it today, as of `folderSyncedAt`. Absent when there is no Sent folder. */
+  sent?: number;
+  folderSyncedAt?: string;
+  /** Replies sent from this app today: exact and immediate, and inside `sent` once synced. */
+  replies: number;
 }
 
 export interface CirculationRunRecipient {
@@ -712,7 +732,10 @@ export interface EmailFooterResponse {
   id: number;
   name: string;
   html: string;
+  /** Pre-selected when composing a circular. */
   defaultFooter: boolean;
+  /** Pre-selected when replying from the Mailbox tab — deliberately its own flag. */
+  replyDefault: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -755,6 +778,28 @@ export interface MailMessageDetail {
   attachmentNames?: string;
   sizeBytes?: number;
   messageId?: string;
+  /** When this message was last answered from the app. Absent if it never was. */
+  repliedAt?: string;
+}
+
+/** A reply as the composer sends it. */
+export interface MailReplyRequest {
+  to: string;
+  subject: string;
+  bodyHtml: string;
+  /** null = no footer. Not a fallback to the reply default — the composer resolved that. */
+  footerId?: number | null;
+  /** Quote the message being answered underneath. Omitted counts as true. */
+  includeOriginal?: boolean;
+}
+
+export interface MailReplyResponse {
+  id: number;
+  mailMessageId?: number;
+  toAddress: string;
+  subject?: string;
+  footerName?: string;
+  sentAt: string;
 }
 
 /** A folder in the rail. The Inbox is one of these with no id. */

@@ -11,6 +11,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -77,6 +78,20 @@ public interface MailMessageRepository
     List<Object[]> countUnreadByImapFolder();
 
     long countByReadFalse();
+
+    /**
+     * How much mail the server has in one of its folders inside a window — the Sent folder
+     * and today, in the only caller.
+     *
+     * <p>Counted on {@code receivedAt}, which for a folder the server files our own outgoing
+     * copies into is when the copy was written, i.e. when the message was sent. The Date
+     * header would be the sender's own clock, and the sender here is a mail server rather
+     * than a correspondent's laptop, but {@code receivedAt} is what every other query in the
+     * mailbox is ordered and filtered by and one query reading a different column would be
+     * the odd one out for no gain.
+     */
+    long countByImapFolderAndReceivedAtGreaterThanEqualAndReceivedAtLessThan(
+            String imapFolder, LocalDateTime from, LocalDateTime until);
 
     /**
      * Messages whose sender matches one of these addresses and whose link was not set by

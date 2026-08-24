@@ -26,9 +26,14 @@ import java.time.LocalDate;
  * @param viaBrevo      of {@code sent}, how many went out through the Brevo API
  * @param brevo         Brevo's own account-wide figures for today; null when no API key is
  *                      configured, since there is then no account to report on
+ * @param mailbox       what the mailbox itself sent today, from its Sent folder, plus this
+ *                      app's own replies. A third source with a third failure mode, and one
+ *                      that must never be added to {@code viaMailbox} — see
+ *                      {@link MailboxSendingResponse}
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record CirculationTodayResponse(LocalDate date, int sent, int circulations,
                                        int viaMailbox, int viaBrevo,
-                                       BrevoUsageResponse brevo) {
+                                       BrevoUsageResponse brevo,
+                                       MailboxSendingResponse mailbox) {
 }
