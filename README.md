@@ -1,4 +1,4 @@
-# chartering
+# Chartering
 
 Vessel-centric chartering application: **Spring Boot REST API + React/Ant Design SPA**, wired together with Docker Compose. This repo builds the api and the ui and nothing else. The database is a connection string — normally a hosted Postgres, and there is a separate `chartering-db` project beside this one for a local one.
 
