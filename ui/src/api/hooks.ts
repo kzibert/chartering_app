@@ -3,6 +3,7 @@ import { toVesselRequest, vesselsApi } from './vessels';
 import { companiesApi } from './companies';
 import { peopleApi } from './people';
 import { contactsApi } from './contacts';
+import { dataChangesApi, type DataChangeFilter } from './dataChanges';
 import { lookupsApi } from './lookups';
 import { settingsApi } from './settings';
 import { forgetRecent, type RecentKind } from '../recent/store';
@@ -334,4 +335,41 @@ export function useContactMutations() {
     create, update, remove, assign, confirm, ban,
     setMain, setCirc, setNoCirc, setWorking, setHasWhatsapp,
   };
+}
+
+// ---- change log ------------------------------------------------------------------
+
+export function useDataChanges(filter: DataChangeFilter, enabled = true) {
+  return useQuery({
+    queryKey: ['data-changes', filter],
+    queryFn: () => dataChangesApi.search(filter),
+    enabled,
+  });
+}
+
+export function useChangeEntityTypes() {
+  return useQuery({
+    queryKey: ['data-changes', 'entity-types'],
+    queryFn: dataChangesApi.entityTypes,
+    ...LOOKUP_OPTS,
+  });
+}
+
+export function useChangeUsers() {
+  return useQuery({ queryKey: ['data-changes', 'users'], queryFn: dataChangesApi.users });
+}
+
+export function useDataChangeMutations() {
+  const invalidate = useInvalidator();
+  // A revert can land on any audited entity, and this hook has no way to know which from
+  // the id alone — the answer is in the log entry, on the server. Refreshing everything
+  // that could be showing the reverted record is cheaper than teaching the client to work
+  // it out, and a revert is a rare, deliberate click rather than something in a hot path.
+  const revert = useMutation({
+    mutationFn: (id: number) => dataChangesApi.revert(id),
+    onSuccess: () =>
+      invalidate('data-changes', 'companies', 'company', 'people', 'person',
+        'contacts', 'vessels', 'vessel', 'circulation-lists'),
+  });
+  return { revert };
 }

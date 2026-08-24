@@ -18,6 +18,18 @@ public interface ContactRepository
     List<Contact> findByCompanyIdOrderByMainDescIdAsc(Long companyId);
 
     /**
+     * Every address and number already on file at any of these companies — what the
+     * importer checks a parsed row against before proposing to store it again.
+     *
+     * <p>Scoped by company rather than searching the whole table for the value, because
+     * that is the scope in which a repeat is a duplicate. The same {@code chartering@}
+     * address appearing at two firms is two facts; appearing twice at one firm is one fact
+     * stored twice, and only the second is worth stopping.
+     */
+    @Query("select c from Contact c where c.company.id in :companyIds")
+    List<Contact> findByCompanyIds(@Param("companyIds") Collection<Long> companyIds);
+
+    /**
      * Contacts of a whole page of people in one query — the people search embeds them,
      * and fetching per row would be an N+1. Ordered so each person's list reads the same
      * way as everywhere else: main first, then oldest.

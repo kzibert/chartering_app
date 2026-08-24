@@ -14,7 +14,7 @@ import {
   Tooltip,
   Typography,
 } from 'antd';
-import { MailOutlined, PhoneOutlined, PlusOutlined } from '@ant-design/icons';
+import { ImportOutlined, MailOutlined, PhoneOutlined, PlusOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { usePeopleSearch, usePersonMutations, useContactMutations } from '../../api/hooks';
 import { useTableControls } from '../../components/useTableControls';
@@ -29,6 +29,7 @@ import { collectApi } from '../../api/circulations';
 import EditToolbar, { useEditMode } from '../../components/EditToolbar';
 import GreetingName from '../../components/GreetingName';
 import LeftCompanyButton from '../../components/LeftCompanyButton';
+import ImportContactsModal from './ImportContactsModal';
 import PersonForm from './PersonForm';
 import PersonDrawer from './PersonDrawer';
 import CompanyDrawer from '../companies/CompanyDrawer';
@@ -65,6 +66,7 @@ export default function PeoplePage() {
   const [companyFormOpen, setCompanyFormOpen] = useState(false);
   const [editingCompany, setEditingCompany] = useState<CompanyResponse | null>(null);
   const [contactFormOpen, setContactFormOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [editingContact, setEditingContact] = useState<ContactResponse | null>(null);
   const [contactDefaults, setContactDefaults] = useState<Partial<ContactRequest>>();
   const [expanded, setExpanded] = useState<number[]>([]);
@@ -188,6 +190,12 @@ export default function PeoplePage() {
             <>
               <Button icon={<PlusOutlined />} onClick={() => { setEditing(null); setFormOpen(true); }}>
                 New person
+              </Button>
+              {/* Contacts arrive as files far more often than one at a time — a list off a
+                  trade fair, an export somebody mailed over. It sits beside New person
+                  because it answers the same question, only in bulk. */}
+              <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>
+                Import from file
               </Button>
               <AddToListActions
                 entity="people"
@@ -366,6 +374,7 @@ export default function PeoplePage() {
         defaults={contactDefaults}
         onClose={() => setContactFormOpen(false)}
       />
+      <ImportContactsModal open={importOpen} onClose={() => setImportOpen(false)} />
     </>
   );
 }

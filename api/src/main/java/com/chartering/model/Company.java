@@ -42,6 +42,27 @@ public class Company {
     @Column(name = "city_name")
     private String cityName;
 
+    /**
+     * Where the company is, at country granularity. A plain string like {@link #cityName}
+     * and for the same reason: it arrives spelled however the source spelled it, and a
+     * lookup table would mean inventing a canonical row for every variant before an import
+     * could store anything.
+     *
+     * <p>There is deliberately no street or postcode to go with it. Nothing here posts
+     * anything; city and country are what a chartering desk uses, and a half-filled address
+     * block only invites the reader to trust it as a whole one.
+     */
+    @Column(name = "country")
+    private String country;
+
+    /**
+     * The company's own site, stored bare — {@code fednav.com}, not {@code https://…}. That
+     * is how it arrives, and the scheme is the one part of it that never tells you anything;
+     * the UI puts one back when it makes a link.
+     */
+    @Column(name = "website")
+    private String website;
+
     private String notes;
 
     @Column(name = "legacy_id")

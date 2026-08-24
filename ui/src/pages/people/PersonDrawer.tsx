@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Drawer, List, Popconfirm, Space, Spin, Tag, Tooltip, Typography } from 'antd';
+import { Button, Collapse, Drawer, List, Popconfirm, Space, Spin, Tag, Tooltip, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import {
   useContactMutations,
@@ -11,6 +11,7 @@ import ContactLine from '../../components/ContactLine';
 import EditToolbar, { useEditMode } from '../../components/EditToolbar';
 import GreetingName from '../../components/GreetingName';
 import LeftCompanyButton from '../../components/LeftCompanyButton';
+import RecordHistory from '../../components/RecordHistory';
 import ContactForm from '../contacts/ContactForm';
 import { recordRecent } from '../../recent/store';
 import type { ContactResponse, PersonResponse } from '../../api/types';
@@ -142,6 +143,32 @@ export default function PersonDrawer({ personId, onClose, onEdit, onOpenCompany 
                 onDelete={(target) => removeContact.mutate(target.id)}
               />
             )}
+          />
+
+          {/* Collapsed, and destroyed when it closes, so opening a person does not fetch a
+              history nobody asked for. There are no tabs on this drawer to hide it behind —
+              the contacts are the reason the drawer exists and must stay the first thing in
+              it — so it sits underneath, out of the way until it is wanted. */}
+          <Collapse
+            ghost
+            size="small"
+            style={{ marginTop: 12 }}
+            destroyInactivePanel
+            items={[
+              {
+                key: 'history',
+                label: (
+                  <Typography.Text type="secondary">
+                    History of this person
+                  </Typography.Text>
+                ),
+                children: <RecordHistory
+                    entityType="person"
+                    entityId={p.id}
+                    note="Changes to this person's own record. Each email and phone keeps its own history, under the address."
+                  />,
+              },
+            ]}
           />
 
           <ContactForm

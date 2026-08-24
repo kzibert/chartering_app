@@ -188,6 +188,8 @@ public class CompanyService {
         c.setAgent(req.isAgent());
         c.setSolo(req.isSolo());
         c.setCityName(req.getCityName());
+        c.setCountry(req.getCountry());
+        c.setWebsite(req.getWebsite());
         c.setNotes(req.getNotes());
     }
 

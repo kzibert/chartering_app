@@ -31,6 +31,23 @@ public class Contact {
     private String contactValue;
 
     /**
+     * What kind of line this is — Work, Mobile, Direct, Fax, Home, Other.
+     *
+     * <p>Free text, not an enum. The vocabulary belongs to whoever exported the file: one
+     * source says Mobile, the next says Cell, a third says Business. A closed set would
+     * turn every unfamiliar word into a failed import rather than a label somebody can
+     * read, so the importer normalises what it recognises and passes the rest through.
+     *
+     * <p>Phones only. "Work email" is a guess about the person rather than a property of
+     * the address, so email rows leave this null instead of carrying a label that would
+     * mean nothing — and {@link #hasWhatsapp} and {@link #working} both read better beside
+     * it: a mobile is the only kind of number WhatsApp can be on, and a fax flagged
+     * working is a number nobody will ever answer.
+     */
+    @Column(name = "label")
+    private String label;
+
+    /**
      * This address's own greeting, overriding whatever the person would supply.
      *
      * <p>Exists for the address that belongs to a company rather than to anyone in

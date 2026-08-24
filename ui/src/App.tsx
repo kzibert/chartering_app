@@ -9,6 +9,7 @@ import PeoplePage from './pages/people/PeoplePage';
 import CirculationListsPage from './pages/circulationLists/CirculationListsPage';
 import CircularsPage from './pages/circulars/CircularsPage';
 import MailboxPage from './pages/mailbox/MailboxPage';
+import HistoryPage from './pages/history/HistoryPage';
 import SettingsPage from './pages/settings/SettingsPage';
 import LoginPage from './pages/login/LoginPage';
 import { useToken } from './auth/store';
@@ -69,6 +70,7 @@ function AuthenticatedApp() {
         <Route path="/email-list" element={<Navigate to="/circulation-lists" replace />} />
         <Route path="/circulars" element={<CircularsPage />} />
         <Route path="/mailbox" element={<MailboxPage />} />
+        <Route path="/history" element={<HistoryPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

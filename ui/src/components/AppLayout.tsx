@@ -13,6 +13,7 @@ import {
   UserOutlined,
   MenuOutlined,
   EllipsisOutlined,
+  HistoryOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -26,7 +27,7 @@ const { Sider, Header, Content } = Layout;
 // No '/contacts': contacts live inside People now, grouped under the person who owns them.
 const KEYS = [
   '/', '/vessels', '/companies', '/people', '/circulation-lists', '/circulars', '/mailbox',
-  '/settings',
+  '/history', '/settings',
 ];
 
 /**
@@ -93,6 +94,10 @@ export default function AppLayout({
         </span>
       ),
     },
+    // Last in the list, and not in the bottom bar on a phone: the change log is where you
+    // go when something is already wrong, not somewhere work gets done. It sits above
+    // Settings because it is about the data rather than about the application.
+    { key: '/history', icon: <HistoryOutlined />, label: 'History' },
   ];
 
   // Settings sits in its own menu pinned to the foot of the sidebar rather than trailing

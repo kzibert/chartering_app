@@ -115,6 +115,17 @@
 			<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
 			<version>${springdoc.version}</version>
 		</dependency>
+		<!--
+			RFC 4180 is not "split on comma". A contacts export puts a whole labelled phone
+			list inside one quoted cell - "Work,+32.3.821.13.35,Mobile,+32.475.89.02.67" -
+			and company names carry commas of their own. Hand-rolling the quote handling is
+			how an import silently shifts every column right on one row in a hundred.
+		-->
+		<dependency>
+			<groupId>org.apache.commons</groupId>
+			<artifactId>commons-csv</artifactId>
+			<version>1.12.0</version>
+		</dependency>
 		<dependency>
 			<groupId>org.postgresql</groupId>
 			<artifactId>postgresql</artifactId>

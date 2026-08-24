@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, Checkbox, Col, Form, Input, Row, Select, Space, Tag, Tooltip } from 'antd';
+import { Button, Checkbox, Col, Form, Input, Row, Select, Space, Tag, Tooltip, Typography } from 'antd';
 import { PlusOutlined, WarningOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useCompanies, useRegions, usePorts, useTonnageCategories, useCompanyMutations } from '../../api/hooks';
@@ -67,7 +67,17 @@ export default function CompaniesPage() {
         </Space>
       ),
     },
-    { title: 'City', dataIndex: 'cityName' },
+    {
+      // One column, not two: city and country are read together, and a country column of
+      // its own would be mostly empty — it is only ever known for rows that came from an
+      // import or were filled in by hand.
+      title: 'City',
+      key: 'city',
+      render: (_, c) =>
+        [c.cityName, c.country].filter(Boolean).join(', ') || (
+          <Typography.Text type="secondary">—</Typography.Text>
+        ),
+    },
     {
       title: 'Roles',
       key: 'roles',

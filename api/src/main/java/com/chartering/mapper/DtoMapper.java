@@ -1,8 +1,10 @@
 package com.chartering.mapper;
 
+import com.chartering.audit.RevertSupport;
 import com.chartering.dto.*;
 import com.chartering.model.Company;
 import com.chartering.model.Contact;
+import com.chartering.model.DataChange;
 import com.chartering.model.MailFolder;
 import com.chartering.model.MailMessage;
 import com.chartering.model.MailRule;
@@ -42,7 +44,7 @@ public class DtoMapper {
         return new CompanyResponse(
                 c.getId(), c.getName(),
                 c.isShipowner(), c.isCharterer(), c.isBroker(), c.isAgent(), c.isSolo(),
-                c.getCityName(), c.getNotes(),
+                c.getCityName(), c.getCountry(), c.getWebsite(), c.getNotes(),
                 c.isConfirmed(), c.getConfirmedAt(), c.getConfirmedBy(), c.getConfirmNotes(),
                 c.isBanned(), c.isLegacy(), noWorkingEmail);
     }
@@ -61,7 +63,7 @@ public class DtoMapper {
                 p == null && ct.getCompany() != null,
                 ct.getCompany() != null ? ct.getCompany().getId() : null,
                 ct.getCompany() != null ? ct.getCompany().getName() : null,
-                ct.getContactKind(), ct.getContactValue(), ct.getNotes(),
+                ct.getContactKind(), ct.getContactValue(), blankToNull(ct.getLabel()), ct.getNotes(),
                 ct.isConfirmed(), ct.getConfirmedAt(), ct.getConfirmedBy(), ct.getConfirmNotes(),
                 ct.isBanned(), ct.isLegacy(), ct.isMain(), ct.isWorking(), ct.isCirc(), ct.isNoCirc(),
                 ct.isHasWhatsapp());
@@ -88,6 +90,25 @@ public class DtoMapper {
 
     private static String blankToNull(String s) {
         return s == null || s.isBlank() ? null : s.trim();
+    }
+
+    /**
+     * One change-log entry.
+     *
+     * <p>{@code revertible} is worked out here rather than stored, because it is a question
+     * about the code as it stands now — whether the field still exists and whether its type
+     * can be read back — not about what was true when the change was made. A log row written
+     * before a field was renamed is still a true record of what happened; it has simply
+     * stopped being something this version can put back.
+     */
+    public DataChangeResponse toDataChangeResponse(DataChange d) {
+        String blocked = RevertSupport.blockedReason(d);
+        return new DataChangeResponse(
+                d.getId(), d.getChangeSet(), d.getEntityType(), d.getEntityId(),
+                d.getEntityLabel(), d.getOperation(), d.getFieldName(),
+                d.getOldValue(), d.getNewValue(),
+                d.getChangedAt(), d.getChangedBy(), d.getContext(),
+                blocked == null, blocked);
     }
 
     public PersonResponse toPersonResponse(Person p) {

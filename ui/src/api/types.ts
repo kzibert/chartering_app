@@ -83,6 +83,9 @@ export interface CompanyResponse {
   /** one-person business; set by hand, never inferred from the data */
   solo: boolean;
   cityName?: string;
+  country?: string;
+  /** Bare host as stored — "fednav.com". The UI adds the scheme when it makes a link. */
+  website?: string;
   notes?: string;
   confirmed: boolean;
   confirmedAt?: string;
@@ -108,6 +111,8 @@ export interface CompanyRequest {
   agent: boolean;
   solo: boolean;
   cityName?: string;
+  country?: string;
+  website?: string;
   notes?: string;
 }
 
@@ -189,6 +194,11 @@ export interface ContactResponse {
   companyName?: string;
   contactKind: string; // 'email' | 'phone'
   contactValue: string;
+  /**
+   * What kind of line this is — Work, Mobile, Direct, Fax. Phones only: an email has no
+   * equivalent, so it is absent there rather than carrying a label that means nothing.
+   */
+  label?: string;
   notes?: string;
   confirmed: boolean;
   confirmedAt?: string;
@@ -230,6 +240,8 @@ export interface ContactRequest {
   companyId?: number;
   contactKind: string;
   contactValue: string;
+  /** Work/Mobile/Direct/Fax. Ignored on an email, which has no such thing. */
+  label?: string;
   /** Overrides the person's greeting. Blank falls back to the person's, then to "Sirs". */
   greetingName?: string;
   notes?: string;

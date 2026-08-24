@@ -51,6 +51,8 @@ public record ContactResponse(
         String companyName,
         String contactKind,
         String contactValue,
+        /** Work/Mobile/Direct/Fax/… — phones only; null on an email, which has no such thing */
+        String label,
         String notes,
         boolean confirmed,
         OffsetDateTime confirmedAt,
