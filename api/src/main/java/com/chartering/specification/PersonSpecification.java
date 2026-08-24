@@ -1,7 +1,9 @@
 package com.chartering.specification;
 
+import com.chartering.dto.ContactSource;
 import com.chartering.model.Contact;
 import com.chartering.model.Person;
+import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
 import jakarta.persistence.criteria.Subquery;
@@ -44,14 +46,20 @@ public final class PersonSpecification {
      * Banned contacts are excluded unless asked for, matching the contact search, so a
      * person reachable only through a banned address stays hidden by default.
      * All-null criteria means no constraint at all (people without contacts still match).
+     *
+     * <p>Source is a criterion about the <em>address</em>, not about the person, and that is
+     * what makes it useful: an import that added one address to somebody already on file
+     * brings that person back under "imported from a file", which is what a review of an
+     * import wants to see. Filed on the person it would find only the people the import
+     * itself created.
      */
     public static Specification<Person> hasContactMatching(String value, String kind,
                                                            Boolean confirmed, boolean includeBanned,
-                                                           Boolean legacy) {
+                                                           ContactSource source) {
         boolean unconstrained = (value == null || value.isBlank())
                 && (kind == null || kind.isBlank())
                 && confirmed == null
-                && legacy == null;
+                && source == null;
 
         return (root, query, cb) -> {
             if (unconstrained) return null;
@@ -66,10 +74,23 @@ public final class PersonSpecification {
             }
             if (kind != null && !kind.isBlank()) where.add(cb.equal(ct.get("contactKind"), kind));
             if (confirmed != null) where.add(cb.equal(ct.get("confirmed"), confirmed));
-            if (legacy != null) where.add(cb.equal(ct.get("legacy"), legacy));
+            if (source != null) where.add(sourceIs(cb, ct, source));
             if (!includeBanned) where.add(cb.isFalse(ct.get("banned")));
 
             return cb.exists(sub.select(ct.get("id")).where(where.toArray(Predicate[]::new)));
+        };
+    }
+
+    /**
+     * The two stored booleans, read back as the three sources they encode. APP is the only
+     * one that needs both of them: "neither carried over nor imported" is what being typed
+     * in here means, and there is no column that says so on its own.
+     */
+    private static Predicate sourceIs(CriteriaBuilder cb, Root<Contact> ct, ContactSource source) {
+        return switch (source) {
+            case LEGACY -> cb.isTrue(ct.get("legacy"));
+            case FILE -> cb.isTrue(ct.get("fromFile"));
+            case APP -> cb.and(cb.isFalse(ct.get("legacy")), cb.isFalse(ct.get("fromFile")));
         };
     }
 }

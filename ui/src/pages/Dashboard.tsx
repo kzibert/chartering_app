@@ -136,7 +136,12 @@ export default function Dashboard() {
         onEdit={(p) => { setEditingPerson(p); setPersonFormOpen(true); }}
         onOpenCompany={(id) => openCompany(id, 'people')}
       />
-      <PersonForm open={personFormOpen} editing={editingPerson} onClose={() => setPersonFormOpen(false)} />
+      <PersonForm
+        open={personFormOpen}
+        editing={editingPerson}
+        onClose={() => setPersonFormOpen(false)}
+        onDeleted={() => setPersonId(undefined)}
+      />
     </>
   );
 }

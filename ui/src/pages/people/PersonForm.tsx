@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { AutoComplete, Form, Input, Modal, Typography } from 'antd';
 import { usePersonMutations } from '../../api/hooks';
 import CompanySelect from '../../components/CompanySelect';
+import LeftCompanyButton from '../../components/LeftCompanyButton';
+import RecordActions from '../../components/RecordActions';
 import { resolveGreeting } from './resolveGreeting';
 import type { PersonRequest, PersonResponse } from '../../api/types';
 
@@ -41,11 +43,34 @@ interface Props {
   /** Called with the saved person after a *create*, so callers can select it. */
   onCreated?: (person: PersonResponse) => void;
   onClose: () => void;
+  /**
+   * The person was deleted from in here. The form closes itself either way; this is for a
+   * caller with a drawer open on the same person, which would otherwise be left showing a
+   * record the server no longer has.
+   */
+  onDeleted?: () => void;
 }
 
-export default function PersonForm({ open, editing, defaults, onCreated, onClose }: Props) {
+export default function PersonForm({
+  open,
+  editing,
+  defaults,
+  onCreated,
+  onClose,
+  onDeleted,
+}: Props) {
   const [form] = Form.useForm<PersonRequest>();
-  const { create, update } = usePersonMutations();
+  const { create, update, remove } = usePersonMutations();
+
+  /**
+   * The person as the server last described them. The `editing` prop is a snapshot of the
+   * row that was clicked and does not move when the left-the-company flag does — the same
+   * reason CompanyForm and VesselForm keep one of these.
+   */
+  const [record, setRecord] = useState<PersonResponse | null>(editing ?? null);
+  useEffect(() => {
+    if (open) setRecord(editing ?? null);
+  }, [open, editing]);
 
   // The greeting is filled in from the full name rather than guessed silently at save
   // time, so a wrong guess is visible and correctable before it reaches a circular.
@@ -151,6 +176,37 @@ export default function PersonForm({ open, editing, defaults, onCreated, onClose
           <Input.TextArea rows={2} />
         </Form.Item>
       </Form>
+
+      {/* Only for a person who exists: there is nothing to delete about one that has not
+          been saved yet, and nowhere for them to have left from. */}
+      {record && (
+        <RecordActions
+          entity="person"
+          name={record.fullName}
+          deleteLoading={remove.isPending}
+          /*
+           * contacts.person_id is ON DELETE CASCADE (V1__baseline_schema.sql), so their
+           * addresses really do go with them — which is the reason the left-the-company
+           * toggle sits next to this one rather than below it. Mail and past circulations
+           * keep their rows and only lose the link (SET NULL, and the run recipients hold
+           * plain ids), so the history stays readable.
+           */
+          deleteWarning="Every email address and phone number of theirs goes too. Mail already synced and past circulations are kept, but stop pointing at them."
+          onDelete={() =>
+            remove.mutate(record.id, {
+              onSuccess: () => {
+                onClose();
+                onDeleted?.();
+              },
+            })
+          }
+        >
+          {/* Not a delete, and the confirmation says what it is instead: the record stays,
+              the mail stops. It belongs beside Delete because they are the two ways a name
+              leaves a circulation, and the milder one should be the one in reach. */}
+          <LeftCompanyButton p={record} size="middle" type="default" onChanged={setRecord} />
+        </RecordActions>
+      )}
     </Modal>
   );
 }

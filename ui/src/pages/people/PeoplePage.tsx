@@ -6,7 +6,6 @@ import {
   Form,
   Input,
   List,
-  Popconfirm,
   Row,
   Select,
   Space,
@@ -16,7 +15,7 @@ import {
 } from 'antd';
 import { ImportOutlined, MailOutlined, PhoneOutlined, PlusOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { usePeopleSearch, usePersonMutations, useContactMutations } from '../../api/hooks';
+import { usePeopleSearch, useContactMutations } from '../../api/hooks';
 import { useTableControls } from '../../components/useTableControls';
 import ResponsiveTable from '../../components/ResponsiveTable';
 import FilterPanel, { countActiveFilters } from '../../components/FilterPanel';
@@ -28,7 +27,6 @@ import AddToListActions from '../../components/AddToListActions';
 import { collectApi } from '../../api/circulations';
 import EditToolbar, { useEditMode } from '../../components/EditToolbar';
 import GreetingName from '../../components/GreetingName';
-import LeftCompanyButton from '../../components/LeftCompanyButton';
 import ImportContactsModal from './ImportContactsModal';
 import PersonForm from './PersonForm';
 import PersonDrawer from './PersonDrawer';
@@ -56,7 +54,6 @@ export default function PeoplePage() {
   const tc = useTableControls({ size: 20 }, 'people');
 
   const query = usePeopleSearch({ ...filters, page: tc.state.page, size: tc.state.size });
-  const { remove } = usePersonMutations();
   const { remove: removeContact } = useContactMutations();
 
   const [formOpen, setFormOpen] = useState(false);
@@ -159,19 +156,20 @@ export default function PeoplePage() {
       render: (_, r) => <ContactSummary contacts={r.contacts} />,
     },
     {
+      /*
+       * Edit alone. Delete and the left-the-company toggle moved into the edit form, where
+       * the vessel and company ones already live: on a list of a hundred people they were a
+       * hundred chances to take somebody off every circulation, or remove them outright,
+       * from a screen you opened to read. Both are still one click further in, under a
+       * button that says you mean to change this person.
+       */
       title: 'Actions',
       key: 'actions',
-      width: 260,
+      width: 100,
       render: (_, r) => (
-        <Space size={4}>
-          <Button size="small" onClick={() => { setEditing(r.person); setFormOpen(true); }}>
-            Edit
-          </Button>
-          <LeftCompanyButton p={r.person} />
-          <Popconfirm title="Delete this person?" onConfirm={() => remove.mutate(r.person.id)}>
-            <Button size="small" danger>Delete</Button>
-          </Popconfirm>
-        </Space>
+        <Button size="small" onClick={() => { setEditing(r.person); setFormOpen(true); }}>
+          Edit
+        </Button>
       ),
     },
   ];
@@ -210,13 +208,22 @@ export default function PeoplePage() {
           }
           extras={
             <>
-              <Form.Item name="legacy" noStyle initialValue="">
+              {/* Where the address came from, and it is a question about the address
+                  rather than the person: an import that added one number to somebody
+                  already on file brings them back under "Imported from a file", which is
+                  what reviewing an import is looking for.
+
+                  Three sources, not two. "Legacy (imported)" used to mean both doors at
+                  once, and since the file importer landed it named neither clearly — a
+                  file of eighty addresses is imported and is not legacy. */}
+              <Form.Item name="source" noStyle initialValue="">
                 <Select
-                  style={{ width: 180 }}
+                  style={{ width: 200 }}
                   options={[
                     { value: '', label: 'Source: all' },
-                    { value: false, label: 'New (app)' },
-                    { value: true, label: 'Legacy (imported)' },
+                    { value: 'APP', label: 'Added in the app' },
+                    { value: 'FILE', label: 'Imported from a file' },
+                    { value: 'LEGACY', label: 'From the old database' },
                   ]}
                 />
               </Form.Item>
@@ -290,16 +297,12 @@ export default function PeoplePage() {
             },
             { label: 'Contacts', value: <ContactSummary contacts={r.contacts} /> },
           ],
+          // Same one button as the desktop column, for the same reason — and a card on a
+          // phone has even less room to be careful in.
           actions: (r) => (
-            <Space size={4} wrap>
-              <Button size="small" onClick={() => { setEditing(r.person); setFormOpen(true); }}>
-                Edit
-              </Button>
-              <LeftCompanyButton p={r.person} />
-              <Popconfirm title="Delete this person?" onConfirm={() => remove.mutate(r.person.id)}>
-                <Button size="small" danger>Delete</Button>
-              </Popconfirm>
-            </Space>
+            <Button size="small" onClick={() => { setEditing(r.person); setFormOpen(true); }}>
+              Edit
+            </Button>
           ),
           // The addresses are the reason you opened a person, so the expander says how
           // many are behind it rather than a generic "Details".
@@ -349,7 +352,12 @@ export default function PeoplePage() {
         }}
       />
 
-      <PersonForm open={formOpen} editing={editing} onClose={() => setFormOpen(false)} />
+      <PersonForm
+        open={formOpen}
+        editing={editing}
+        onClose={() => setFormOpen(false)}
+        onDeleted={() => setSelectedId(undefined)}
+      />
       <PersonDrawer
         personId={selectedId}
         onClose={() => setSelectedId(undefined)}

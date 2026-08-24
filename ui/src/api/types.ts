@@ -389,7 +389,15 @@ export interface PeopleFilter extends PageParams {
   contactKind?: string;
   confirmed?: boolean;
   includeBanned?: boolean;
-  legacy?: boolean;
+  /**
+   * Which door the address came in through — typed in here, carried over from the old
+   * database, or read out of a contacts file. Sent by name, and the API rejects anything
+   * else rather than quietly matching everything.
+   *
+   * The other search forms still filter on `legacy` alone: theirs is a two-way question
+   * about tables the file importer never writes to.
+   */
+  source?: 'APP' | 'LEGACY' | 'FILE';
 }
 
 export interface ContactFilter extends PageParams {
