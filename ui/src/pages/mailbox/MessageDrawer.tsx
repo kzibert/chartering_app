@@ -21,10 +21,12 @@ import {
   LinkOutlined,
   MailOutlined,
   PaperClipOutlined,
+  SendOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { useMailFolders, useMailMessage, useMailMessageMutations } from '../../mailbox/store';
 import LinkCompanyModal from './LinkCompanyModal';
+import ReplyModal from './ReplyModal';
 
 interface Props {
   messageId?: number;
@@ -46,6 +48,7 @@ export default function MessageDrawer({ messageId, onClose, onOpenCompany }: Pro
   const folders = useMailFolders();
   const { setRead, move, unlink } = useMailMessageMutations();
   const [linkOpen, setLinkOpen] = useState(false);
+  const [replyOpen, setReplyOpen] = useState(false);
 
   const m = data?.message;
   const named = (folders.data ?? []).filter((f) => f.id != null);
@@ -112,6 +115,16 @@ export default function MessageDrawer({ messageId, onClose, onOpenCompany }: Pro
         extra={
           m && (
             <Space wrap>
+              {/* First, and the only primary button on the drawer: reading a message is
+                  what this screen is for, and answering it is what reading one leads to. */}
+              <Button
+                size="small"
+                type="primary"
+                icon={<SendOutlined />}
+                onClick={() => setReplyOpen(true)}
+              >
+                Reply
+              </Button>
               <Button
                 size="small"
                 onClick={() =>
@@ -130,12 +143,28 @@ export default function MessageDrawer({ messageId, onClose, onOpenCompany }: Pro
               </Dropdown>
               {m.companyId ? (
                 <Space.Compact>
+                  {/* A registered shipowner's name runs to sixty characters, and a Button
+                      will not cut its own label — on a phone this one button was wider
+                      than the screen and carried the rest of the row off with it. The cap
+                      is on the button and the clip on the span inside it, because the
+                      button is a flex box and only its child can be the part that gives
+                      way. The full name is on the drawer's From row either way. */}
                   <Button
                     size="small"
                     icon={<BankOutlined />}
+                    style={{ maxWidth: 200 }}
                     onClick={() => onOpenCompany(m.companyId!)}
                   >
-                    {m.companyName}
+                    <span
+                      style={{
+                        minWidth: 0,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {m.companyName}
+                    </span>
                   </Button>
                   {/* No Tooltip around the trigger: nesting one inside Popconfirm makes the
                       two popups fight over it. The confirm text names the company instead,
@@ -185,6 +214,13 @@ export default function MessageDrawer({ messageId, onClose, onOpenCompany }: Pro
               <Descriptions.Item label="Received">
                 <Space size={8} wrap>
                   <span>{dayjs(m.receivedAt).format('YYYY-MM-DD HH:mm')}</span>
+                  {/* Only ever says what this app did. A reply sent from Outlook leaves no
+                      trace here — it is in the mailbox's Sent folder, not in this record. */}
+                  {data.repliedAt && (
+                    <Tooltip title={`Answered from this app on ${dayjs(data.repliedAt).format('YYYY-MM-DD HH:mm')}. A reply sent from another mail client would not show here.`}>
+                      <Tag color="green" icon={<SendOutlined />}>replied</Tag>
+                    </Tooltip>
+                  )}
                   {/* Where the mail server keeps it — for mail the mailbox's own filters
                       sorted on arrival, this is the only answer to "why did I not see it in
                       the Inbox?". The app's own filing follows it, when there is any. */}
@@ -237,6 +273,11 @@ export default function MessageDrawer({ messageId, onClose, onOpenCompany }: Pro
           onClose={() => setLinkOpen(false)}
         />
       )}
+
+      {/* Fed the message the drawer has already loaded rather than the id: the composer
+          quotes nothing itself, but it needs the sender, the subject and the links, and
+          fetching them a second time would be a second chance to disagree. */}
+      <ReplyModal open={replyOpen} detail={data} onClose={() => setReplyOpen(false)} />
     </>
   );
 }

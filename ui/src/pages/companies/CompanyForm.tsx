@@ -92,7 +92,9 @@ export default function CompanyForm({ open, editing, onClose, onDeleted }: Props
           <Input maxLength={255} placeholder="fednav.com" />
         </Form.Item>
         <Form.Item label="Roles">
-          <Space size="large">
+          {/* Wrapping: four checkboxes in a row are wider than a phone, and the fourth was
+              simply off the edge of the form. */}
+          <Space size="large" wrap>
             <Form.Item name="shipowner" valuePropName="checked" noStyle><Checkbox>Owner</Checkbox></Form.Item>
             <Form.Item name="charterer" valuePropName="checked" noStyle><Checkbox>Charterer</Checkbox></Form.Item>
             <Form.Item name="broker" valuePropName="checked" noStyle><Checkbox>Broker</Checkbox></Form.Item>

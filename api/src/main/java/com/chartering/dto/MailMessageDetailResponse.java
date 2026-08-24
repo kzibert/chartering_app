@@ -1,5 +1,7 @@
 package com.chartering.dto;
 
+import java.time.LocalDateTime;
+
 /**
  * A message opened for reading: the list row, plus everything left out of it.
  *
@@ -17,5 +19,11 @@ public record MailMessageDetailResponse(
         String bodyText,
         String attachmentNames,
         Integer sizeBytes,
-        String messageId) {
+        String messageId,
+        /**
+         * When this message was last answered from the app, or absent if it never was.
+         * Only on the opened message: a column that costs a query per page to say "no"
+         * fifty times would not earn its place in the list.
+         */
+        LocalDateTime repliedAt) {
 }

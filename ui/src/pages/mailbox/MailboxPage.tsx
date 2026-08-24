@@ -47,6 +47,9 @@ import {
   useMailboxStatus,
   useMailboxSync,
 } from '../../mailbox/store';
+import { useQuery } from '@tanstack/react-query';
+import { circulationsApi } from '../../api/circulations';
+import { SendingTodayTags } from '../../components/SendingToday';
 import { usePersistedState } from '../../components/usePersistedState';
 import { useTableControls } from '../../components/useTableControls';
 import ResponsiveTable from '../../components/ResponsiveTable';
@@ -55,6 +58,7 @@ import CompanyDrawer from '../companies/CompanyDrawer';
 import MessageDrawer from './MessageDrawer';
 import FoldersRulesModal from './FoldersRulesModal';
 import type {
+  CirculationToday,
   MailMessage,
   MailServerFolder,
   MailboxFilter,
@@ -135,6 +139,9 @@ export default function MailboxPage() {
   const status = useMailboxStatus();
   const sync = useMailboxSync();
   const { setReadBulk, markAllRead, moveBulk } = useMailMessageMutations();
+  // The same key the Circulars and Settings tabs read the day's volume from, so a reply
+  // sent here moves the number there without either tab counting anything itself.
+  const todayQ = useQuery({ queryKey: ['circulations', 'today'], queryFn: circulationsApi.today });
 
   /**
    * Which mail is being looked at — the rail's folder and the search box, and nothing about
@@ -500,6 +507,7 @@ export default function MailboxPage() {
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
       <SyncBar
         status={status.data}
+        today={todayQ.data}
         onSync={() => sync.mutate(undefined, { onSuccess: () => message.info('Fetching mail…') })}
         syncing={status.data?.syncing || sync.isPending}
       />
@@ -898,9 +906,11 @@ const BAR_NOTE: React.CSSProperties = { fontSize: 12 };
  */
 function SyncBar({
   status,
+  today,
   onSync,
   syncing,
 }: {
+  today?: CirculationToday;
   status?: import('../../api/types').MailboxStatus;
   onSync: () => void;
   syncing: boolean;
@@ -943,6 +953,12 @@ function SyncBar({
           <Typography.Text type="secondary" style={BAR_NOTE}>
             {status.unread} unread of {status.totalMessages}
           </Typography.Text>
+
+          {/* The day's outgoing volume, on the tab where the replies that swell it are
+              written. The same tags the Circulars and Settings tabs show, from the same
+              query — three places quoting one number rather than three counting it. */}
+          <Divider type="vertical" style={{ margin: 0, height: 16 }} />
+          <SendingTodayTags today={today} />
 
           {/* Pushes the fetch control to the far end, where the eye is not passing over it
               on the way to the mail. */}

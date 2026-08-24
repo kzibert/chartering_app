@@ -48,6 +48,12 @@ public class GlobalExceptionHandler {
         return body(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
     }
 
+    /** The provider refused a message we did try to send. Its own words, verbatim. */
+    @ExceptionHandler(MailSendFailedException.class)
+    public ResponseEntity<Map<String, Object>> handleMailSendFailed(MailSendFailedException ex) {
+        return body(HttpStatus.BAD_GATEWAY, ex.getMessage());
+    }
+
     /**
      * Wrong credentials, or the login endpoint temporarily refusing to answer after too many
      * attempts. One status and one message for all of those — see AuthService.

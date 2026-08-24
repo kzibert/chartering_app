@@ -15,14 +15,12 @@ import jakarta.mail.internet.MimeMultipart;
 import lombok.RequiredArgsConstructor;
 import org.springframework.mail.MailAuthenticationException;
 import org.springframework.mail.MailException;
-import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.stereotype.Component;
 
 import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Properties;
 import java.util.regex.Pattern;
 
 /**
@@ -41,7 +39,7 @@ public class SmtpCircularSender implements CircularSender {
     /** A 5xx reply is a permanent refusal — retrying it wastes quota and looks worse. */
     private static final Pattern PERMANENT_SMTP_ERROR = Pattern.compile("\\b5\\d\\d\\b");
 
-    private final JavaMailSender mailSender;
+    private final SmtpTransport transport;
     private final MailCampaignProperties props;
     private final MailTemplateService templates;
 
@@ -53,15 +51,14 @@ public class SmtpCircularSender implements CircularSender {
     @Override
     public List<String> missingSettings(CirculationSettings cfg) {
         List<String> missing = new ArrayList<>();
-        JavaMailSenderImpl impl = asImpl();
         // Host comes from Settings, which falls back to MAIL_HOST when it was never changed.
         if (!isSet(cfg.smtpHost())) {
             missing.add("SMTP host (Settings, or MAIL_HOST)");
         }
-        if (impl == null || !isSet(impl.getUsername())) {
+        if (!transport.hasUsername()) {
             missing.add("MAIL_USERNAME");
         }
-        if (impl == null || !isSet(impl.getPassword())) {
+        if (!transport.hasPassword()) {
             missing.add("MAIL_PASSWORD");
         }
         if (!isSet(cfg.fromAddress())) {
@@ -72,62 +69,12 @@ public class SmtpCircularSender implements CircularSender {
 
     @Override
     public Bound bind(CirculationSettings cfg) {
-        return new BoundSmtp(senderFor(cfg), cfg);
+        return new BoundSmtp(transport.senderFor(cfg), cfg);
     }
 
     /** The mailbox the app authenticates as, for the config screen. Never the password. */
     public String username() {
-        JavaMailSenderImpl impl = asImpl();
-        return impl == null ? null : impl.getUsername();
-    }
-
-    private JavaMailSenderImpl asImpl() {
-        return mailSender instanceof JavaMailSenderImpl impl ? impl : null;
-    }
-
-    /**
-     * A sender pointed at the host/port currently configured in Settings, carrying the
-     * credentials and transport properties of the Spring-configured one.
-     *
-     * <p>A fresh instance rather than mutating the shared bean: the bean is a singleton, and
-     * reconfiguring it in place would make the host depend on whoever sent last.
-     *
-     * <p>When the port is changed, the TLS mode moves with it by convention — 465 is
-     * implicit SSL, anything else is STARTTLS — because the two are not independently
-     * meaningful and a port change alone would otherwise just fail to connect. Leaving the
-     * port at its configured value keeps whatever MAIL_SSL/MAIL_STARTTLS said, so an
-     * environment tuned by hand is never second-guessed.
-     */
-    private JavaMailSenderImpl senderFor(CirculationSettings s) {
-        JavaMailSenderImpl base = asImpl();
-        if (base == null) {
-            return null;
-        }
-        boolean unchanged = s.smtpPort() == base.getPort()
-                && s.smtpHost() != null && s.smtpHost().equalsIgnoreCase(base.getHost());
-        if (unchanged) {
-            return base;
-        }
-
-        JavaMailSenderImpl out = new JavaMailSenderImpl();
-        out.setHost(s.smtpHost());
-        out.setPort(s.smtpPort());
-        out.setUsername(base.getUsername());
-        out.setPassword(base.getPassword());
-        out.setProtocol(base.getProtocol());
-        out.setDefaultEncoding(base.getDefaultEncoding());
-
-        Properties p = new Properties();
-        p.putAll(base.getJavaMailProperties());
-        if (s.smtpPort() != base.getPort()) {
-            boolean implicitSsl = s.smtpPort() == 465;
-            p.setProperty("mail.smtp.ssl.enable", String.valueOf(implicitSsl));
-            p.setProperty("mail.smtp.starttls.enable", String.valueOf(!implicitSsl));
-        }
-        // Certificate trust names a host, so it has to follow the host it was set for.
-        p.setProperty("mail.smtp.ssl.trust", s.smtpHost());
-        out.setJavaMailProperties(p);
-        return out;
+        return transport.username();
     }
 
     private static boolean isSet(String s) {

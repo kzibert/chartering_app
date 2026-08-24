@@ -5,6 +5,8 @@ import com.chartering.config.MailboxProperties;
 import com.chartering.dto.MailLinkRequest;
 import com.chartering.dto.MailMessageDetailResponse;
 import com.chartering.dto.MailMessageResponse;
+import com.chartering.dto.MailReplyRequest;
+import com.chartering.dto.MailReplyResponse;
 import com.chartering.dto.MailServerFolderResponse;
 import com.chartering.dto.MailboxStatusResponse;
 import com.chartering.dto.PageResponse;
@@ -14,6 +16,7 @@ import com.chartering.repository.MailSyncStateRepository;
 import com.chartering.service.MailboxService;
 import com.chartering.service.MailboxService.MailboxFilter;
 import com.chartering.service.mail.ImapMailboxSyncService;
+import com.chartering.service.mail.MailReplyService;
 import com.chartering.service.mail.MailServerFolderService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -40,6 +43,7 @@ import java.util.Optional;
 public class MailboxController {
 
     private final MailboxService mailbox;
+    private final MailReplyService mailReplies;
     private final ImapMailboxSyncService sync;
     private final MailSyncStateRepository syncState;
     private final MailMessageRepository messages;
@@ -93,6 +97,22 @@ public class MailboxController {
             @PathVariable Long id,
             @RequestParam(defaultValue = "true") boolean markRead) {
         return ResponseEntity.ok(mailbox.getDetail(id, markRead));
+    }
+
+    @PostMapping("/messages/{id}/reply")
+    @Operation(summary = "Reply to a message from the app",
+            description = "Sends one message to one address through the mailbox over SMTP — "
+                    + "never through Brevo, whichever provider circulars are using: a reply "
+                    + "has to come from the address the correspondent wrote to and land in "
+                    + "their thread. The chosen footer is appended and the original is quoted "
+                    + "underneath unless includeOriginal=false; mail-merge placeholders are "
+                    + "substituted against whatever contact this message is linked to. A "
+                    + "reply that is sent is recorded and counted in the day's outgoing "
+                    + "volume; one the server refuses is a 502 and is not stored.")
+    public ResponseEntity<MailReplyResponse> reply(
+            @PathVariable Long id,
+            @Valid @RequestBody MailReplyRequest body) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(mailReplies.reply(id, body));
     }
 
     @PatchMapping("/messages/{id}/read")

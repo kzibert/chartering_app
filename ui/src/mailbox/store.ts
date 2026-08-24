@@ -4,6 +4,7 @@ import { mailFoldersApi, mailRulesApi, mailboxApi } from '../api/mailbox';
 import type {
   MailFolderRequest,
   MailLinkRequest,
+  MailReplyRequest,
   MailRuleRequest,
   MailboxFilter,
   MailboxScope,
@@ -119,6 +120,7 @@ export const useMailboxStatus = () =>
 /** Everything that writes to a message. All of them invalidate the whole prefix. */
 export function useMailMessageMutations() {
   const invalidate = useMailboxInvalidator();
+  const qc = useQueryClient();
 
   const setRead = useMutation({
     mutationFn: (v: { id: number; read: boolean }) => mailboxApi.setRead(v.id, v.read),
@@ -153,8 +155,20 @@ export function useMailMessageMutations() {
     onSuccess: invalidate,
   });
   const relink = useMutation({ mutationFn: mailboxApi.relink, onSuccess: invalidate });
+  /**
+   * Sending a reply changes two things outside this prefix as well: the message now has a
+   * repliedAt (which is inside the prefix) and the day's outgoing count has gone up by one
+   * (which is not — the Circulars and Settings tabs read it from their own key).
+   */
+  const reply = useMutation({
+    mutationFn: (v: { id: number; body: MailReplyRequest }) => mailboxApi.reply(v.id, v.body),
+    onSuccess: () => {
+      invalidate();
+      qc.invalidateQueries({ queryKey: ['circulations', 'today'] });
+    },
+  });
 
-  return { setRead, setReadBulk, markAllRead, move, moveBulk, link, unlink, relink };
+  return { setRead, setReadBulk, markAllRead, move, moveBulk, link, unlink, relink, reply };
 }
 
 export function useMailFolderMutations() {
