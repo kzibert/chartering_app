@@ -34,6 +34,12 @@ public class EmailFooterService {
         return repository.findByDefaultFooterIsTrue();
     }
 
+    /** The footer a reply starts with, which is allowed to be a different one. */
+    @Transactional(readOnly = true)
+    public Optional<EmailFooter> findReplyDefault() {
+        return repository.findByReplyDefaultIsTrue();
+    }
+
     @Transactional
     public EmailFooterResponse create(EmailFooterRequest req) {
         requireNameAvailable(req.getName(), null);
@@ -41,6 +47,9 @@ public class EmailFooterService {
         // transiently, so the new row must not be flushed while an old default still stands.
         if (req.isDefaultFooter()) {
             repository.clearAllDefaults();
+        }
+        if (req.isReplyDefault()) {
+            repository.clearAllReplyDefaults();
         }
         EmailFooter f = new EmailFooter();
         apply(f, req);
@@ -53,6 +62,9 @@ public class EmailFooterService {
         requireNameAvailable(req.getName(), id);
         if (req.isDefaultFooter()) {
             repository.clearDefaultExcept(id);
+        }
+        if (req.isReplyDefault()) {
+            repository.clearReplyDefaultExcept(id);
         }
         apply(f, req);
         return toResponse(repository.save(f));
@@ -67,6 +79,7 @@ public class EmailFooterService {
         f.setName(req.getName().trim());
         f.setHtml(sanitizer.clean(req.getHtml()));
         f.setDefaultFooter(req.isDefaultFooter());
+        f.setReplyDefault(req.isReplyDefault());
     }
 
     private void requireNameAvailable(String name, Long selfId) {
@@ -84,6 +97,6 @@ public class EmailFooterService {
 
     private EmailFooterResponse toResponse(EmailFooter f) {
         return new EmailFooterResponse(f.getId(), f.getName(), f.getHtml(),
-                f.isDefaultFooter(), f.getCreatedAt(), f.getUpdatedAt());
+                f.isDefaultFooter(), f.isReplyDefault(), f.getCreatedAt(), f.getUpdatedAt());
     }
 }

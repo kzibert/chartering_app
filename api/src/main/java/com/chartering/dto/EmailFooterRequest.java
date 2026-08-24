@@ -20,4 +20,7 @@ public class EmailFooterRequest {
 
     /** Setting this clears the flag on whichever footer held it before. */
     private boolean defaultFooter;
+
+    /** The same, for the footer a reply from the Mailbox tab starts with. */
+    private boolean replyDefault;
 }

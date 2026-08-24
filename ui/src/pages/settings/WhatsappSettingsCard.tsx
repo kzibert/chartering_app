@@ -61,7 +61,8 @@ export default function WhatsappSettingsCard() {
       }
       loading={query.isLoading}
       extra={
-        <Space>
+        /* Wraps for the same reason as the Circulations card above it. */
+        <Space wrap>
           <Popconfirm
             title="Reset to the built-in default?"
             description={`Goes back to "${settings?.defaultMessage ?? ''}".`}

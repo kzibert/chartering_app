@@ -5,6 +5,8 @@ import type {
   MailLinkRequest,
   MailMessage,
   MailMessageDetail,
+  MailReplyRequest,
+  MailReplyResponse,
   MailServerFolder,
   MailRule,
   MailRuleRequest,
@@ -26,6 +28,15 @@ export const mailboxApi = {
   get: (id: number, markRead = true) =>
     client
       .get<MailMessageDetail>(`/mailbox/messages/${id}`, { params: { markRead } })
+      .then((r) => r.data),
+
+  /**
+   * Answer one message through the mailbox. The footer, the quote and the merge are the
+   * server's job — what goes out is what it composed, and what it stores is that.
+   */
+  reply: (id: number, body: MailReplyRequest) =>
+    client
+      .post<MailReplyResponse>(`/mailbox/messages/${id}/reply`, body)
       .then((r) => r.data),
 
   setRead: (id: number, read: boolean) =>

@@ -3,6 +3,7 @@ package com.chartering.service;
 import com.chartering.dto.MailLinkRequest;
 import com.chartering.dto.MailMessageDetailResponse;
 import com.chartering.dto.MailMessageResponse;
+import com.chartering.dto.MailboxSendingResponse;
 import com.chartering.dto.PageResponse;
 import com.chartering.exception.ResourceNotFoundException;
 import com.chartering.mapper.DtoMapper;
@@ -10,11 +11,16 @@ import com.chartering.model.Company;
 import com.chartering.model.Contact;
 import com.chartering.model.MailFolder;
 import com.chartering.model.MailMessage;
+import com.chartering.model.MailServerFolder;
+import com.chartering.model.MailSyncState;
 import com.chartering.model.Person;
 import com.chartering.repository.CompanyRepository;
 import com.chartering.repository.ContactRepository;
 import com.chartering.repository.MailFolderRepository;
 import com.chartering.repository.MailMessageRepository;
+import com.chartering.repository.MailReplyRepository;
+import com.chartering.repository.MailServerFolderRepository;
+import com.chartering.repository.MailSyncStateRepository;
 import com.chartering.repository.PersonRepository;
 import com.chartering.service.mail.MailServerFolderService;
 import com.chartering.specification.MailMessageSpecification;
@@ -56,6 +62,9 @@ public class MailboxService {
     private final CompanyRepository companies;
     private final PersonRepository people;
     private final ContactRepository contacts;
+    private final MailReplyRepository replies;
+    private final MailServerFolderRepository serverFolderRows;
+    private final MailSyncStateRepository syncState;
     /** Only for the server's folder delimiter, and only when a server folder is filtered on. */
     private final MailServerFolderService serverFolders;
     private final HtmlSanitizer sanitizer;
@@ -87,7 +96,42 @@ public class MailboxService {
         // Sanitized here rather than at sync time: the stored body stays exactly as it
         // arrived, so a change to what counts as unsafe applies to old mail as well as new,
         // and nothing is lost from the archive by a stripping rule that turns out too broad.
-        return mapper.toMailMessageDetail(m, sanitizer.clean(m.getBodyHtml()));
+        return mapper.toMailMessageDetail(m, sanitizer.clean(m.getBodyHtml()),
+                replies.lastRepliedAt(id));
+    }
+
+    /**
+     * What this mailbox has sent in a window, whoever sent it.
+     *
+     * <p>Read out of the Sent folder rather than counted, because most of it was never
+     * counted here: a reply written in Outlook, in the webmail or on a phone is invisible to
+     * this application until the folder syncs, and then it is simply mail like any other.
+     * The folder is found by IMAP SPECIAL-USE — this mailbox calls it "Отправленные", and
+     * looking for the word "Sent" would find nothing.
+     *
+     * <p>The app's own replies are reported beside that figure, not added to it: they are
+     * inside it as soon as the folder syncs, and until then they are the only part of the
+     * day that is exact.
+     */
+    @Transactional(readOnly = true)
+    public MailboxSendingResponse sendingBetween(LocalDateTime from, LocalDateTime until) {
+        int replied = replies.countBySentAtGreaterThanEqualAndSentAtLessThan(from, until);
+
+        Optional<MailServerFolder> sent =
+                serverFolderRows.findFirstBySpecialUseAndPresentTrue(MailServerFolder.SENT);
+        if (sent.isEmpty()) {
+            // No Sent folder the server owns up to. Nothing to report but our own sends —
+            // reporting zero would say the mailbox sent nothing, which is a different claim.
+            return new MailboxSendingResponse(null, null, null, replied);
+        }
+
+        String folder = sent.get().getFullName();
+        int inFolder = (int) messages.countByImapFolderAndReceivedAtGreaterThanEqualAndReceivedAtLessThan(
+                folder, from, until);
+        LocalDateTime syncedAt = syncState.findById(folder)
+                .map(MailSyncState::getLastSyncAt)
+                .orElse(null);
+        return new MailboxSendingResponse(sent.get().getDisplayName(), inFolder, syncedAt, replied);
     }
 
     // ---------------------------------------------------------------- read state

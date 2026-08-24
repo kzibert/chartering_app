@@ -9,6 +9,7 @@ import {
   Modal,
   Popconfirm,
   Segmented,
+  Select,
   Space,
   Tag,
   Tooltip,
@@ -29,6 +30,7 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import ResponsiveTable from '../../components/ResponsiveTable';
+import { useIsMobile } from '../../responsive/useIsMobile';
 import * as XLSX from 'xlsx';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { circulationListsApi } from '../../api/circulations';
@@ -59,6 +61,7 @@ export default function CirculationListsPage() {
   const current = useCurrentList();
   const savedLists = useSavedLists();
   const { rename, remove, create } = useListMutations();
+  const isMobile = useIsMobile();
 
   const [selected, setSelected] = useState<string | number>(CURRENT);
   const [nameModal, setNameModal] = useState<{ mode: 'saveAs' | 'rename' | 'new' } | null>(null);
@@ -319,28 +322,53 @@ export default function CirculationListsPage() {
 
   const empty = entries.length === 0;
 
+  /**
+   * The picker's options, shared by the two controls that draw it. A list's size is part of
+   * its name here — it is the one thing you want to know before switching to it.
+   */
+  const listOptions = [
+    { value: CURRENT as string | number, label: `Current list (${current.entries.length})` },
+    ...(savedLists.data ?? []).map((l) => ({
+      value: l.id as string | number,
+      label: `${l.name} (${l.entryCount})`,
+    })),
+  ];
+
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
       <Card size="small">
-        <Space wrap align="center">
-          <Segmented
-            value={selected}
-            onChange={(v) => setSelected(v as string | number)}
-            options={[
-              {
-                value: CURRENT,
-                label: `Current list (${current.entries.length})`,
-              },
-              ...(savedLists.data ?? []).map((l) => ({
-                value: l.id,
-                label: `${l.name} (${l.entryCount})`,
-              })),
-            ]}
-          />
-          <Button size="small" icon={<PlusOutlined />} onClick={() => openNameModal('new')}>
-            New list
-          </Button>
-        </Space>
+        {/*
+          A Segmented is one non-wrapping row that sizes itself to its options, and a desk
+          with a handful of saved lists — "temp current introduction list (2174)" among them
+          — is already wider than a phone. It does not scroll and it does not wrap: the far
+          end of it is simply off the screen, along with the New list button, which is the
+          bug. A Select says the same thing in one line of any width, so on a phone the
+          lists are picked rather than tabbed through.
+        */}
+        {isMobile ? (
+          <Space direction="vertical" size="small" style={{ width: '100%' }}>
+            <Select
+              value={selected}
+              onChange={(v) => setSelected(v)}
+              options={listOptions}
+              style={{ width: '100%' }}
+            />
+            <Button block icon={<PlusOutlined />} onClick={() => openNameModal('new')}>
+              New list
+            </Button>
+          </Space>
+        ) : (
+          <Space wrap align="center">
+            <Segmented
+              value={selected}
+              onChange={(v) => setSelected(v as string | number)}
+              options={listOptions}
+            />
+            <Button size="small" icon={<PlusOutlined />} onClick={() => openNameModal('new')}>
+              New list
+            </Button>
+          </Space>
+        )}
       </Card>
 
       <Card

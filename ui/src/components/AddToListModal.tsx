@@ -278,7 +278,9 @@ export default function AddToListModal({
           />
         ) : (
           <Space direction="vertical" size="small" style={{ width: '100%' }}>
-            <Space size="large">
+            {/* Three four-figure counts and their captions just fit a phone; a fifth digit
+                would not, so they are allowed to fall onto a second line. */}
+            <Space size="large" wrap>
               <Statistic title="Addresses" value={distinct} />
               <Statistic
                 title="Sources"

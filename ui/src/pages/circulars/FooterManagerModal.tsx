@@ -24,9 +24,23 @@ interface Props {
   onClose: () => void;
 }
 
-const BLANK = { id: null as number | null, name: '', html: '', defaultFooter: false };
+const BLANK = {
+  id: null as number | null,
+  name: '',
+  html: '',
+  defaultFooter: false,
+  replyDefault: false,
+};
 
-/** Create/edit/delete the reusable signature blocks appended to circulars. */
+/**
+ * Create/edit/delete the reusable signature blocks appended to circulars — and, since the
+ * Mailbox tab learned to answer mail, to replies.
+ *
+ * <p>Two independent "pre-select this one" flags rather than one, because the two are
+ * genuinely different messages: a circular closes with the desk's full block, while an
+ * answer inside a thread the correspondent started usually wants three lines. One footer
+ * may carry both flags, either, or neither.
+ */
 export default function FooterManagerModal({ open, onClose }: Props) {
   const { message } = App.useApp();
   const qc = useQueryClient();
@@ -47,7 +61,12 @@ export default function FooterManagerModal({ open, onClose }: Props) {
 
   const saveMut = useMutation({
     mutationFn: () => {
-      const body = { name: draft.name, html: draft.html, defaultFooter: draft.defaultFooter };
+      const body = {
+        name: draft.name,
+        html: draft.html,
+        defaultFooter: draft.defaultFooter,
+        replyDefault: draft.replyDefault,
+      };
       return draft.id == null
         ? emailFootersApi.create(body)
         : emailFootersApi.update(draft.id, body);
@@ -67,7 +86,13 @@ export default function FooterManagerModal({ open, onClose }: Props) {
   });
 
   const startEdit = (f: EmailFooterResponse) => {
-    setDraft({ id: f.id, name: f.name, html: f.html, defaultFooter: f.defaultFooter });
+    setDraft({
+      id: f.id,
+      name: f.name,
+      html: f.html,
+      defaultFooter: f.defaultFooter,
+      replyDefault: f.replyDefault,
+    });
     setEditing(true);
   };
 
@@ -78,7 +103,8 @@ export default function FooterManagerModal({ open, onClose }: Props) {
       render: (name: string, f) => (
         <Space>
           {name}
-          {f.defaultFooter && <Tag color="blue">default</Tag>}
+          {f.defaultFooter && <Tag color="blue">circulars</Tag>}
+          {f.replyDefault && <Tag color="green">replies</Tag>}
         </Space>
       ),
     },
@@ -127,12 +153,21 @@ export default function FooterManagerModal({ open, onClose }: Props) {
             onChange={(html) => setDraft({ ...draft, html })}
             minHeight={180}
           />
-          <Space>
-            <Switch
-              checked={draft.defaultFooter}
-              onChange={(v) => setDraft({ ...draft, defaultFooter: v })}
-            />
-            <span>Pre-select this footer on the compose tab</span>
+          <Space direction="vertical" size={4}>
+            <Space>
+              <Switch
+                checked={draft.defaultFooter}
+                onChange={(v) => setDraft({ ...draft, defaultFooter: v })}
+              />
+              <span>Pre-select this footer when composing a circular</span>
+            </Space>
+            <Space>
+              <Switch
+                checked={draft.replyDefault}
+                onChange={(v) => setDraft({ ...draft, replyDefault: v })}
+              />
+              <span>Pre-select it when replying from the Mailbox tab</span>
+            </Space>
           </Space>
           <Space>
             <Button

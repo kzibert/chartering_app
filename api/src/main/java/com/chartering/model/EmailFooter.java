@@ -33,6 +33,15 @@ public class EmailFooter {
     @Column(name = "is_default", nullable = false)
     private boolean defaultFooter = false;
 
+    /**
+     * Pre-selected when replying to a message in the Mailbox tab, and a separate flag on
+     * purpose: a circular closes with the desk's full block, while a reply to one broker in
+     * a thread they started usually wants something shorter. One footer may hold both flags,
+     * either, or neither. Its own partial unique index, for the same reason.
+     */
+    @Column(name = "is_reply_default", nullable = false)
+    private boolean replyDefault = false;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
 

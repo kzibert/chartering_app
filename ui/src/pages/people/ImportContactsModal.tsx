@@ -138,7 +138,9 @@ export default function ImportContactsModal({ open, onClose }: Props) {
             Done
           </Button>
         ) : review ? (
-          <Space>
+          /* The commit button's label carries both counts, so this row is wider than a
+             phone modal on its own. */
+          <Space wrap>
             <Button onClick={() => setReview(null)}>Choose another file</Button>
             <Button
               type="primary"

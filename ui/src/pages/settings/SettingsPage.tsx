@@ -215,7 +215,9 @@ export default function SettingsPage() {
         }
         loading={query.isLoading}
         extra={
-          <Space>
+          /* Wrapping, not one row: on a phone the whole `extra` is a row of its own under
+             the title (see index.css), and these two labels are still wider than it. */
+          <Space wrap>
             <Popconfirm
               title="Reset to the configured defaults?"
               description="Drops your changes and goes back to the values from .env."

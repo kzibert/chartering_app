@@ -12,6 +12,8 @@ import com.chartering.model.Person;
 import com.chartering.model.Vessel;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
+
 /**
  * Entity -> response-DTO mapping. Centralized so services stay thin and mapping is
  * consistent. Only touches already-loaded associations (owner is fetched via EntityGraph
@@ -147,11 +149,12 @@ public class DtoMapper {
      * holds no collaborators, and quietly returning unsanitized markup from one path while
      * the other cleaned it is exactly the inconsistency worth avoiding.
      */
-    public MailMessageDetailResponse toMailMessageDetail(MailMessage m, String sanitizedHtml) {
+    public MailMessageDetailResponse toMailMessageDetail(MailMessage m, String sanitizedHtml,
+                                                        LocalDateTime repliedAt) {
         return new MailMessageDetailResponse(
                 toMailMessageResponse(m), m.getToAddresses(), m.getCcAddresses(),
                 sanitizedHtml, m.getBodyText(), m.getAttachmentNames(), m.getSizeBytes(),
-                m.getMessageId());
+                m.getMessageId(), repliedAt);
     }
 
     public MailRuleResponse toMailRuleResponse(MailRule r) {

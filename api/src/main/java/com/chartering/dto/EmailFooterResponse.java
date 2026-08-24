@@ -10,6 +10,7 @@ public record EmailFooterResponse(
         String name,
         String html,
         boolean defaultFooter,
+        boolean replyDefault,
         LocalDateTime createdAt,
         LocalDateTime updatedAt) {
 }
