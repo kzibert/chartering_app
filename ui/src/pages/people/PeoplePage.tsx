@@ -280,9 +280,15 @@ export default function PeoplePage() {
         pagination={tc.pagination(query.data?.totalElements ?? 0)}
         onChange={tc.onChange}
         mobile={{
+          // A link, the same one the desktop Name column carries. Companies and Vessels
+          // open their drawer from a row click, which the card inherits for free; a person
+          // row does not have one — it expands its contacts instead — so without this the
+          // person's own record is a screen a phone simply cannot reach.
           title: (r) => (
             <Space size={4} wrap>
-              {r.person.fullName}
+              <Typography.Link onClick={() => setSelectedId(r.person.id)}>
+                {r.person.fullName}
+              </Typography.Link>
               {r.person.hasLeft && <Tag color="red">left</Tag>}
             </Space>
           ),

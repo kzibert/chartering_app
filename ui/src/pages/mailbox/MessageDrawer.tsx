@@ -143,12 +143,28 @@ export default function MessageDrawer({ messageId, onClose, onOpenCompany }: Pro
               </Dropdown>
               {m.companyId ? (
                 <Space.Compact>
+                  {/* A registered shipowner's name runs to sixty characters, and a Button
+                      will not cut its own label — on a phone this one button was wider
+                      than the screen and carried the rest of the row off with it. The cap
+                      is on the button and the clip on the span inside it, because the
+                      button is a flex box and only its child can be the part that gives
+                      way. The full name is on the drawer's From row either way. */}
                   <Button
                     size="small"
                     icon={<BankOutlined />}
+                    style={{ maxWidth: 200 }}
                     onClick={() => onOpenCompany(m.companyId!)}
                   >
-                    {m.companyName}
+                    <span
+                      style={{
+                        minWidth: 0,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {m.companyName}
+                    </span>
                   </Button>
                   {/* No Tooltip around the trigger: nesting one inside Popconfirm makes the
                       two popups fight over it. The confirm text names the company instead,

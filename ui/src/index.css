@@ -103,13 +103,46 @@ body {
   /*
    * Card and Drawer headers are a title beside an `extra` slot, and antd lays them out as
    * one non-wrapping flex row. Several pages put three or four buttons in `extra` — the
-   * vessel drawer's Edit/Ban/Delete, the Circulars header — and without wrapping they
-   * crush the title down to an ellipsis to make room for themselves.
+   * vessel drawer's Edit/Ban/Delete, the Circulars header, Settings' Reset and Save — and
+   * at this width the row cannot hold both.
+   *
+   * Letting the row wrap is not enough on its own, and that is the trap: antd gives both
+   * titles `flex: 1` over an ellipsis, so the title can shrink to nothing, and does. Flex
+   * then has no reason to wrap anything — the line "fits", the title has vanished, and the
+   * buttons carry on out past the edge of the screen. What breaks the row is the `extra`
+   * demanding a full line of its own; the title then has the first line to itself and gets
+   * its width back.
+   *
+   * A phone header is therefore two rows wherever there is an `extra` at all, which is
+   * also the right shape for a thumb: a heading you read, and under it the controls you
+   * press, each at a size worth aiming at.
+   *
+   * The selectors carry a class more than they look as though they need. antd v5 emits its
+   * own as `:where(.css-<hash>).ant-card .ant-card-head-title` — two classes of weight,
+   * since `:where()` counts for nothing — so a bare `.ant-card-head-title` here loses
+   * silently and the header goes straight back to the crushed single row.
    */
-  .ant-card-head-wrapper,
-  .ant-drawer-header-title {
+  .ant-card .ant-card-head-wrapper,
+  .ant-drawer .ant-drawer-header {
     flex-wrap: wrap;
     row-gap: 8px;
+  }
+  .ant-card .ant-card-head .ant-card-head-title,
+  .ant-drawer .ant-drawer-header .ant-drawer-header-title {
+    /* Sized from their content, not from antd's `flex: 1` — which is a basis of *zero*, so
+       the title claims no room on the line at all and a 100%-wide `extra` still "fits"
+       beside it. They keep shrinking past that (both clip their own overflow), so a long
+       title still ends in an ellipsis once it has the line to itself. */
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .ant-card .ant-card-head .ant-card-extra,
+  .ant-drawer .ant-drawer-header .ant-drawer-extra {
+    /* antd pins these to the right of a single row — `margin-inline-start: auto` on the
+       card's, `flex: none` on the drawer's — so both have to go with it. */
+    flex: 1 1 100%;
+    min-width: 0;
+    margin-inline-start: 0;
   }
   .ant-card-head {
     padding-inline: 12px;
