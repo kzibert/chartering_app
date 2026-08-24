@@ -234,7 +234,11 @@ export default function ContactForm({ open, editing, defaults, onClose }: Props)
       </Form>
 
       {/* Nested so a contact can be filed under someone who isn't in the system yet;
-          the new person is selected straight away. */}
+          the new person is selected straight away.
+
+          Deleting the person from in there takes this address with them — contacts cascade
+          off people — so this form closes rather than sitting on a record that is already
+          gone, waiting for a Save that could only 404. */}
       <PersonForm
         open={personFormOpen}
         editing={personBeingEdited}
@@ -244,6 +248,7 @@ export default function ContactForm({ open, editing, defaults, onClose }: Props)
           setPersonId(p.id);
         }}
         onClose={() => setPersonFormOpen(false)}
+        onDeleted={onClose}
       />
     </Modal>
   );

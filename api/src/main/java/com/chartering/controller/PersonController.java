@@ -1,6 +1,7 @@
 package com.chartering.controller;
 
 import com.chartering.dto.ContactResponse;
+import com.chartering.dto.ContactSource;
 import com.chartering.dto.PageResponse;
 import com.chartering.dto.PersonDetailResponse;
 import com.chartering.dto.PersonRequest;
@@ -41,7 +42,7 @@ public class PersonController {
     @GetMapping("/search")
     @Operation(summary = "Paginated people search, each person with their contacts",
             description = "Powers the People page. name matches the full name or greeting name. "
-                    + "The contact criteria (contactValue, contactKind, confirmed, legacy) must all "
+                    + "The contact criteria (contactValue, contactKind, confirmed, source) must all "
                     + "be satisfied by the same contact, so kind=email&confirmed=true means "
                     + "\"has a confirmed email\". Banned contacts are ignored, and hidden from the "
                     + "returned lists, unless includeBanned=true. Each match still carries the "
@@ -53,11 +54,13 @@ public class PersonController {
             @RequestParam(required = false) String contactKind,
             @RequestParam(required = false) Boolean confirmed,
             @RequestParam(defaultValue = "false") boolean includeBanned,
-            @RequestParam(required = false) Boolean legacy,
+            @Parameter(description = "Where the address came from: APP (typed in here), "
+                    + "LEGACY (carried over from the old database) or FILE (imported)")
+            @RequestParam(required = false) ContactSource source,
             @PageableDefault(size = 20, sort = "fullName") Pageable pageable) {
 
         PeopleFilter filter = new PeopleFilter(
-                name, companyId, contactValue, contactKind, confirmed, includeBanned, legacy);
+                name, companyId, contactValue, contactKind, confirmed, includeBanned, source);
         return ResponseEntity.ok(personService.search(filter, pageable));
     }
 
@@ -76,13 +79,13 @@ public class PersonController {
             @RequestParam(required = false) String contactKind,
             @RequestParam(required = false) Boolean confirmed,
             @RequestParam(defaultValue = "false") boolean includeBanned,
-            @RequestParam(required = false) Boolean legacy,
+            @RequestParam(required = false) ContactSource source,
             @RequestParam(defaultValue = "false") boolean confirmedOnly,
             @Parameter(description = "Explicit person selection; overrides the filter when present")
             @RequestParam(required = false) List<Long> personId) {
 
         PeopleFilter filter = new PeopleFilter(
-                name, companyId, contactValue, contactKind, confirmed, includeBanned, legacy);
+                name, companyId, contactValue, contactKind, confirmed, includeBanned, source);
         return ResponseEntity.ok(personService.emailContacts(filter, personId, confirmedOnly));
     }
 

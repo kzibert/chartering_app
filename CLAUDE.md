@@ -77,8 +77,8 @@ Three things bite here:
 - **Numbering starts above 2.** The databases in use were adopted at `baseline-version: 2`,
   so Flyway records anything at or below V2 as already applied and silently never runs it.
   `V1__baseline_schema.sql`, `V3__add_person_job_title.sql`,
-  `V4__add_company_country_website_and_contact_label.sql` and `V5__add_data_changes.sql`
-  exist; the next one is V6.
+  `V4__add_company_country_website_and_contact_label.sql`, `V5__add_data_changes.sql` and
+  `V6__add_contact_from_file.sql` exist; the next one is V7.
 - **`db/migration/.gitattributes` marks `*.sql` as `-text`** and must stay. Flyway checksums migrations,
   and a rewritten line ending is a changed checksum — an app that will not start in whichever
   environment did not apply the file first. Source files in this repo are a mix of CRLF and
@@ -137,6 +137,13 @@ Three rules worth knowing:
   block, and losing it silently is the worse failure.
 - **Everything lands unconfirmed and unflagged** — not main, not `circ`. Eighty addresses
   arriving pre-flagged for circulation is one send away from a bounce storm.
+- **An imported address is marked `from_file`, and is not `legacy`.** `is_legacy` means
+  carried over from the old database, and an address met at a trade fair last month is new
+  data whichever door it came in through — so the two are separate columns and a file
+  import is never legacy. Between them they answer the People tab's Source filter: added
+  in the app (neither), imported from a file, or out of the old database. The filter asks
+  about the *address*, so an import that added one number to somebody already on file
+  brings that person back, which is what reviewing an import wants.
 
 Company matching is exact (case-insensitive) or nothing; a name that differs only by its
 legal form comes back flagged `similar` as a *suggestion*, never applied silently, because
@@ -258,6 +265,23 @@ inside a Form.Item in a Col and does nothing inside an antd `Space`, where it re
 against an item sized by its own content. Give a wide control in a Space an explicit
 mobile width at the call site — that is why the Mailbox search box takes a row of its own
 on a phone rather than trusting the stylesheet to rein it in.
+
+### Where a record's dangerous actions live
+
+Delete, ban, confirm and "has left the company" sit in **`components/RecordActions`, a
+section at the foot of the record's edit form** — not in the list row and not in the drawer
+header. A list of a hundred people with a Delete on every row is a hundred chances to
+remove one from a screen you opened to read; the edit form is the one place you arrive at
+by saying you mean to change this thing. Lists and drawers keep an Edit button and the tags
+that explain the flags, nothing that writes.
+
+They are **not part of Save** — each fires its own endpoint on click, and the note above
+them says so. A form holding a record therefore keeps its own copy of it (`record` state)
+and updates it from what those endpoints return: the `editing` prop is a snapshot of the
+clicked row and does not move when a flag does. Which controls appear depends on the
+record — a person has no confirm or ban flag and brings the left-the-company toggle
+instead; every record has Delete, and its confirmation names what else goes with it, which
+means reading the FK constraints rather than guessing.
 
 ## Conventions
 

@@ -436,6 +436,11 @@ public class ContactImportService {
         // email, but a hand-edited preview could.
         contact.setLabel("phone".equals(req.kind()) ? trimToNull(req.label()) : null);
         contact.setLegacy(false);
+        // Not legacy - that means carried over from the old database - but it did arrive in
+        // a file, and that is the distinction the Source filter on the People tab asks for:
+        // without it, eighty addresses out of an export are indistinguishable from eighty
+        // typed by hand the moment they stop being the newest rows in the table.
+        contact.setFromFile(true);
         // Every flag left at its default. An imported address is unconfirmed, not main, not
         // flagged for circulation: nobody has yet checked that it works, and a file of
         // eighty addresses that arrived pre-flagged for circulation is one send away from a

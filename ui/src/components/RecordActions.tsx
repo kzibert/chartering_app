@@ -11,16 +11,28 @@ interface Props {
   /** What is being acted on, for the delete confirmation. */
   name?: string;
 
-  confirmed: boolean;
+  /**
+   * Confirm and ban, shown only for a record that has those flags. A person has neither —
+   * confirming is about an address being real, and the ban list is kept per company — so
+   * their form passes the delete alone and gets a section with only that in it.
+   */
+  confirmed?: boolean;
   confirmedAt?: string;
   confirmedBy?: string;
   confirmLoading?: boolean;
-  onConfirm: (body: ConfirmRequest) => void;
-  onUnconfirm: () => void;
+  onConfirm?: (body: ConfirmRequest) => void;
+  onUnconfirm?: () => void;
 
-  banned: boolean;
+  banned?: boolean;
   banLoading?: boolean;
-  onToggleBan: (banned: boolean) => void;
+  onToggleBan?: (banned: boolean) => void;
+
+  /**
+   * Immediate actions particular to this record, shown before Delete — the person form's
+   * "has left the company" toggle is the one of these. They obey the same rule as the rest
+   * of the section: they fire on click, not on Save.
+   */
+  children?: ReactNode;
 
   deleteLoading?: boolean;
   onDelete: () => void;
@@ -29,7 +41,11 @@ interface Props {
 }
 
 /**
- * Confirm, ban and delete for one record, as a section of its edit form.
+ * The immediate actions on one record, as a section at the foot of its edit form.
+ *
+ * Which of them appear depends on what the record has: a vessel or a company brings its
+ * confirm flag and its ban; a person has neither, and brings a "left the company" toggle of
+ * their own instead. Delete is the only one every record has.
  *
  * These used to sit in the drawer header and the list's status column, where they were
  * one click from a record you were only reading — and delete had no confirmation at all.
@@ -46,6 +62,7 @@ interface Props {
 export default function RecordActions({
   entity,
   name,
+  children,
   confirmed,
   confirmedAt,
   confirmedBy,
@@ -71,16 +88,21 @@ export default function RecordActions({
       <Space wrap>
         {/* `editing` is unconditional here: this section only exists inside the edit form,
             which is the deliberate act the flag was hidden behind in the first place. */}
-        <ConfirmTag
-          editing
-          confirmed={confirmed}
-          confirmedAt={confirmedAt}
-          confirmedBy={confirmedBy}
-          loading={confirmLoading}
-          onConfirm={onConfirm}
-          onUnconfirm={onUnconfirm}
-        />
-        <BanButton banned={banned} loading={banLoading} onToggle={onToggleBan} />
+        {onConfirm && onUnconfirm && (
+          <ConfirmTag
+            editing
+            confirmed={confirmed ?? false}
+            confirmedAt={confirmedAt}
+            confirmedBy={confirmedBy}
+            loading={confirmLoading}
+            onConfirm={onConfirm}
+            onUnconfirm={onUnconfirm}
+          />
+        )}
+        {onToggleBan && (
+          <BanButton banned={banned ?? false} loading={banLoading} onToggle={onToggleBan} />
+        )}
+        {children}
         {/* A confirmation the drawer's Delete never had: it fired on the first click, and
             the record was gone before the pointer left the button. */}
         <Popconfirm
