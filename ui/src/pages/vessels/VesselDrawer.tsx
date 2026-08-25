@@ -93,13 +93,6 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
             <Descriptions.Item label="Type">{v.vesselType ?? '—'}</Descriptions.Item>
             <Descriptions.Item label="Flag">{v.flag ?? '—'}</Descriptions.Item>
           </Descriptions>
-          {v.notes && (
-            <Typography.Paragraph style={{ marginTop: 16, whiteSpace: 'pre-wrap' }}>
-              <Typography.Text type="secondary">Notes: </Typography.Text>
-              {v.notes}
-            </Typography.Paragraph>
-          )}
-
           <Typography.Title level={5} style={{ marginTop: 20 }}>
             Companies ({links.length})
           </Typography.Title>
@@ -172,6 +165,18 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
               />
             )}
           />
+
+          {/* Last, under both lists. A note runs to whatever length somebody needed, and
+              sitting up under the particulars a long one pushed the companies and the
+              contacts — what the drawer is opened for — off the bottom of the screen. */}
+          {v.notes && (
+            <>
+              <Typography.Title level={5} style={{ marginTop: 20 }}>
+                Notes
+              </Typography.Title>
+              <Typography.Paragraph style={{ whiteSpace: 'pre-wrap' }}>{v.notes}</Typography.Paragraph>
+            </>
+          )}
 
           <AttachCompanyModal
             open={linkModalOpen}
