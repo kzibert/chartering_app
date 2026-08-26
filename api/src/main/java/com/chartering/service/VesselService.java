@@ -12,6 +12,7 @@ import com.chartering.repository.CompanyRepository;
 import com.chartering.repository.ContactRepository;
 import com.chartering.repository.VesselCompanyLinkRepository;
 import com.chartering.repository.VesselExNameRepository;
+import com.chartering.repository.VesselPositionRepository;
 import com.chartering.repository.VesselRepository;
 import com.chartering.specification.VesselSpecification;
 import lombok.RequiredArgsConstructor;
@@ -46,6 +47,7 @@ public class VesselService {
     private final ContactRepository contactRepository;
     private final VesselCompanyLinkRepository linkRepository;
     private final VesselExNameRepository exNameRepository;
+    private final VesselPositionRepository positionRepository;
     private final RecipientSelectionService recipientSelection;
     private final DtoMapper mapper;
 
@@ -205,8 +207,16 @@ public class VesselService {
                 !ownerEmails.isEmpty() && ownerEmails.stream().noneMatch(ContactResponse::working);
         CompanyResponse ownerDto = owner != null
                 ? mapper.toCompanyResponse(owner, ownerNoWorkingEmail) : null;
+        // Her latest reading, of any status. One indexed row off (vessel_id, reported_at
+        // DESC) - the same index Open Fleet is built on - so this costs the detail view
+        // nothing measurable and saves opening a second tab to answer "where is she".
+        VesselLastPositionResponse lastPosition = positionRepository
+                .findFirstByVesselIdOrderByReportedAtDescIdDesc(id)
+                .map(mapper::toVesselLastPositionResponse)
+                .orElse(null);
         return new VesselDetailResponse(
-                mapper.toVesselResponse(v, exNames(id)), ownerDto, ownerContacts, links(id));
+                mapper.toVesselResponse(v, exNames(id)), ownerDto, ownerContacts, links(id),
+                lastPosition);
     }
 
     @Transactional

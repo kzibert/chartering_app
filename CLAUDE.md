@@ -342,6 +342,23 @@ reporter's* previous one and nobody else's. Nothing is deleted on replacement; `
 is a status, because "she was said to be open Adriatic and then wasn't" is worth looking back
 at.
 
+**A vessel's own record shows her latest reading, and can change it.** `GET /vessels/{id}`
+carries `lastPosition` — one indexed row off `(vessel_id, reported_at DESC)`, the same index
+Open Fleet is built on — so "where is she" is answered on the record you already opened
+rather than in a second tab. It is the latest of *any* status, not the latest live one: if
+she has since fixed, where she was last reported free is still the useful answer and the
+status says which. The shape is deliberately slimmer than the Open Fleet one and carries no
+vessel inside it — there a position is the subject and needs the whole ship on it, here the
+ship is the subject and already surrounds it.
+
+The drawer offers **two** ways to change it, and the split is not a nicety. Positions are
+append-only, so "a newer list arrived" and "I typed that wrong" cannot be one button:
+*Update* records a new reading and leaves the old one in her history, which is the common
+case; *Correct* rewrites the reading itself, for a typo. One button doing the first would
+lie about what the record keeps; one doing the second for a fresh list would destroy the
+ship's history a week at a time. Opened from a vessel's own record the vessel picker is
+locked, because there it was never a choice.
+
 **Trade areas are the vocabulary both sides are written in, and they are not `regions`.**
 That table is a circulation-targeting list ("Israel - no", "Europe ports EXCLUDED") with
 place names mixed into it at four different scales. `trade_areas` nests one level (West Med

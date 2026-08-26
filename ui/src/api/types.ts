@@ -96,6 +96,40 @@ export interface VesselDetailResponse {
   ownerContacts: ContactResponse[];
   /** every company on the vessel, owner and brokers alike */
   links: VesselCompanyLinkResponse[];
+  /**
+   * The most recent position reported about her — "last open". Absent when nobody has ever
+   * reported one. Latest of ANY status, not the latest live one: if she has since fixed,
+   * where she was last reported free is still the useful answer and `status` says which.
+   */
+  lastPosition?: VesselLastPositionResponse;
+}
+
+/**
+ * A vessel's latest reading, as her own record shows it.
+ *
+ * Slimmer than VesselPositionResponse and deliberately carries no vessel: there a position
+ * is the subject and needs the whole ship on it, here the ship is the subject and already
+ * surrounds this.
+ */
+export interface VesselLastPositionResponse {
+  id: number;
+  status: PositionStatus;
+  openPortId?: number;
+  openPortName?: string;
+  openPortText?: string;
+  openAreaId?: number;
+  openAreaCode?: string;
+  openAreaName?: string;
+  openFrom?: string;
+  openTo?: string;
+  openText?: string;
+  lastCargo?: string;
+  cargoPreferences?: string;
+  reportedByCompanyId?: number;
+  reportedByCompanyName?: string;
+  reportedAt?: string;
+  ageDays: number;
+  notes?: string;
 }
 
 export interface VesselRequest {

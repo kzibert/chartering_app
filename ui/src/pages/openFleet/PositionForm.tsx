@@ -15,6 +15,12 @@ interface Props {
   editing?: VesselPositionResponse | null;
   /** Prefilled fields — the vessel, when recording a position from her own drawer. */
   defaults?: Partial<VesselPositionRequest>;
+  /**
+   * Pin the vessel picker. Set when the form is opened from one ship's own record: the
+   * vessel is not a choice there, and leaving it editable means a stray click files this
+   * reading against a different hull with nothing on screen saying so.
+   */
+  lockVessel?: boolean;
   onClose: () => void;
 }
 
@@ -30,7 +36,7 @@ interface Props {
  * their first, and a reading from a different broker does not. Somebody typing GN's Monday
  * list and Interscan's Tuesday list needs to know that before they wonder where a row went.
  */
-export default function PositionForm({ open, editing, defaults, onClose }: Props) {
+export default function PositionForm({ open, editing, defaults, lockVessel, onClose }: Props) {
   const [form] = Form.useForm();
   const { create, update } = usePositionMutations();
 
@@ -87,8 +93,9 @@ export default function PositionForm({ open, editing, defaults, onClose }: Props
             >
               {/* Locked while editing: moving a position to a different hull is not an edit,
                   it is two separate facts, and doing it silently would rewrite one ship's
-                  history into another's. */}
-              <VesselSelect disabled={!!editing} />
+                  history into another's. Locked too when the form was opened from a ship's
+                  own record, where the vessel was never a choice. */}
+              <VesselSelect disabled={!!editing || !!lockVessel} />
             </Form.Item>
           </Col>
           <Col xs={12} md={8}>

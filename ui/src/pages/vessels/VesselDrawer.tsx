@@ -8,6 +8,7 @@ import ContactLine from '../../components/ContactLine';
 import EditToolbar, { useEditMode } from '../../components/EditToolbar';
 import VesselRoleTag, { ROLE_OPTIONS } from '../../components/VesselRoleTag';
 import AttachCompanyModal from './AttachCompanyModal';
+import VesselLastOpen from './VesselLastOpen';
 import CompanyDrawer from '../companies/CompanyDrawer';
 import CompanyForm from '../companies/CompanyForm';
 import ContactForm from '../contacts/ContactForm';
@@ -93,6 +94,11 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
             <Descriptions.Item label="Type">{v.vesselType ?? '—'}</Descriptions.Item>
             <Descriptions.Item label="Flag">{v.flag ?? '—'}</Descriptions.Item>
           </Descriptions>
+
+          {/* Where she is free, on the record you opened to ask about her. It reads from
+              the same positions the Open fleet tab lists, so the two cannot disagree. */}
+          <VesselLastOpen vesselId={v.id} vesselName={v.name} lastPosition={data?.lastPosition} />
+
           <Typography.Title level={5} style={{ marginTop: 20 }}>
             Companies ({links.length})
           </Typography.Title>

@@ -108,6 +108,31 @@ public class DtoMapper {
         return java.time.Duration.between(reportedAt, java.time.OffsetDateTime.now()).toDays();
     }
 
+    /**
+     * Her latest reading, for her own record — without the vessel nested back inside it.
+     *
+     * <p>See {@link VesselLastPositionResponse} for why this is a different shape from the
+     * one Open Fleet uses: there a position is the subject and needs the whole ship on it;
+     * here the ship is the subject and already surrounds this.
+     */
+    public VesselLastPositionResponse toVesselLastPositionResponse(VesselPosition p) {
+        TradeArea openArea = effectiveArea(p.getOpenPort(), p.getOpenArea());
+        Company reporter = p.getReportedByCompany();
+        return new VesselLastPositionResponse(
+                p.getId(), p.getStatus().name(),
+                p.getOpenPort() != null ? p.getOpenPort().getId() : null,
+                p.getOpenPort() != null ? p.getOpenPort().getName() : null,
+                p.getOpenPortText(),
+                openArea != null ? openArea.getId() : null,
+                openArea != null ? openArea.getCode() : null,
+                openArea != null ? openArea.getName() : null,
+                p.getOpenFrom(), p.getOpenTo(), p.getOpenText(),
+                p.getLastCargo(), p.getCargoPreferences(),
+                reporter != null ? reporter.getId() : null,
+                reporter != null ? reporter.getName() : null,
+                p.getReportedAt(), ageDays(p.getReportedAt()), p.getNotes());
+    }
+
     public VesselExNameResponse toVesselExNameResponse(VesselExName e) {
         return new VesselExNameResponse(
                 e.getId(), e.getVessel().getId(), e.getName(),

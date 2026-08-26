@@ -15,5 +15,10 @@ public record VesselDetailResponse(
         VesselResponse vessel,
         CompanyResponse owner,
         List<ContactResponse> ownerContacts,
-        List<VesselCompanyLinkResponse> links) {
+        List<VesselCompanyLinkResponse> links,
+        /**
+         * The most recent position reported about her, of any status — "last open".
+         * Absent when nobody has ever reported one.
+         */
+        VesselLastPositionResponse lastPosition) {
 }

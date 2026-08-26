@@ -48,5 +48,17 @@ public interface VesselPositionRepository
             + "         or (n.reportedAt = p.reportedAt and n.id > p.id)))")
     List<VesselPosition> findCurrentPositions(PositionStatus status);
 
+    /**
+     * Her most recent reading, whatever became of it — what the vessel record shows as
+     * "last open".
+     *
+     * <p>Deliberately not filtered to LIVE. If she has since fixed, where she was last
+     * reported free is still the useful answer, and the status travels with it so the
+     * screen can say which it is. Ties on the timestamp break by id, the same way the
+     * Open Fleet query does, so this can never return two rows for one instant.
+     */
+    @EntityGraph(attributePaths = {"openPort", "openPort.tradeArea", "openArea", "reportedByCompany"})
+    Optional<VesselPosition> findFirstByVesselIdOrderByReportedAtDescIdDesc(Long vesselId);
+
     long countByStatus(PositionStatus status);
 }
