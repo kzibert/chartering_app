@@ -281,11 +281,13 @@ The Analysis tab collects incoming mail as finetuning examples for a model that 
 offers and vessel opening positions. Nothing here calls a model — it gathers the pairs one
 would be trained on and exports them.
 
-**`ANALYSIS_ENABLED` is the switch: true in compose, explicitly false in `render.yaml`.** A
-corpus is accumulated over months and worked through in long sittings, ending in a file
-handed to a training job elsewhere; a free instance that sleeps after fifteen minutes is the
-wrong place for all three. Off, the tab is absent from the navigation and every endpoint
-answers **404** — the feature is not part of that deployment, so neither 403 ("you may not")
+**`ANALYSIS_ENABLED` is the switch, and it is true in both compose and `render.yaml`.** It
+was false on Render until 2026-08-27, on the argument that a corpus accumulated over months
+and worked through in long sittings is a poor fit for a free instance that sleeps after
+fifteen minutes. What settled it the other way is where the corpus actually lives:
+`analysis_samples` is a table in the same hosted database, not state on the instance, so the
+sleep costs a cold start in front of a labelling session and nothing else. Off, the tab is
+absent from the navigation and every endpoint answers **404** — the feature is not part of that deployment, so neither 403 ("you may not")
 nor 503 ("not yet") is honest. `GET /analysis/status` always answers, because it is what the
 UI asks before deciding whether the tab exists. The table is created everywhere regardless:
 Flyway builds one schema, not one per environment.
