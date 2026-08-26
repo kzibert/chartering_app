@@ -118,6 +118,31 @@ services:
       - key: MAIL_ENABLED
         value: false
 
+      # ---- analysis workbench -----------------------------------------------
+      # ON HERE, and it was deliberately off before, so it is worth saying what changed.
+      #
+      # The Analysis tab keeps incoming mail as training data for a model that reads cargo
+      # offers and vessel positions. That is a workbench: a corpus accumulated over months
+      # and worked through in long labelling sittings, ending in a file handed to a training
+      # job elsewhere, and a free instance that sleeps after fifteen minutes is an awkward
+      # place for all three. What makes it tolerable is that the corpus is not on the
+      # instance: `analysis_samples` is a table in the same hosted database the desk already
+      # uses, so nothing is lost when the instance sleeps and nothing has to be exported off
+      # it. What the sleep still costs is the sitting itself — a cold start of about a
+      # minute in front of a labelling session, and again after every quiet spell in one.
+      #
+      # The code and the schema ship either way (Flyway builds one schema, not one per
+      # environment), so this is a runtime switch and nothing else: true puts the tab in the
+      # navigation and answers its endpoints, false leaves the tab out and every endpoint
+      # behind it answering 404.
+      #
+      # Changing this file is not enough on its own. Render reads the blueprint on a sync,
+      # so a service whose environment was last set by hand in the dashboard keeps the value
+      # it has there until the blueprint is re-applied — check the api's Environment tab
+      # after the deploy and set it there too if the tab has not appeared.
+      - key: ANALYSIS_ENABLED
+        value: true
+
   # ---------------------------------------------------------------------------
   # ui - the built SPA on Render's CDN. No container, no instance, no sleep.
   # ---------------------------------------------------------------------------

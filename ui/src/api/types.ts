@@ -21,6 +21,24 @@ export interface VesselResponse {
   yearBuilt?: number;
   vesselType?: string;
   flag?: string;
+
+  /**
+   * What a charterer asks before anything else, and what the schema had no room for until
+   * now. All optional, and absent means "not on file" rather than "no" — false would be a
+   * claim about four thousand rows nobody has checked, and Match reads the difference.
+   */
+  geared?: boolean;
+  gearDescription?: string;
+  holds?: number;
+  hatches?: number;
+  grainFitted?: boolean;
+  timberFitted?: boolean;
+  imoFitted?: boolean;
+  iceClass?: string;
+
+  /** Names she used to carry. Always present, empty for a ship never renamed. */
+  exNames?: VesselExNameResponse[];
+
   ownerId?: number;
   ownerName?: string;
   notes?: string;
@@ -30,6 +48,28 @@ export interface VesselResponse {
   confirmNotes?: string;
   banned: boolean;
   legacy: boolean;
+}
+
+/**
+ * A name a vessel used to carry.
+ *
+ * `source: 'backfill'` means a migration extracted it out of a name somebody had typed a
+ * rename history into ("LOIRE RIVER/ EX AMIKO") — those are the ones to look at twice if a
+ * ship ever seems wrong. `'manual'` means a person added it.
+ */
+export interface VesselExNameResponse {
+  id: number;
+  vesselId: number;
+  name: string;
+  source: 'backfill' | 'manual';
+  renamedAt?: string;
+  notes?: string;
+}
+
+export interface VesselExNameRequest {
+  name: string;
+  renamedAt?: string;
+  notes?: string;
 }
 
 /** How a company relates to a vessel. One role per company per vessel. */
@@ -56,6 +96,40 @@ export interface VesselDetailResponse {
   ownerContacts: ContactResponse[];
   /** every company on the vessel, owner and brokers alike */
   links: VesselCompanyLinkResponse[];
+  /**
+   * The most recent position reported about her — "last open". Absent when nobody has ever
+   * reported one. Latest of ANY status, not the latest live one: if she has since fixed,
+   * where she was last reported free is still the useful answer and `status` says which.
+   */
+  lastPosition?: VesselLastPositionResponse;
+}
+
+/**
+ * A vessel's latest reading, as her own record shows it.
+ *
+ * Slimmer than VesselPositionResponse and deliberately carries no vessel: there a position
+ * is the subject and needs the whole ship on it, here the ship is the subject and already
+ * surrounds this.
+ */
+export interface VesselLastPositionResponse {
+  id: number;
+  status: PositionStatus;
+  openPortId?: number;
+  openPortName?: string;
+  openPortText?: string;
+  openAreaId?: number;
+  openAreaCode?: string;
+  openAreaName?: string;
+  openFrom?: string;
+  openTo?: string;
+  openText?: string;
+  lastCargo?: string;
+  cargoPreferences?: string;
+  reportedByCompanyId?: number;
+  reportedByCompanyName?: string;
+  reportedAt?: string;
+  ageDays: number;
+  notes?: string;
 }
 
 export interface VesselRequest {
@@ -69,6 +143,20 @@ export interface VesselRequest {
   yearBuilt?: number;
   vesselType?: string;
   flag?: string;
+
+  /**
+   * Leaving one of these out says "still not on file", which is a different statement from
+   * false and the only honest one for most of the fleet. Match reads the difference.
+   */
+  geared?: boolean;
+  gearDescription?: string;
+  holds?: number;
+  hatches?: number;
+  grainFitted?: boolean;
+  timberFitted?: boolean;
+  imoFitted?: boolean;
+  iceClass?: string;
+
   ownerId?: number;
   notes?: string;
 }
@@ -257,6 +345,309 @@ export interface LookupResponse {
   name: string;
 }
 
+/**
+ * A port, with the water it sits on.
+ *
+ * Wider than LookupResponse by the two area fields, which is what lets a cargo or position
+ * form show "Salerno (WMED)" while you are choosing — so the consequence of the choice for
+ * matching is visible at the moment it is made. `tradeAreaCode` is absent for the dozen
+ * ports nothing has placed yet.
+ */
+export interface PortLookupResponse {
+  id: number;
+  name: string;
+  tradeAreaId?: number;
+  tradeAreaCode?: string;
+}
+
+/**
+ * One water a broker quotes tonnage and cargo in.
+ *
+ * Not a Region — that list is about who a circular goes to ("Israel - no", "Europe ports
+ * EXCLUDED"). This one is geography, and it nests: West Med's parent is the Mediterranean,
+ * which is containment and not adjacency.
+ *
+ * `aliases` are the spellings the market writes. "W.MED", "SPAIN MED" and "W.ITALY" all
+ * name the same water, and matching is only usable because of it.
+ */
+export interface TradeAreaResponse {
+  id: number;
+  code: string;
+  name: string;
+  parentId?: number;
+  parentCode?: string;
+  sortOrder: number;
+  notes?: string;
+  aliases?: string[];
+}
+
+/* ---------------- match ---------------- */
+
+/**
+ * PASS, FAIL or UNKNOWN — and the third is not the second.
+ *
+ * Half this fleet has no gear recorded and two thousand hulls have no DWCC. Reading "not on
+ * file" as "does not fit" would rule out most of the tonnage on the desk; reading it as
+ * "fits" would offer ships nobody had checked. UNKNOWN says so and costs the pairing points
+ * without excluding it.
+ */
+export type MatchVerdict = 'PASS' | 'FAIL' | 'UNKNOWN';
+
+export type MatchOutcome = 'SHORTLISTED' | 'OFFERED' | 'DECLINED' | 'FIXED' | 'DISMISSED';
+
+export interface MatchCheckResponse {
+  code: string;
+  label: string;
+  verdict: MatchVerdict;
+  weight: number;
+  /** Always the actual figures — "Draws 7.9m, berth takes 7.0m" — so it can be argued with. */
+  detail: string;
+}
+
+export interface MatchResponse {
+  cargo: CargoResponse;
+  /** Absent only when a decision was recorded for a vessel with no live position. */
+  position?: VesselPositionResponse;
+  /** 0–100: the share of the applicable weight that passed. */
+  score: number;
+  /** A check FAILed — we hold data saying she does not fit. */
+  ruledOut: boolean;
+  /** Checks the cargo asked for that her record could not answer. */
+  unknowns: number;
+  checks: MatchCheckResponse[];
+  ballastDays?: number;
+  earliestArrival?: string;
+  outcome?: MatchOutcome;
+  outcomeNote?: string;
+}
+
+/** One live cargo and how much tonnage stands against it. */
+export interface MatchSummaryResponse {
+  cargo: CargoResponse;
+  suitable: number;
+  /** Suitable ships nothing has been decided about — whether there is work here. */
+  untouched: number;
+  ruledOut: number;
+  bestScore: number;
+}
+
+export interface MatchOutcomeRequest {
+  outcome: MatchOutcome;
+  note?: string;
+  vesselPositionId?: number;
+}
+
+/* ---------------- open fleet ---------------- */
+
+export type PositionStatus = 'LIVE' | 'FIXED' | 'WITHDRAWN' | 'SUPERSEDED' | 'EXPIRED';
+
+/**
+ * One reported opening position — one row per report, never one per vessel.
+ *
+ * A position is a fact with a date on it: "SPOT AT MARMARA" was true on Monday and is a lie
+ * by Friday. The same hull gets reported by several brokers who disagree, and both readings
+ * are kept. Open Fleet shows the newest live one per vessel; the vessel's own history shows
+ * the lot.
+ *
+ * The whole vessel rides along because every question asked of a row on that screen — how
+ * big, how deep, geared? — is answered from her record.
+ */
+export interface VesselPositionResponse {
+  id: number;
+  vessel: VesselResponse;
+  status: PositionStatus;
+
+  openPortId?: number;
+  openPortName?: string;
+  openPortText?: string;
+  openAreaId?: number;
+  openAreaCode?: string;
+  openAreaName?: string;
+
+  openFrom?: string;
+  openTo?: string;
+  openText?: string;
+
+  lastCargo?: string;
+  cargoPreferences?: string;
+
+  reportedByCompanyId?: number;
+  reportedByCompanyName?: string;
+  reportedByPersonId?: number;
+  reportedByPersonName?: string;
+
+  fromMail: boolean;
+  sourceMailMessageId?: number;
+  reportedAt?: string;
+  /** Whole days since the reading. Computed by the API so every view agrees on it. */
+  ageDays: number;
+
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/**
+ * A position being recorded. Only the vessel is required — "MV LADY LEYLA SPOT AT MARMARA"
+ * is a complete position as far as the market is concerned and names no date at all.
+ */
+export interface VesselPositionRequest {
+  vesselId: number;
+  status?: PositionStatus;
+  openPortId?: number;
+  openPortText?: string;
+  openAreaId?: number;
+  openFrom?: string;
+  openTo?: string;
+  openText?: string;
+  lastCargo?: string;
+  cargoPreferences?: string;
+  reportedByCompanyId?: number;
+  reportedByPersonId?: number;
+  sourceMailMessageId?: number;
+  reportedAt?: string;
+  notes?: string;
+}
+
+/* ---------------- cargoes ---------------- */
+
+export type CargoStatus =
+  | 'OPEN'
+  | 'QUOTED'
+  | 'FIRM'
+  | 'FIXED'
+  | 'FAILED'
+  | 'EXPIRED'
+  | 'WITHDRAWN';
+
+/** The statuses still worth showing tonnage against — mirrors CargoStatus.isLive() on the API. */
+export const LIVE_CARGO_STATUSES: CargoStatus[] = ['OPEN', 'QUOTED', 'FIRM'];
+
+/**
+ * A cargo in hand.
+ *
+ * Every place comes back three ways — id, name and the raw text — because each is needed
+ * for something different: the id to re-open the edit form on the right dropdown value, the
+ * name to print, and the text to show what the email actually said when no port on file
+ * matched it. The area is the load port's own when there is a port, else the one entered by
+ * hand; the API resolves that precedence so the screen and the matching cannot disagree.
+ */
+export interface CargoResponse {
+  id: number;
+  status: CargoStatus;
+  statusNote?: string;
+  commodity: string;
+  stowageFactor?: number;
+
+  quantity?: number;
+  quantityUnit?: string;
+  quantityTolerance?: string;
+  /** What Match compares a hull against. Absent when the tolerance was not a percentage. */
+  quantityMin?: number;
+  quantityMax?: number;
+
+  loadPortId?: number;
+  loadPortName?: string;
+  loadPortText?: string;
+  loadAreaId?: number;
+  loadAreaCode?: string;
+  loadAreaName?: string;
+
+  dischargePortId?: number;
+  dischargePortName?: string;
+  dischargePortText?: string;
+  dischargeAreaId?: number;
+  dischargeAreaCode?: string;
+  dischargeAreaName?: string;
+
+  laycanFrom?: string;
+  laycanTo?: string;
+  laycanText?: string;
+
+  maxDraft?: number;
+  minDwt?: number;
+  maxDwt?: number;
+  maxAgeYears?: number;
+  requiresGeared?: boolean;
+  requiresGrainFitted?: boolean;
+  requiresImoFitted?: boolean;
+
+  freightIdea?: string;
+  commission?: string;
+  terms?: string;
+  loadRate?: string;
+  dischargeRate?: string;
+
+  chartererCompanyId?: number;
+  chartererCompanyName?: string;
+  brokerCompanyId?: number;
+  brokerCompanyName?: string;
+  brokerPersonId?: number;
+  brokerPersonName?: string;
+
+  fromMail: boolean;
+  sourceMailMessageId?: number;
+  receivedAt?: string;
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/**
+ * A cargo as it is written. Only the commodity is required, and that is the point: a first
+ * email says what the cargo is and often nothing else that can be relied on.
+ *
+ * Leave quantityMin/quantityMax out and the API derives them from the quantity and a
+ * percentage tolerance; send them and yours win, because a broker who typed a range knows
+ * something "+/- 10%" did not say.
+ */
+export interface CargoRequest {
+  commodity: string;
+  status?: CargoStatus;
+  statusNote?: string;
+  stowageFactor?: number;
+
+  quantity?: number;
+  quantityUnit?: string;
+  quantityTolerance?: string;
+  quantityMin?: number;
+  quantityMax?: number;
+
+  loadPortId?: number;
+  loadPortText?: string;
+  loadAreaId?: number;
+
+  dischargePortId?: number;
+  dischargePortText?: string;
+  dischargeAreaId?: number;
+
+  laycanFrom?: string;
+  laycanTo?: string;
+  laycanText?: string;
+
+  maxDraft?: number;
+  minDwt?: number;
+  maxDwt?: number;
+  maxAgeYears?: number;
+  requiresGeared?: boolean;
+  requiresGrainFitted?: boolean;
+  requiresImoFitted?: boolean;
+
+  freightIdea?: string;
+  commission?: string;
+  terms?: string;
+  loadRate?: string;
+  dischargeRate?: string;
+
+  chartererCompanyId?: number;
+  brokerCompanyId?: number;
+  brokerPersonId?: number;
+
+  sourceMailMessageId?: number;
+  receivedAt?: string;
+  notes?: string;
+}
+
 /* ---------------- circulation lists ---------------- */
 
 /**
@@ -332,8 +723,58 @@ export interface PageParams {
   sort?: string; // e.g. "name,asc"
 }
 
+export interface PositionFilter extends PageParams {
+  /** Matches the vessel's current name or any former one. */
+  vesselName?: string;
+  vesselId?: number;
+  /** Only meaningful with current=false; alongside current it would contradict rather than narrow. */
+  status?: PositionStatus[];
+  openAreaId?: number;
+  /** Overlap, not containment — and positions with no dates always come back. */
+  openFrom?: string;
+  openTo?: string;
+  reportedByCompanyId?: number;
+  /** A fleet list is worked with this on: older readings are an archive, not a fleet. */
+  reportedWithinDays?: number;
+  /** Reads DWCC where recorded and DWT where not — the position lists quote either. */
+  minSize?: number;
+  maxSize?: number;
+  geared?: boolean;
+  includeBanned?: boolean;
+  /** Newest live row per vessel. Default true — that is what "open fleet" means. */
+  current?: boolean;
+}
+
+export interface CargoFilter extends PageParams {
+  commodity?: string;
+  /** Repeatable. Left out, every status comes back — which is not what the tab wants. */
+  status?: CargoStatus[];
+  loadAreaId?: number;
+  dischargeAreaId?: number;
+  loadPortId?: number;
+  /**
+   * Matches cargoes whose laycan OVERLAPS this window rather than sits inside it, and
+   * returns cargoes with no laycan on file whatever the window: "the charterer has not
+   * said" is not the same as "not in September".
+   */
+  laycanFrom?: string;
+  laycanTo?: string;
+  minQuantity?: number;
+  maxQuantity?: number;
+  companyId?: number;
+  /** Read out of an email, or typed. */
+  fromMail?: boolean;
+}
+
 export interface VesselFilter extends PageParams {
+  /** Matches the current name OR any former name — which is the point of recording them. */
   name?: string;
+  /**
+   * Geared or gearless. Asking for geared returns only vessels a list has actually said
+   * are geared; ones with nothing on file do not come back, the same way a size range
+   * excludes an unrecorded figure.
+   */
+  geared?: boolean;
   imoNumber?: string;
   /**
    * DWT and DWCC are OR'd with each other, as are grain and bale — the two figures in

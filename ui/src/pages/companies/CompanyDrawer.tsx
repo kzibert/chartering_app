@@ -159,12 +159,6 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
               </Typography.Link>
             </Typography.Paragraph>
           )}
-          {c.notes && (
-            <Typography.Paragraph style={{ marginBottom: 12, whiteSpace: 'pre-wrap' }}>
-              <Typography.Text type="secondary">Notes: </Typography.Text>
-              {c.notes}
-            </Typography.Paragraph>
-          )}
           <Tabs
             activeKey={tab}
             onChange={(k) => setTab(k as TabKey)}
@@ -223,6 +217,18 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
               },
             ]}
           />
+
+          {/* Last, under the tabs. A note runs to whatever length somebody needed, and
+              sitting above them a long one pushed the vessels, the people and the
+              addresses — what the drawer is opened for — off the bottom of the screen. */}
+          {c.notes && (
+            <>
+              <Typography.Title level={5} style={{ marginTop: 20 }}>
+                Notes
+              </Typography.Title>
+              <Typography.Paragraph style={{ whiteSpace: 'pre-wrap' }}>{c.notes}</Typography.Paragraph>
+            </>
+          )}
 
           <VesselDrawer
             vesselId={vesselId}

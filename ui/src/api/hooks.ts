@@ -3,11 +3,21 @@ import { toVesselRequest, vesselsApi } from './vessels';
 import { companiesApi } from './companies';
 import { peopleApi } from './people';
 import { contactsApi } from './contacts';
+import { cargoesApi } from './cargoes';
+import { positionsApi } from './positions';
+import { matchesApi } from './matches';
 import { dataChangesApi, type DataChangeFilter } from './dataChanges';
 import { lookupsApi } from './lookups';
 import { settingsApi } from './settings';
 import { forgetRecent, type RecentKind } from '../recent/store';
 import type {
+  CargoFilter,
+  MatchOutcomeRequest,
+  PositionFilter,
+  PositionStatus,
+  VesselPositionRequest,
+  CargoRequest,
+  CargoStatus,
   CompanyFilter,
   CompanyRequest,
   ConfirmRequest,
@@ -15,6 +25,7 @@ import type {
   PeopleFilter,
   PersonRequest,
   VesselCompanyRole,
+  VesselExNameRequest,
   VesselFilter,
   VesselRequest,
   VesselResponse,
@@ -54,14 +65,20 @@ function useInvalidator() {
  * The dashboard's "recently opened" trail is pruned at the same time, and for the same
  * reason: it is the one place that still holds a link to a record after it has gone from
  * every list, and following that link would otherwise land on the tombstone and sit there
- * loading forever. The three cache keys are named to match RecentKind exactly so this
- * cannot be wired up wrong.
+ * loading forever. The cache keys for those three are named to match RecentKind exactly so
+ * this cannot be wired up wrong.
+ *
+ * Records with no trail — a cargo — still want the tombstone half, which is the part that
+ * stops an open drawer refetching a deleted id. They pass their own cache key and the
+ * pruning simply does not apply to them.
  */
+const RECENT_KINDS: readonly string[] = ['vessel', 'company', 'person'];
+
 function useMarkDeleted() {
   const qc = useQueryClient();
-  return (key: RecentKind, id: number) => {
+  return (key: RecentKind | 'cargo', id: number) => {
     qc.setQueryData([key, id], null);
-    forgetRecent(key, id);
+    if (RECENT_KINDS.includes(key)) forgetRecent(key as RecentKind, id);
   };
 }
 
@@ -77,6 +94,12 @@ export const usePorts = () =>
   useQuery({ queryKey: ['lookups', 'ports'], queryFn: lookupsApi.ports, ...LOOKUP_OPTS });
 export const useTonnageCategories = () =>
   useQuery({ queryKey: ['lookups', 'tonnage'], queryFn: lookupsApi.tonnageCategories, ...LOOKUP_OPTS });
+/**
+ * The trade-area vocabulary. Long-lived like the other lookups and more so than most —
+ * twenty-seven rows that change when somebody adds an alias, which is to say almost never.
+ */
+export const useTradeAreas = () =>
+  useQuery({ queryKey: ['lookups', 'trade-areas'], queryFn: lookupsApi.tradeAreas, ...LOOKUP_OPTS });
 
 /**
  * The greeting prefilled into WhatsApp links. Long-lived and shared: every phone row on a
@@ -84,6 +107,130 @@ export const useTonnageCategories = () =>
  */
 export const useWhatsappSettings = () =>
   useQuery({ queryKey: ['settings', 'whatsapp'], queryFn: settingsApi.whatsapp, ...LOOKUP_OPTS });
+
+/* ---------------- match ---------------- */
+/**
+ * Scores are computed per request, so these queries are not cached long: a position added a
+ * minute ago changes the answer, and every write in this feature invalidates 'matches'.
+ */
+export const useMatchOverview = () =>
+  useQuery({ queryKey: ['matches', 'overview'], queryFn: matchesApi.overview });
+
+export const useMatchesForCargo = (cargoId?: number, includeRuledOut = false) =>
+  useQuery({
+    queryKey: ['matches', 'cargo', cargoId, includeRuledOut],
+    queryFn: () => matchesApi.forCargo(cargoId as number, includeRuledOut),
+    enabled: cargoId != null,
+  });
+
+export const useMatchesForPosition = (positionId?: number, includeRuledOut = false) =>
+  useQuery({
+    queryKey: ['matches', 'position', positionId, includeRuledOut],
+    queryFn: () => matchesApi.forPosition(positionId as number, includeRuledOut),
+    enabled: positionId != null,
+  });
+
+export function useMatchMutations() {
+  const invalidate = useInvalidator();
+  const decide = useMutation({
+    mutationFn: (v: { cargoId: number; vesselId: number; body: MatchOutcomeRequest }) =>
+      matchesApi.decide(v.cargoId, v.vesselId, v.body),
+    onSuccess: () => invalidate('matches'),
+  });
+  const clear = useMutation({
+    mutationFn: (v: { cargoId: number; vesselId: number }) =>
+      matchesApi.clear(v.cargoId, v.vesselId),
+    onSuccess: () => invalidate('matches'),
+  });
+  return { decide, clear };
+}
+
+/* ---------------- open fleet ---------------- */
+export const usePositions = (filter: PositionFilter) =>
+  useQuery({ queryKey: ['positions', filter], queryFn: () => positionsApi.search(filter) });
+
+export const usePosition = (id?: number) =>
+  useQuery({
+    queryKey: ['position', id],
+    queryFn: () => positionsApi.get(id as number),
+    enabled: id != null,
+  });
+
+/** A vessel's whole reporting history — read from her drawer, not from the fleet list. */
+export const useVesselPositionHistory = (vesselId?: number) =>
+  useQuery({
+    queryKey: ['positions', 'vessel', vesselId],
+    queryFn: () => positionsApi.history(vesselId as number),
+    enabled: vesselId != null,
+  });
+
+export function usePositionMutations() {
+  const invalidate = useInvalidator();
+  // 'vessel' is touched because her drawer shows the position history; 'matches' because
+  // Match scores live positions on every request and a new reading changes the answer.
+  const touched = ['positions', 'position', 'vessel', 'matches'] as const;
+  const create = useMutation({
+    mutationFn: (body: VesselPositionRequest) => positionsApi.create(body),
+    onSuccess: () => invalidate(...touched),
+  });
+  const update = useMutation({
+    mutationFn: (v: { id: number; body: VesselPositionRequest }) =>
+      positionsApi.update(v.id, v.body),
+    onSuccess: () => invalidate(...touched),
+  });
+  const setStatus = useMutation({
+    mutationFn: (v: { id: number; status: PositionStatus }) =>
+      positionsApi.setStatus(v.id, v.status),
+    onSuccess: () => invalidate(...touched),
+  });
+  const remove = useMutation({
+    mutationFn: (id: number) => positionsApi.remove(id),
+    onSuccess: () => invalidate('positions', 'vessel', 'matches'),
+  });
+  return { create, update, setStatus, remove };
+}
+
+/* ---------------- cargoes ---------------- */
+export const useCargoes = (filter: CargoFilter) =>
+  useQuery({ queryKey: ['cargoes', filter], queryFn: () => cargoesApi.search(filter) });
+
+export const useCargo = (id?: number) =>
+  useQuery({
+    queryKey: ['cargo', id],
+    queryFn: () => cargoesApi.get(id as number),
+    enabled: id != null,
+  });
+
+export function useCargoMutations() {
+  const invalidate = useInvalidator();
+  const markDeleted = useMarkDeleted();
+  // 'matches' rides along on every write: the Match tab scores live cargoes against live
+  // positions on each request, so a cargo that moved to FIXED or grew a draft limit changes
+  // what that screen should be showing.
+  const touched = ['cargoes', 'cargo', 'matches'] as const;
+  const create = useMutation({
+    mutationFn: (body: CargoRequest) => cargoesApi.create(body),
+    onSuccess: () => invalidate(...touched),
+  });
+  const update = useMutation({
+    mutationFn: (v: { id: number; body: CargoRequest }) => cargoesApi.update(v.id, v.body),
+    onSuccess: () => invalidate(...touched),
+  });
+  const setStatus = useMutation({
+    mutationFn: (v: { id: number; status: CargoStatus; note?: string }) =>
+      cargoesApi.setStatus(v.id, v.status, v.note),
+    onSuccess: () => invalidate(...touched),
+  });
+  const remove = useMutation({
+    mutationFn: (id: number) => cargoesApi.remove(id),
+    // Not `touched`: that includes 'cargo', which would refetch the id just deleted.
+    onSuccess: (_deleted, id) => {
+      markDeleted('cargo', id);
+      invalidate('cargoes', 'matches');
+    },
+  });
+  return { create, update, setStatus, remove };
+}
 
 /* ---------------- vessels ---------------- */
 export const useVessels = (filter: VesselFilter) =>
@@ -97,8 +244,10 @@ export function useVesselMutations() {
   const markDeleted = useMarkDeleted();
   // 'company' is included because the company drawer lists a company's fleet from
   // ['company', id, 'vessels'] — writes made there (or any owner change) would
-  // otherwise leave that list stale.
-  const touched = ['vessels', 'vessel', 'company'] as const;
+  // otherwise leave that list stale. 'positions' for the same reason: Open fleet draws
+  // every row's size, gear and name off the vessel carried on the position, and her record
+  // is editable from that screen, so a rename made there has to reach the row it was made on.
+  const touched = ['vessels', 'vessel', 'company', 'positions'] as const;
   const create = useMutation({
     mutationFn: (body: VesselRequest) => vesselsApi.create(body),
     onSuccess: () => invalidate(...touched),
@@ -112,7 +261,7 @@ export function useVesselMutations() {
     // Not `touched`: that includes 'vessel', which would refetch the vessel just deleted.
     onSuccess: (_deleted, id) => {
       markDeleted('vessel', id);
-      invalidate('vessels', 'company');
+      invalidate('vessels', 'company', 'positions');
     },
   });
   const confirm = useMutation({
@@ -122,10 +271,22 @@ export function useVesselMutations() {
   });
   const ban = useMutation({
     mutationFn: (v: { id: number; banned: boolean }) => vesselsApi.setBanned(v.id, v.banned),
-    onSuccess: () => invalidate('vessels', 'vessel', 'company'),
+    onSuccess: () => invalidate('vessels', 'vessel', 'company', 'positions'),
   });
   // Attach a company to a vessel as owner / exclusive broker / broker. Touches
   // 'company' too: the change shows up in that company's Vessels tab as well.
+  // Former names. 'vessels' is touched as well as 'vessel' because the list rows carry
+  // them — a name added here is what makes that ship findable in the search box.
+  const addExName = useMutation({
+    mutationFn: (v: { id: number; body: VesselExNameRequest }) =>
+      vesselsApi.addExName(v.id, v.body),
+    onSuccess: () => invalidate('vessels', 'vessel'),
+  });
+  const removeExName = useMutation({
+    mutationFn: (v: { id: number; exNameId: number }) =>
+      vesselsApi.removeExName(v.id, v.exNameId),
+    onSuccess: () => invalidate('vessels', 'vessel'),
+  });
   const setLink = useMutation({
     mutationFn: (v: { vesselId: number; companyId: number; role: VesselCompanyRole }) =>
       vesselsApi.setLink(v.vesselId, v.companyId, v.role),
@@ -144,7 +305,10 @@ export function useVesselMutations() {
       vesselsApi.update(v.vessel.id, { ...toVesselRequest(v.vessel), ownerId: v.ownerId }),
     onSuccess: () => invalidate(...touched),
   });
-  return { create, update, remove, confirm, ban, setOwner, setLink, removeLink };
+  return {
+    create, update, remove, confirm, ban, setOwner, setLink, removeLink,
+    addExName, removeExName,
+  };
 }
 
 /* ---------------- companies ---------------- */

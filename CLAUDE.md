@@ -78,7 +78,18 @@ Three things bite here:
   so Flyway records anything at or below V2 as already applied and silently never runs it.
   `V1__baseline_schema.sql`, `V3__add_person_job_title.sql`,
   `V4__add_company_country_website_and_contact_label.sql`, `V5__add_data_changes.sql`,
-  `V6__add_contact_from_file.sql` and `V7__add_mail_replies.sql` exist; the next one is V8.
+  `V6__add_contact_from_file.sql`, `V7__add_mail_replies.sql`,
+  `V8__add_analysis_samples.sql`, `V9__add_trade_areas.sql`, `V10__seed_trade_areas.sql`,
+  `V11__add_vessel_ex_names.sql`, `V12__add_vessel_specs.sql`, `V13__add_cargoes.sql` and
+  `V14__add_vessel_positions.sql` exist; the next one is V15.
+- **A migration deployed from an unmerged branch makes `main` undeployable, and it has
+  happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
+  branch reached `main`. Every build from `main` then refused to start, because
+  `out-of-order` is off and `validate-on-migrate` is on: Flyway found an applied V8 with no
+  file behind it and failed with *"Detected applied migration not resolved locally: 8"*. It
+  is not a corrupt database and `flyway repair` is not the fix - the fix is that the branch
+  carrying the migration must be merged before, or in the same deploy as, the migration
+  itself.
 - **`db/migration/.gitattributes` marks `*.sql` as `-text`** and must stay. Flyway checksums migrations,
   and a rewritten line ending is a changed checksum — an app that will not start in whichever
   environment did not apply the file first. Source files in this repo are a mix of CRLF and
@@ -263,6 +274,167 @@ same Sent folder (Zoho does; not every provider does), so adding them would doub
 an amount only the provider knows. The Sent-folder figure is also only as fresh as the last
 poll, which is why this app's own replies are counted separately from `mail_replies` as
 well — exact and immediate, and inside the folder figure once it syncs.
+
+### Analysis: mail kept as training data (local deployments only)
+
+The Analysis tab collects incoming mail as finetuning examples for a model that reads cargo
+offers and vessel opening positions. Nothing here calls a model — it gathers the pairs one
+would be trained on and exports them.
+
+**`ANALYSIS_ENABLED` is the switch, and it is true in both compose and `render.yaml`.** It
+was false on Render until 2026-08-27, on the argument that a corpus accumulated over months
+and worked through in long sittings is a poor fit for a free instance that sleeps after
+fifteen minutes. What settled it the other way is where the corpus actually lives:
+`analysis_samples` is a table in the same hosted database, not state on the instance, so the
+sleep costs a cold start in front of a labelling session and nothing else. Off, the tab is
+absent from the navigation and every endpoint answers **404** — the feature is not part of that deployment, so neither 403 ("you may not")
+nor 503 ("not yet") is honest. `GET /analysis/status` always answers, because it is what the
+UI asks before deciding whether the tab exists. The table is created everywhere regardless:
+Flyway builds one schema, not one per environment.
+
+- **`analysis_samples` is not `mail_messages`**, the same distinction `mail_replies` makes.
+  That table is a mirror of the IMAP server and its rows come and go with the mailbox; a
+  corpus on top of it would lose examples to housekeeping, and the annotation — the expensive
+  half — would go with them. A sample carries its own copy of the text; `mail_message_id` is
+  provenance, `ON DELETE SET NULL`. Not audited, for the reason `CirculationListEntry` is
+  not: one capture writes eighty rows recording a machine copying eighty emails.
+- **Capture leaves no mark on the mailbox** and labels nothing. Everything lands
+  `UNLABELLED`/`NEW`; a capture that guessed would produce a corpus whose labels are the
+  guess, and nobody would find the ones it got wrong. Dedupe is on Message-ID, so re-running
+  after a sync adds only what is new.
+- **Two axes, not one.** `label` is what kind of email it is (`BOTH` is a real answer — the
+  daily circular carries cargoes *and* open tonnage); `status` is whether this example is fit
+  to train on. `READY` is the only status the export reads and is refused without a label and
+  an annotation. `SKIPPED` is kept rather than deleted, so the next capture does not bring the
+  same junk back.
+- **The annotation is text holding JSON, checked only for parsing.** The extraction shape is
+  still being worked out, and a shape still moving must not need a migration each time it
+  moves. `AnalysisAnnotationTemplates` serves a skeleton per label so the corpus is annotated
+  consistently — suggestions, never validated against.
+- **The export is JSONL in the chat shape, and its system prompt is the same on every line
+  and one a real caller could send** — it asks for the classification too, because at
+  inference time which kind of email arrived is the question rather than the premise. Rows
+  come out in id order, so two exports of one corpus are the same file.
+
+### Cargoes, open fleet, and the match between them
+
+Three tabs and one rule engine. A day here is cargoes arriving, tonnage positions arriving,
+and the two being put against each other; these are those three things.
+
+**A `Cargo` is a charterer's requirement as it arrived, and almost every field is nullable.**
+A real first email says "25,000 MT Wheat +/- 10%, Chornomorsk to Spain Med, geared bulker abt
+28-35,000 DWT, laycan please advise" and stops. A record that cannot be saved until it is
+complete is a record kept on paper instead. Its field names deliberately track the cargo half
+of the mail-corpus annotation template, so the email parser can write into these columns
+without a translation layer between them.
+
+Quantity is four columns for one number, and the tolerance is why. `quantity` +
+`quantity_tolerance` are the email's words; `quantity_min`/`quantity_max` are the range Match
+compares a hull against. "+/- 10%" is arithmetic and becomes a range; MOLOO is a percentage
+the charter party settles and this email does not state, so it produces **no range at all**
+rather than a guessed five percent — a guess would exclude ships that fit and nothing on
+screen would ever say it had. See `QuantityTolerance`.
+
+**A `VesselPosition` is one row per report, never one per vessel.** A position is a fact with
+a date on it: "SPOT AT MARMARA" was true on Monday and is a lie by Friday. The same hull is
+reported by several brokers who disagree, and both readings are the record. Open Fleet shows
+the newest live row per vessel — a fleet list with the same ship on it twice cannot be
+counted — and the vessel's own history shows the lot. A new live report supersedes the *same
+reporter's* previous one and nobody else's. Nothing is deleted on replacement; `SUPERSEDED`
+is a status, because "she was said to be open Adriatic and then wasn't" is worth looking back
+at.
+
+**A vessel's own record shows her latest reading, and can change it.** `GET /vessels/{id}`
+carries `lastPosition` — one indexed row off `(vessel_id, reported_at DESC)`, the same index
+Open Fleet is built on — so "where is she" is answered on the record you already opened
+rather than in a second tab. It is the latest of *any* status, not the latest live one: if
+she has since fixed, where she was last reported free is still the useful answer and the
+status says which. The shape is deliberately slimmer than the Open Fleet one and carries no
+vessel inside it — there a position is the subject and needs the whole ship on it, here the
+ship is the subject and already surrounds it.
+
+The drawer offers **two** ways to change it, and the split is not a nicety. Positions are
+append-only, so "a newer list arrived" and "I typed that wrong" cannot be one button:
+*Update* records a new reading and leaves the old one in her history, which is the common
+case; *Correct* rewrites the reading itself, for a typo. One button doing the first would
+lie about what the record keeps; one doing the second for a fresh list would destroy the
+ship's history a week at a time. Opened from a vessel's own record the vessel picker is
+locked, because there it was never a choice.
+
+**Trade areas are the vocabulary both sides are written in, and they are not `regions`.**
+That table is a circulation-targeting list ("Israel - no", "Europe ports EXCLUDED") with
+place names mixed into it at four different scales. `trade_areas` nests one level (West Med
+inside the Mediterranean — containment, not adjacency), `trade_area_aliases` holds the
+spellings the market actually writes, and `trade_area_distances` holds ballast days between
+the pairs this desk would consider. The aliases are the load-bearing half: one week of this
+mailbox carried "W.MED", "WEST MED", "SPAIN MED" and "W.ITALY" for the same water. The
+distance table is deliberately sparse — an absent pair means "too far to consider", which is
+a different and more honest answer than a large number, and the Caspian has no distances at
+all because a ship there cannot ballast to a Med cargo in any number of days.
+
+`TradeAreaGraph` caches the whole vocabulary in memory as **flattened records, not
+entities**. A cached entity is a detached entity, and the first caller to read `getParent()`
+outside the transaction that loaded it gets a lazy-init failure from the very field the class
+exists to answer questions about.
+
+**Matching computes on every request and stores nothing but the human's answer.** A stored
+score goes stale the moment a position or a cargo moves, so it would need invalidating on
+every write in the feature — for arithmetic over fields already in memory. What *is* stored
+is `cargo_vessel_matches`: one row per pairing holding the last decision, and `DISMISSED` is
+the reason it exists. Without it the screen proposes the same fifteen ships every morning,
+four already offered and two the owner declined on Tuesday.
+
+`MatchScorer` gives every test one of **three verdicts, and the third is the whole point**:
+
+- `PASS` — she meets what the cargo asked for.
+- `FAIL` — we hold data saying she does not. This is what rules a pairing out.
+- `UNKNOWN` — nothing on file to answer it. Costs points, never excludes.
+
+Half this fleet has no gear recorded and 2,355 hulls have no DWCC. Reading "not on file" as
+"does not fit" would rule out most of the tonnage on the desk; reading it as "fits" would
+offer ships nobody had checked. The score is the share of the *applicable* weight that
+passed — criteria the cargo says nothing about drop out of both halves of the fraction, so a
+cargo with no draft limit does not reward a shallow ship, while criteria it does state and
+the vessel cannot answer stay in the denominator, which is what makes a documented hull
+outrank an unknown one carrying the same guesses.
+
+Two asymmetries in there are deliberate and easy to "fix" wrongly. A cargo needing gear rules
+out a gearless ship, but a cargo *not* needing gear does not rule out a geared one — cranes
+she does not need cost the charterer nothing. And timing counts from her **last** free day,
+not her first: a ship open 1/3 September is not sailing on the 1st, and the optimistic end
+would put ships on lists they cannot make.
+
+Match reads in both directions, because the desk does. Most of the mail here is somebody
+else's tonnage asking for work — "pls propose suitable cgoes for our below home tonnages"
+arrives weekly — and answering it is the same scorer read the other way round.
+
+Every reason is shown with its figures ("Draws 7.9m, berth takes 7.0m"), never as "failed
+draft check". The value of the screen is that a broker can disagree with it, and they can
+only disagree with a reason they can read.
+
+### A vessel's former names
+
+`vessel_ex_names` exists because owners rename ships constantly and a position list may use a
+name this database has never seen for a hull it has held for ten years. The IMO number is the
+only identifier that never moves, and it is exactly what a broker's circular leaves out.
+
+V11 extracted 299 of these out of the `name` column, where somebody had typed the history
+into it ("LOIRE RIVER/ EX AMIKO", "ELEMENTS / EX GUBERNATOR KAMCHATKI/ EX KATERINA"), and
+cleaned the name down to the current one. Those rows carry `source = 'backfill'` — a
+machine's reading of a free-text field, and the first thing to suspect if a vessel ever looks
+wrong. The vessel search matches current and former names alike, which is the entire point of
+having them, and the list prints the former names under the current one so a row nobody
+searched for by that name explains itself.
+
+They write on their **own endpoints, never as part of the vessel's PUT**: they are rows in
+another table, one gets added whenever a circular reveals one, and folding them into the
+whole-record save would let a form opened five minutes ago delete a ship's history while
+somebody was correcting her deadweight.
+
+The vessel record also gained `geared`, `gear_description`, `holds`, `hatches`,
+`grain_fitted`, `timber_fitted`, `imo_fitted` and `ice_class` — every one of them read off
+the position lists this mailbox already receives, and every one nullable, because null is
+"not on file" and false would be a claim about four thousand rows nobody has checked.
 
 ### Auth
 

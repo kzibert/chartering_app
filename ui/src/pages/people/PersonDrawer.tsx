@@ -99,13 +99,6 @@ export default function PersonDrawer({ personId, onClose, onEdit, onOpenCompany 
               </Tooltip>
             )}
           </Space>
-          {p.notes && (
-            <Typography.Paragraph style={{ marginBottom: 12, whiteSpace: 'pre-wrap' }}>
-              <Typography.Text type="secondary">Notes: </Typography.Text>
-              {p.notes}
-            </Typography.Paragraph>
-          )}
-
           <Typography.Title level={5} style={{ marginTop: 8 }}>
             Contacts ({rows.length})
           </Typography.Title>
@@ -131,6 +124,18 @@ export default function PersonDrawer({ personId, onClose, onEdit, onOpenCompany 
               />
             )}
           />
+
+          {/* Last, under the contacts. A note runs to whatever length somebody needed, and
+              sitting up beside the tags a long one pushed the addresses — what the drawer
+              is opened for — off the bottom of the screen. */}
+          {p.notes && (
+            <>
+              <Typography.Title level={5} style={{ marginTop: 20 }}>
+                Notes
+              </Typography.Title>
+              <Typography.Paragraph style={{ whiteSpace: 'pre-wrap' }}>{p.notes}</Typography.Paragraph>
+            </>
+          )}
 
           {/* Collapsed, and destroyed when it closes, so opening a person does not fetch a
               history nobody asked for. There are no tabs on this drawer to hide it behind —

@@ -4,11 +4,15 @@ import { useQuery } from '@tanstack/react-query';
 import AppLayout from './components/AppLayout';
 import Dashboard from './pages/Dashboard';
 import VesselsPage from './pages/vessels/VesselsPage';
+import CargoesPage from './pages/cargoes/CargoesPage';
+import OpenFleetPage from './pages/openFleet/OpenFleetPage';
+import MatchPage from './pages/match/MatchPage';
 import CompaniesPage from './pages/companies/CompaniesPage';
 import PeoplePage from './pages/people/PeoplePage';
 import CirculationListsPage from './pages/circulationLists/CirculationListsPage';
 import CircularsPage from './pages/circulars/CircularsPage';
 import MailboxPage from './pages/mailbox/MailboxPage';
+import AnalysisPage from './pages/analysis/AnalysisPage';
 import HistoryPage from './pages/history/HistoryPage';
 import SettingsPage from './pages/settings/SettingsPage';
 import LoginPage from './pages/login/LoginPage';
@@ -60,6 +64,9 @@ function AuthenticatedApp() {
     <AppLayout username={session.data?.username}>
       <Routes>
         <Route path="/" element={<Dashboard />} />
+        <Route path="/cargoes" element={<CargoesPage />} />
+        <Route path="/open-fleet" element={<OpenFleetPage />} />
+        <Route path="/match" element={<MatchPage />} />
         <Route path="/vessels" element={<VesselsPage />} />
         <Route path="/companies" element={<CompaniesPage />} />
         <Route path="/people" element={<PeoplePage />} />
@@ -70,6 +77,10 @@ function AuthenticatedApp() {
         <Route path="/email-list" element={<Navigate to="/circulation-lists" replace />} />
         <Route path="/circulars" element={<CircularsPage />} />
         <Route path="/mailbox" element={<MailboxPage />} />
+        {/* Registered whether or not ANALYSIS_ENABLED is on. The nav entry is hidden
+            when it is off, but a bookmarked URL still has to land somewhere that
+            explains itself rather than bouncing to the dashboard. */}
+        <Route path="/analysis" element={<AnalysisPage />} />
         <Route path="/history" element={<HistoryPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
