@@ -14,11 +14,13 @@ import {
   MenuOutlined,
   EllipsisOutlined,
   HistoryOutlined,
+  ExperimentOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCurrentList } from '../circulations/store';
 import { useMailboxStatus } from '../mailbox/store';
+import { useAnalysisStatus } from '../analysis/store';
 import { clearToken } from '../auth/store';
 import { useIsMobile } from '../responsive/useIsMobile';
 
@@ -27,7 +29,7 @@ const { Sider, Header, Content } = Layout;
 // No '/contacts': contacts live inside People now, grouped under the person who owns them.
 const KEYS = [
   '/', '/vessels', '/companies', '/people', '/circulation-lists', '/circulars', '/mailbox',
-  '/history', '/settings',
+  '/analysis', '/history', '/settings',
 ];
 
 /**
@@ -52,6 +54,10 @@ export default function AppLayout({
   const queryClient = useQueryClient();
   const { entries } = useCurrentList();
   const status = useMailboxStatus();
+  // Whether this deployment carries the analysis workbench at all. One cached call — the
+  // answer cannot change without the api restarting — and it is what decides whether the
+  // tab is in the navigation rather than whether it works when clicked.
+  const analysis = useAnalysisStatus();
   const isMobile = useIsMobile();
   const [navOpen, setNavOpen] = useState(false);
   const selected = KEYS.includes(location.pathname) ? location.pathname : '/';
@@ -94,6 +100,12 @@ export default function AppLayout({
         </span>
       ),
     },
+    // Local deployments only: ANALYSIS_ENABLED is false on the hosted instance, and an
+    // entry that led to a page explaining why it does nothing is worse than no entry. The
+    // route still exists, so a bookmarked URL lands on that explanation.
+    ...(analysis.data?.enabled
+      ? [{ key: '/analysis', icon: <ExperimentOutlined />, label: 'Analysis' }]
+      : []),
     // Last in the list, and not in the bottom bar on a phone: the change log is where you
     // go when something is already wrong, not somewhere work gets done. It sits above
     // Settings because it is about the data rather than about the application.

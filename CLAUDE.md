@@ -78,7 +78,8 @@ Three things bite here:
   so Flyway records anything at or below V2 as already applied and silently never runs it.
   `V1__baseline_schema.sql`, `V3__add_person_job_title.sql`,
   `V4__add_company_country_website_and_contact_label.sql`, `V5__add_data_changes.sql`,
-  `V6__add_contact_from_file.sql` and `V7__add_mail_replies.sql` exist; the next one is V8.
+  `V6__add_contact_from_file.sql`, `V7__add_mail_replies.sql` and
+  `V8__add_analysis_samples.sql` exist; the next one is V9.
 - **`db/migration/.gitattributes` marks `*.sql` as `-text`** and must stay. Flyway checksums migrations,
   and a rewritten line ending is a changed checksum — an app that will not start in whichever
   environment did not apply the file first. Source files in this repo are a mix of CRLF and
@@ -263,6 +264,45 @@ same Sent folder (Zoho does; not every provider does), so adding them would doub
 an amount only the provider knows. The Sent-folder figure is also only as fresh as the last
 poll, which is why this app's own replies are counted separately from `mail_replies` as
 well — exact and immediate, and inside the folder figure once it syncs.
+
+### Analysis: mail kept as training data (local deployments only)
+
+The Analysis tab collects incoming mail as finetuning examples for a model that reads cargo
+offers and vessel opening positions. Nothing here calls a model — it gathers the pairs one
+would be trained on and exports them.
+
+**`ANALYSIS_ENABLED` is the switch: true in compose, explicitly false in `render.yaml`.** A
+corpus is accumulated over months and worked through in long sittings, ending in a file
+handed to a training job elsewhere; a free instance that sleeps after fifteen minutes is the
+wrong place for all three. Off, the tab is absent from the navigation and every endpoint
+answers **404** — the feature is not part of that deployment, so neither 403 ("you may not")
+nor 503 ("not yet") is honest. `GET /analysis/status` always answers, because it is what the
+UI asks before deciding whether the tab exists. The table is created everywhere regardless:
+Flyway builds one schema, not one per environment.
+
+- **`analysis_samples` is not `mail_messages`**, the same distinction `mail_replies` makes.
+  That table is a mirror of the IMAP server and its rows come and go with the mailbox; a
+  corpus on top of it would lose examples to housekeeping, and the annotation — the expensive
+  half — would go with them. A sample carries its own copy of the text; `mail_message_id` is
+  provenance, `ON DELETE SET NULL`. Not audited, for the reason `CirculationListEntry` is
+  not: one capture writes eighty rows recording a machine copying eighty emails.
+- **Capture leaves no mark on the mailbox** and labels nothing. Everything lands
+  `UNLABELLED`/`NEW`; a capture that guessed would produce a corpus whose labels are the
+  guess, and nobody would find the ones it got wrong. Dedupe is on Message-ID, so re-running
+  after a sync adds only what is new.
+- **Two axes, not one.** `label` is what kind of email it is (`BOTH` is a real answer — the
+  daily circular carries cargoes *and* open tonnage); `status` is whether this example is fit
+  to train on. `READY` is the only status the export reads and is refused without a label and
+  an annotation. `SKIPPED` is kept rather than deleted, so the next capture does not bring the
+  same junk back.
+- **The annotation is text holding JSON, checked only for parsing.** The extraction shape is
+  still being worked out, and a shape still moving must not need a migration each time it
+  moves. `AnalysisAnnotationTemplates` serves a skeleton per label so the corpus is annotated
+  consistently — suggestions, never validated against.
+- **The export is JSONL in the chat shape, and its system prompt is the same on every line
+  and one a real caller could send** — it asks for the classification too, because at
+  inference time which kind of email arrived is the question rather than the premise. Rows
+  come out in id order, so two exports of one corpus are the same file.
 
 ### Auth
 
