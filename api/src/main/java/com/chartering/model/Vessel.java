@@ -48,6 +48,49 @@ public class Vessel {
 
     private String flag;
 
+    // ---- what a charterer asks about before anything else ----
+    //
+    // Every one of these is nullable, and null means "not on file" rather than "no". That
+    // distinction is the same one the existing figures make by storing 0 for an unknown
+    // capacity, and it matters more here because these are booleans: false would be a claim
+    // about four thousand rows nobody has checked. Match reads a null as a question to
+    // raise, never as a knockout.
+
+    /** True/false where a list has actually said so; null where nothing has. */
+    private Boolean geared;
+
+    /**
+     * What the list said, verbatim: "2x30T CRANES", "3 x 12,5 t derricks", "GEARLESS",
+     * "cranes fitted grabs 2x6cbm". A column of enumerated crane types would discard most
+     * of that, and the discarded half is the part a charterer reads.
+     */
+    @Column(name = "gear_description", length = 160)
+    private String gearDescription;
+
+    private Short holds;
+
+    private Short hatches;
+
+    // Three separate facts rather than one list, because circulars negate them one at a
+    // time: "imo-timber-not grain ftd" is a real line, and it is the "not grain" that
+    // decides whether a wheat cargo can be offered.
+
+    @Column(name = "grain_fitted")
+    private Boolean grainFitted;
+
+    @Column(name = "timber_fitted")
+    private Boolean timberFitted;
+
+    @Column(name = "imo_fitted")
+    private Boolean imoFitted;
+
+    /**
+     * Free text: the class societies do not agree on one scale, and 1A, 1A Super, E3 and
+     * "ice class - no" all appear in this trade's mail.
+     */
+    @Column(name = "ice_class", length = 20)
+    private String iceClass;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "owner_id")
     private Company owner;

@@ -3,6 +3,9 @@ import { Badge, Button, Drawer, Dropdown, Layout, Menu, Space, Typography } from
 import {
   DashboardOutlined,
   ContainerOutlined,
+  InboxOutlined,
+  CompassOutlined,
+  NodeIndexOutlined,
   BankOutlined,
   TeamOutlined,
   UnorderedListOutlined,
@@ -28,8 +31,8 @@ const { Sider, Header, Content } = Layout;
 
 // No '/contacts': contacts live inside People now, grouped under the person who owns them.
 const KEYS = [
-  '/', '/vessels', '/companies', '/people', '/circulation-lists', '/circulars', '/mailbox',
-  '/analysis', '/history', '/settings',
+  '/', '/cargoes', '/open-fleet', '/match', '/vessels', '/companies', '/people',
+  '/circulation-lists', '/circulars', '/mailbox', '/analysis', '/history', '/settings',
 ];
 
 /**
@@ -69,6 +72,12 @@ export default function AppLayout({
 
   const items = [
     { key: '/', icon: <DashboardOutlined />, label: 'Dashboard' },
+    // The trading tabs sit above the record tabs because that is the order of the day:
+    // cargoes and positions arrive, they get matched, and the vessel and company records
+    // are what you go and read when one of them raises a question.
+    { key: '/cargoes', icon: <InboxOutlined />, label: 'Cargoes' },
+    { key: '/open-fleet', icon: <CompassOutlined />, label: 'Open fleet' },
+    { key: '/match', icon: <NodeIndexOutlined />, label: 'Match' },
     { key: '/vessels', icon: <ContainerOutlined />, label: 'Vessels' },
     { key: '/companies', icon: <BankOutlined />, label: 'Companies' },
     { key: '/people', icon: <TeamOutlined />, label: 'People & contacts' },

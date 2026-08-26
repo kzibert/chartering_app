@@ -7,9 +7,12 @@ import com.chartering.model.Company;
 import com.chartering.model.Contact;
 import com.chartering.model.Vessel;
 import com.chartering.model.VesselCompanyLink;
+import com.chartering.model.VesselExName;
 import com.chartering.repository.CompanyRepository;
 import com.chartering.repository.ContactRepository;
 import com.chartering.repository.VesselCompanyLinkRepository;
+import com.chartering.repository.VesselExNameRepository;
+import com.chartering.repository.VesselPositionRepository;
 import com.chartering.repository.VesselRepository;
 import com.chartering.specification.VesselSpecification;
 import lombok.RequiredArgsConstructor;
@@ -23,8 +26,10 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -41,13 +46,82 @@ public class VesselService {
     private final CompanyRepository companyRepository;
     private final ContactRepository contactRepository;
     private final VesselCompanyLinkRepository linkRepository;
+    private final VesselExNameRepository exNameRepository;
+    private final VesselPositionRepository positionRepository;
     private final RecipientSelectionService recipientSelection;
     private final DtoMapper mapper;
 
     @Transactional(readOnly = true)
     public PageResponse<VesselResponse> search(VesselFilter f, Pageable pageable) {
-        return PageResponse.from(
-                vesselRepository.findAll(buildSpec(f), pageable).map(mapper::toVesselResponse));
+        Page<Vessel> page = vesselRepository.findAll(buildSpec(f), pageable);
+        Map<Long, List<VesselExNameResponse>> exNames = exNamesFor(page.getContent());
+        return PageResponse.from(page.map(
+                v -> mapper.toVesselResponse(v, exNames.getOrDefault(v.getId(), List.of()))));
+    }
+
+    /**
+     * Former names for a whole page of vessels, in one query.
+     *
+     * <p>The alternative — letting the mapper walk a lazy collection per row — is twenty
+     * queries behind a twenty-row page, and the ex-names are wanted on every row rather than
+     * on the few somebody expanded. Vessels with none are simply absent from the map.
+     */
+    private Map<Long, List<VesselExNameResponse>> exNamesFor(List<Vessel> vessels) {
+        if (vessels.isEmpty()) return Map.of();
+        List<Long> ids = vessels.stream().map(Vessel::getId).toList();
+        return exNameRepository.findByVesselIds(ids).stream()
+                .collect(Collectors.groupingBy(e -> e.getVessel().getId(),
+                        LinkedHashMap::new,
+                        Collectors.mapping(mapper::toVesselExNameResponse, Collectors.toList())));
+    }
+
+    // ------------------------------------------------------------ former names
+
+    @Transactional(readOnly = true)
+    public List<VesselExNameResponse> exNames(Long vesselId) {
+        if (!vesselRepository.existsById(vesselId)) {
+            throw new ResourceNotFoundException("Vessel", vesselId);
+        }
+        return exNameRepository.findByVesselIdOrderByNameAsc(vesselId).stream()
+                .map(mapper::toVesselExNameResponse).toList();
+    }
+
+    /**
+     * Record a name this vessel used to carry.
+     *
+     * <p>The duplicate check is here as well as on the unique index, because the index would
+     * answer with a constraint violation and a 500. One hull carrying the same former name
+     * twice is not an error worth a stack trace — several circulars saying the same true
+     * thing is the normal case.
+     */
+    @Transactional
+    public VesselExNameResponse addExName(Long vesselId, VesselExNameRequest req) {
+        Vessel v = vesselRepository.findById(vesselId)
+                .orElseThrow(() -> new ResourceNotFoundException("Vessel", vesselId));
+        String name = req.getName().trim();
+        if (exNameRepository.existsByVesselIdAndNameIgnoreCase(vesselId, name)) {
+            throw new IllegalArgumentException(
+                    v.getName() + " already lists \"" + name + "\" as a former name");
+        }
+        VesselExName e = new VesselExName();
+        e.setVessel(v);
+        e.setName(name);
+        e.setSource(VesselExName.SOURCE_MANUAL);
+        e.setRenamedAt(req.getRenamedAt());
+        e.setNotes(req.getNotes());
+        return mapper.toVesselExNameResponse(exNameRepository.save(e));
+    }
+
+    @Transactional
+    public void removeExName(Long vesselId, Long exNameId) {
+        VesselExName e = exNameRepository.findById(exNameId)
+                .orElseThrow(() -> new ResourceNotFoundException("Former name", exNameId));
+        // Checked rather than trusted: the id arrives in a URL nested under a vessel, and
+        // deleting one ship's history through another ship's path would be a quiet bug.
+        if (!e.getVessel().getId().equals(vesselId)) {
+            throw new ResourceNotFoundException("Former name", exNameId);
+        }
+        exNameRepository.delete(e);
     }
 
     /**
@@ -108,6 +182,7 @@ public class VesselService {
                         VesselSpecification.recordedRange("baleCapacityM3", f.minBale(), f.maxBale())),
                 VesselSpecification.recordedRange("maximumDraft", null, f.maxDraft()),
                 VesselSpecification.yearFrom(f.yearFrom()),
+                VesselSpecification.gearedEquals(f.geared()),
                 VesselSpecification.vesselTypeIn(f.vesselType()),
                 VesselSpecification.flagIn(f.flag()),
                 VesselSpecification.companyIdEquals(f.companyId()),
@@ -132,7 +207,16 @@ public class VesselService {
                 !ownerEmails.isEmpty() && ownerEmails.stream().noneMatch(ContactResponse::working);
         CompanyResponse ownerDto = owner != null
                 ? mapper.toCompanyResponse(owner, ownerNoWorkingEmail) : null;
-        return new VesselDetailResponse(mapper.toVesselResponse(v), ownerDto, ownerContacts, links(id));
+        // Her latest reading, of any status. One indexed row off (vessel_id, reported_at
+        // DESC) - the same index Open Fleet is built on - so this costs the detail view
+        // nothing measurable and saves opening a second tab to answer "where is she".
+        VesselLastPositionResponse lastPosition = positionRepository
+                .findFirstByVesselIdOrderByReportedAtDescIdDesc(id)
+                .map(mapper::toVesselLastPositionResponse)
+                .orElse(null);
+        return new VesselDetailResponse(
+                mapper.toVesselResponse(v, exNames(id)), ownerDto, ownerContacts, links(id),
+                lastPosition);
     }
 
     @Transactional
@@ -147,7 +231,10 @@ public class VesselService {
         Vessel v = vesselRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Vessel", id));
         apply(v, req);
-        return mapper.toVesselResponse(vesselRepository.save(v));
+        // With the former names, because the form that sent this update is showing them and
+        // takes what comes back as the record's new state. Returning the bare vessel would
+        // empty that list on screen after every save.
+        return mapper.toVesselResponse(vesselRepository.save(v), exNames(id));
     }
 
     @Transactional
@@ -268,6 +355,14 @@ public class VesselService {
         v.setYearBuilt(req.getYearBuilt());
         v.setVesselType(req.getVesselType());
         v.setFlag(req.getFlag());
+        v.setGeared(req.getGeared());
+        v.setGearDescription(req.getGearDescription());
+        v.setHolds(req.getHolds());
+        v.setHatches(req.getHatches());
+        v.setGrainFitted(req.getGrainFitted());
+        v.setTimberFitted(req.getTimberFitted());
+        v.setImoFitted(req.getImoFitted());
+        v.setIceClass(req.getIceClass());
         v.setNotes(req.getNotes());
         v.setOwner(resolveOwner(req.getOwnerId()));
     }
@@ -289,6 +384,8 @@ public class VesselService {
             BigDecimal maxDraft,
             /** Oldest acceptable build year; matches that year and younger. */
             Integer yearFrom,
+            /** Geared, gearless, or null for "do not narrow on it". */
+            Boolean geared,
             List<String> vesselType, List<String> flag,
             Long companyId, String companyName, Boolean confirmed,
             boolean includeBanned, Boolean legacy) {

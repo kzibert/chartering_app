@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, Checkbox, Col, Form, Input, InputNumber, Row, Select, Space, Tag } from 'antd';
+import { Button, Checkbox, Col, Form, Input, InputNumber, Row, Select, Space, Tag, Tooltip, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useVessels, useVesselTypes, useFlags } from '../../api/hooks';
@@ -63,10 +63,20 @@ export default function VesselsPage() {
       sortOrder: tc.sortOrderFor('name'),
       fixed: 'left',
       render: (name: string, v) => (
-        <Space size={4}>
-          {name}
-          {!v.legacy && <Tag color="green">new</Tag>}
-          {v.banned && <Tag color="red">banned</Tag>}
+        <Space size={4} direction="vertical">
+          <Space size={4} wrap>
+            {name}
+            {!v.legacy && <Tag color="green">new</Tag>}
+            {v.banned && <Tag color="red">banned</Tag>}
+          </Space>
+          {/* The former names are printed under the current one because the search matches
+              them: without this, typing "AMIKO" returns a row called LOIRE RIVER and
+              nothing on screen says why it is there. */}
+          {(v.exNames?.length ?? 0) > 0 && (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              ex {v.exNames!.map((e) => e.name).join(', ')}
+            </Typography.Text>
+          )}
         </Space>
       ),
     },
@@ -77,6 +87,20 @@ export default function VesselsPage() {
     { title: 'Bale m³', dataIndex: 'baleCapacityM3' },
     { title: 'Draft', dataIndex: 'maximumDraft' },
     { title: 'Year', dataIndex: 'yearBuilt', sorter: true, sortOrder: tc.sortOrderFor('yearBuilt') },
+    {
+      title: 'Gear',
+      key: 'gear',
+      // Three states in one cell. A blank would read as gearless, which is the wrong half
+      // of the two to guess at.
+      render: (_, v) =>
+        v.geared == null ? (
+          <Typography.Text type="secondary">—</Typography.Text>
+        ) : (
+          <Tooltip title={v.gearDescription}>
+            <Tag color={v.geared ? 'blue' : 'default'}>{v.geared ? 'geared' : 'gearless'}</Tag>
+          </Tooltip>
+        ),
+    },
     { title: 'Type', dataIndex: 'vesselType' },
     { title: 'Flag', dataIndex: 'flag' },
     { title: 'Owner', dataIndex: 'ownerName' },
@@ -139,7 +163,15 @@ export default function VesselsPage() {
           }
         >
           <Row gutter={12}>
-            <Col xs={12} md={6}><Form.Item name="name" label="Name"><Input allowClear /></Form.Item></Col>
+            <Col xs={12} md={6}>
+              <Form.Item
+                name="name"
+                label="Name"
+                tooltip="Matches the name she carries now or any former name on file, so a position list using an old name still finds her."
+              >
+                <Input allowClear placeholder="current or former name" />
+              </Form.Item>
+            </Col>
             <Col xs={12} md={6}><Form.Item name="imoNumber" label="IMO"><Input allowClear /></Form.Item></Col>
             <Col xs={12} md={6}><Form.Item name="companyName" label="Company" tooltip="Matches the owner or any broker linked to the vessel"><Input allowClear placeholder="owner or broker" /></Form.Item></Col>
             <Col xs={12} md={6}>
@@ -171,7 +203,23 @@ export default function VesselsPage() {
                 <InputNumber style={{ width: '100%' }} placeholder="e.g. 2005" />
               </Form.Item>
             </Col>
-            <Col xs={12} md={6}>
+            <Col xs={12} md={3}>
+              <Form.Item
+                name="geared"
+                label="Gear"
+                tooltip="Geared returns only vessels a list has actually said are geared — ones with nothing on file do not come back, the same way a size range excludes an unrecorded figure."
+              >
+                <Select
+                  allowClear
+                  placeholder="Any"
+                  options={[
+                    { value: true, label: 'Geared' },
+                    { value: false, label: 'Gearless' },
+                  ]}
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={12} md={3}>
               <Form.Item name="vesselType" label="Type">
                 <MultiCheckSelect options={types ?? []} placeholder="Any type" />
               </Form.Item>
@@ -205,7 +253,10 @@ export default function VesselsPage() {
               {v.banned && <Tag color="red">banned</Tag>}
             </Space>
           ),
-          subtitle: (v) => v.ownerName ?? 'No owner on file',
+          subtitle: (v) =>
+            (v.exNames?.length ?? 0) > 0
+              ? `ex ${v.exNames!.map((e) => e.name).join(', ')}`
+              : v.ownerName ?? 'No owner on file',
           fields: (v) => [
             v.imoNumber != null && { label: 'IMO', value: v.imoNumber },
             v.deadweightTonnage != null && { label: 'DWT', value: v.deadweightTonnage },
@@ -214,6 +265,8 @@ export default function VesselsPage() {
             v.baleCapacityM3 != null && { label: 'Bale m³', value: v.baleCapacityM3 },
             v.maximumDraft != null && { label: 'Draft', value: v.maximumDraft },
             v.yearBuilt != null && { label: 'Year', value: v.yearBuilt },
+            v.geared != null && { label: 'Gear', value: v.geared ? 'geared' : 'gearless' },
+            v.holds != null && { label: 'Holds', value: v.holds },
             v.vesselType != null && { label: 'Type', value: v.vesselType },
             v.flag != null && { label: 'Flag', value: v.flag },
           ],

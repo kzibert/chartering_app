@@ -1,6 +1,7 @@
 package com.chartering.audit;
 
 import com.chartering.model.AppSetting;
+import com.chartering.model.Cargo;
 import com.chartering.model.CirculationList;
 import com.chartering.model.Company;
 import com.chartering.model.Contact;
@@ -12,6 +13,7 @@ import com.chartering.model.MailRuleCondition;
 import com.chartering.model.Person;
 import com.chartering.model.Vessel;
 import com.chartering.model.VesselCompanyLink;
+import com.chartering.model.VesselExName;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -40,8 +42,14 @@ import java.util.function.Function;
  *       from the contacts on every send; a bulk add would write a row per recipient to
  *       record a selection that is reproducible from the contact data, which <em>is</em>
  *       logged. The list itself is logged, so renaming or deleting one is still visible.
- *   <li>{@code Port}, {@code Region}, {@code TonnageCategory} — reference tables with no
- *       screen that writes to them.
+ *   <li>{@code VesselPosition} — a position list is read in eighty rows at a time, and
+ *       logging that would record a machine copying a circular into a table. Same reasoning
+ *       as {@code CirculationListEntry}, and the position rows are themselves a history:
+ *       nothing overwrites one, so the earlier readings are already there to compare.
+ *   <li>{@code CargoVesselMatch} — one row per pairing holding the last decision, which
+ *       is what the Match tab shows anyway.
+ *   <li>{@code Port}, {@code Region}, {@code TonnageCategory}, {@code TradeArea} and its
+ *       aliases and distances — reference tables with no screen that writes to them.
  * </ul>
  *
  * <p>Adding one is a line in {@link #AUDITED}. Nothing else in the audit code names an
@@ -72,6 +80,14 @@ public final class AuditedEntities {
         audit(Contact.class, "contact", e -> ((Contact) e).getContactValue());
         audit(Vessel.class, "vessel", e -> ((Vessel) e).getName());
         audit(VesselCompanyLink.class, "vessel-link", e -> null);
+        // A former name is typed by hand and rarely, and getting one wrong makes a ship
+        // unfindable under the name a position list uses - which is worth being able to look
+        // back at. The 299 the migration extracted are invisible here on purpose: Flyway
+        // writes through JDBC, not Hibernate, so no listener ever saw them.
+        audit(VesselExName.class, "vessel-ex-name", e -> ((VesselExName) e).getName());
+        // A cargo is authored, edited and moved along by hand from one screen, which is the
+        // whole criterion for this list.
+        audit(Cargo.class, "cargo", e -> ((Cargo) e).getCommodity());
         audit(CirculationList.class, "circulation-list", e -> ((CirculationList) e).getName());
         audit(EmailTemplate.class, "email-template", e -> ((EmailTemplate) e).getName());
         audit(EmailFooter.class, "email-footer", e -> ((EmailFooter) e).getName());

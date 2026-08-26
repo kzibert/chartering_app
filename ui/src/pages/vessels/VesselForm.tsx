@@ -1,9 +1,20 @@
 import { useEffect, useState } from 'react';
-import { Col, Form, Input, InputNumber, Modal, Row, Select } from 'antd';
+import { Col, Form, Input, InputNumber, Modal, Row, Select, Typography } from 'antd';
 import { useVesselMutations, useVesselTypes, useFlags } from '../../api/hooks';
 import CompanySelect from '../../components/CompanySelect';
 import RecordActions from '../../components/RecordActions';
+import ExNamesEditor from './ExNamesEditor';
 import type { VesselRequest, VesselResponse } from '../../api/types';
+
+/**
+ * Two options, never three. "Not on file" is the absence of a choice, reached by clearing
+ * the box — an option carrying `undefined` would render as a selectable blank row that antd
+ * treats as picking nothing, which is the same state behind a control implying otherwise.
+ */
+const FITTED_OPTIONS = (yes: string, no: string) => [
+  { value: true, label: yes },
+  { value: false, label: no },
+];
 
 interface Props {
   open: boolean;
@@ -56,6 +67,14 @@ export default function VesselForm({ open, editing, defaults, onClose, onDeleted
           yearBuilt: editing.yearBuilt,
           vesselType: editing.vesselType,
           flag: editing.flag,
+          geared: editing.geared,
+          gearDescription: editing.gearDescription,
+          holds: editing.holds,
+          hatches: editing.hatches,
+          grainFitted: editing.grainFitted,
+          timberFitted: editing.timberFitted,
+          imoFitted: editing.imoFitted,
+          iceClass: editing.iceClass,
           ownerId: editing.ownerId,
           notes: editing.notes,
         });
@@ -83,64 +102,125 @@ export default function VesselForm({ open, editing, defaults, onClose, onDeleted
       destroyOnClose
     >
       <Form form={form} layout="vertical" onFinish={submit}>
+        {/* xs/md throughout, like the fittings rows below: `span` alone is every
+            breakpoint at once, and a third of a phone screen is not a field, it is a
+            place to lose a deadweight in. */}
         <Row gutter={12}>
-          <Col span={16}>
+          <Col xs={24} md={16}>
             <Form.Item name="name" label="Name" rules={[{ required: true, message: 'name is required' }]}>
               <Input />
             </Form.Item>
           </Col>
-          <Col span={8}>
+          <Col xs={24} md={8}>
             <Form.Item name="imoNumber" label="IMO">
               <Input />
             </Form.Item>
           </Col>
         </Row>
         <Row gutter={12}>
-          <Col span={8}>
+          <Col xs={12} md={8}>
             <Form.Item name="deadweightTonnage" label="DWT">
               <InputNumber style={{ width: '100%' }} min={0} />
             </Form.Item>
           </Col>
-          <Col span={8}>
+          <Col xs={12} md={8}>
             <Form.Item name="deadweightCargoCapacity" label="DWCC">
               <InputNumber style={{ width: '100%' }} min={0} />
             </Form.Item>
           </Col>
-          <Col span={8}>
+          <Col xs={12} md={8}>
             <Form.Item name="yearBuilt" label="Year built">
               <InputNumber style={{ width: '100%' }} min={1900} max={2100} />
             </Form.Item>
           </Col>
         </Row>
         <Row gutter={12}>
-          <Col span={8}>
+          <Col xs={12} md={8}>
             <Form.Item name="grainCapacityM3" label="Grain (m³)">
               <InputNumber style={{ width: '100%' }} min={0} />
             </Form.Item>
           </Col>
-          <Col span={8}>
+          <Col xs={12} md={8}>
             <Form.Item name="baleCapacityM3" label="Bale (m³)">
               <InputNumber style={{ width: '100%' }} min={0} />
             </Form.Item>
           </Col>
-          <Col span={8}>
+          <Col xs={12} md={8}>
             <Form.Item name="maximumDraft" label="Max draft">
               <InputNumber style={{ width: '100%' }} min={0} />
             </Form.Item>
           </Col>
         </Row>
         <Row gutter={12}>
-          <Col span={12}>
+          <Col xs={24} md={12}>
             <Form.Item name="vesselType" label="Type">
               <Select allowClear options={(types ?? []).map((t) => ({ value: t, label: t }))} />
             </Form.Item>
           </Col>
-          <Col span={12}>
+          <Col xs={24} md={12}>
             <Form.Item name="flag" label="Flag">
               <Select allowClear options={(flags ?? []).map((f) => ({ value: f, label: f }))} />
             </Form.Item>
           </Col>
         </Row>
+        {/* The details a charterer asks about first, and the ones every position list
+            carries: "1 HO/2 HA", "imo-timber-grain ftd", "2x30t cranes". Each is
+            three-valued — the box is cleared to say "still not on file", which is the
+            honest state for most of this fleet and is not the same as a no. */}
+        <Typography.Text type="secondary">Gear, holds and fittings</Typography.Text>
+        <Row gutter={12} style={{ marginTop: 8 }}>
+          <Col xs={12} md={6}>
+            <Form.Item name="geared" label="Gear">
+              <Select allowClear placeholder="Not on file" options={FITTED_OPTIONS('Geared', 'Gearless')} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} md={10}>
+            <Form.Item
+              name="gearDescription"
+              label="Gear detail"
+              tooltip="As the list wrote it. A column of enumerated crane types would discard most of what a charterer actually reads."
+            >
+              <Input placeholder="2x30t cranes, grabs 2x6cbm…" />
+            </Form.Item>
+          </Col>
+          <Col xs={12} md={4}>
+            <Form.Item name="holds" label="Holds">
+              <InputNumber style={{ width: '100%' }} min={0} max={20} />
+            </Form.Item>
+          </Col>
+          <Col xs={12} md={4}>
+            <Form.Item name="hatches" label="Hatches">
+              <InputNumber style={{ width: '100%' }} min={0} max={20} />
+            </Form.Item>
+          </Col>
+        </Row>
+        <Row gutter={12}>
+          <Col xs={12} md={6}>
+            <Form.Item name="grainFitted" label="Grain fitted">
+              <Select allowClear placeholder="Not on file" options={FITTED_OPTIONS('Fitted', 'Not fitted')} />
+            </Form.Item>
+          </Col>
+          <Col xs={12} md={6}>
+            <Form.Item name="timberFitted" label="Timber fitted">
+              <Select allowClear placeholder="Not on file" options={FITTED_OPTIONS('Fitted', 'Not fitted')} />
+            </Form.Item>
+          </Col>
+          <Col xs={12} md={6}>
+            <Form.Item name="imoFitted" label="IMO fitted">
+              <Select allowClear placeholder="Not on file" options={FITTED_OPTIONS('Fitted', 'Not fitted')} />
+            </Form.Item>
+          </Col>
+          <Col xs={12} md={6}>
+            <Form.Item
+              name="iceClass"
+              label="Ice class"
+              tooltip="Free text: the class societies do not agree on one scale, and 1A, 1A Super and E3 all turn up."
+            >
+              <Input placeholder="1A, E3…" />
+            </Form.Item>
+          </Col>
+        </Row>
+
         <Form.Item name="ownerId" label="Owner">
           <CompanySelect allowClear placeholder="Search owner company…" />
         </Form.Item>
@@ -149,8 +229,10 @@ export default function VesselForm({ open, editing, defaults, onClose, onDeleted
         </Form.Item>
       </Form>
 
-      {/* Only for a vessel that exists: there is nothing to confirm, ban or delete about
-          one that has not been saved yet. */}
+      {/* Former names, and the actions, both only for a vessel that exists: there is
+          nothing to rename, confirm, ban or delete about one not yet saved. */}
+      {record && <ExNamesEditor vesselId={record.id} exNames={record.exNames ?? []} />}
+
       {record && (
         <RecordActions
           entity="vessel"

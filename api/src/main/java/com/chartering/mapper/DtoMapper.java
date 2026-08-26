@@ -3,6 +3,7 @@ package com.chartering.mapper;
 import com.chartering.audit.RevertSupport;
 import com.chartering.dto.*;
 import com.chartering.model.AnalysisSample;
+import com.chartering.model.Cargo;
 import com.chartering.model.Company;
 import com.chartering.model.Contact;
 import com.chartering.model.DataChange;
@@ -10,10 +11,15 @@ import com.chartering.model.MailFolder;
 import com.chartering.model.MailMessage;
 import com.chartering.model.MailRule;
 import com.chartering.model.Person;
+import com.chartering.model.Port;
+import com.chartering.model.TradeArea;
 import com.chartering.model.Vessel;
+import com.chartering.model.VesselExName;
+import com.chartering.model.VesselPosition;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * Entity -> response-DTO mapping. Centralized so services stay thin and mapping is
@@ -23,18 +29,114 @@ import java.time.LocalDateTime;
 @Component
 public class DtoMapper {
 
+    /**
+     * A vessel without her former names — the shape every existing caller wanted.
+     *
+     * <p>Kept as the default rather than lazily loading the collection here: the ex-names
+     * are a separate table, and a mapper that fetched them per row would put a query behind
+     * every line of a twenty-row page. Callers that want them read them in one go and use
+     * the overload.
+     */
     public VesselResponse toVesselResponse(Vessel v) {
+        return toVesselResponse(v, List.of());
+    }
+
+    public VesselResponse toVesselResponse(Vessel v, List<VesselExNameResponse> exNames) {
         Company owner = v.getOwner();
         return new VesselResponse(
                 v.getId(), v.getName(), v.getImoNumber(),
                 v.getDeadweightTonnage(), v.getDeadweightCargoCapacity(),
                 v.getGrainCapacityM3(), v.getBaleCapacityM3(), v.getMaximumDraft(),
                 v.getYearBuilt(), v.getVesselType(), v.getFlag(),
+                v.getGeared(), v.getGearDescription(), v.getHolds(), v.getHatches(),
+                v.getGrainFitted(), v.getTimberFitted(), v.getImoFitted(), v.getIceClass(),
+                // Empty rather than null: an absent list and a vessel that has never been
+                // renamed are the same thing to every caller, and NON_NULL would send the
+                // first as nothing while sending the second as [].
+                exNames == null ? List.of() : exNames,
                 owner != null ? owner.getId() : null,
                 owner != null ? owner.getName() : null,
                 v.getNotes(),
                 v.isConfirmed(), v.getConfirmedAt(), v.getConfirmedBy(), v.getConfirmNotes(),
                 v.isBanned(), v.isLegacy());
+    }
+
+    /**
+     * One reported position, with the whole vessel it is about.
+     *
+     * <p>The vessel rides along rather than her id: Open Fleet is a fleet list, every
+     * question asked of a row ("how big, how deep, geared?") is answered from her record,
+     * and sending an id would make the screen fetch one per row.
+     */
+    public VesselPositionResponse toVesselPositionResponse(
+            VesselPosition p, List<VesselExNameResponse> exNames) {
+        TradeArea openArea = effectiveArea(p.getOpenPort(), p.getOpenArea());
+        Company reporter = p.getReportedByCompany();
+        Person reporterPerson = p.getReportedByPerson();
+        return new VesselPositionResponse(
+                p.getId(),
+                toVesselResponse(p.getVessel(), exNames),
+                p.getStatus().name(),
+                p.getOpenPort() != null ? p.getOpenPort().getId() : null,
+                p.getOpenPort() != null ? p.getOpenPort().getName() : null,
+                p.getOpenPortText(),
+                openArea != null ? openArea.getId() : null,
+                openArea != null ? openArea.getCode() : null,
+                openArea != null ? openArea.getName() : null,
+                p.getOpenFrom(), p.getOpenTo(), p.getOpenText(),
+                p.getLastCargo(), p.getCargoPreferences(),
+                reporter != null ? reporter.getId() : null,
+                reporter != null ? reporter.getName() : null,
+                reporterPerson != null ? reporterPerson.getId() : null,
+                reporterPerson != null ? reporterPerson.getFullName() : null,
+                p.isFromMail(),
+                p.getSourceMailMessage() != null ? p.getSourceMailMessage().getId() : null,
+                p.getReportedAt(),
+                ageDays(p.getReportedAt()),
+                p.getNotes(), p.getCreatedAt(), p.getUpdatedAt());
+    }
+
+    /**
+     * Whole days since a reading was reported.
+     *
+     * <p>Computed here rather than in the browser so the table and the phone card cannot
+     * disagree about it, and floored rather than rounded: something reported 23 hours ago is
+     * today's reading, and calling it a day old would make every morning's list look stale.
+     */
+    private static long ageDays(java.time.OffsetDateTime reportedAt) {
+        if (reportedAt == null) return 0;
+        return java.time.Duration.between(reportedAt, java.time.OffsetDateTime.now()).toDays();
+    }
+
+    /**
+     * Her latest reading, for her own record — without the vessel nested back inside it.
+     *
+     * <p>See {@link VesselLastPositionResponse} for why this is a different shape from the
+     * one Open Fleet uses: there a position is the subject and needs the whole ship on it;
+     * here the ship is the subject and already surrounds this.
+     */
+    public VesselLastPositionResponse toVesselLastPositionResponse(VesselPosition p) {
+        TradeArea openArea = effectiveArea(p.getOpenPort(), p.getOpenArea());
+        Company reporter = p.getReportedByCompany();
+        return new VesselLastPositionResponse(
+                p.getId(), p.getStatus().name(),
+                p.getOpenPort() != null ? p.getOpenPort().getId() : null,
+                p.getOpenPort() != null ? p.getOpenPort().getName() : null,
+                p.getOpenPortText(),
+                openArea != null ? openArea.getId() : null,
+                openArea != null ? openArea.getCode() : null,
+                openArea != null ? openArea.getName() : null,
+                p.getOpenFrom(), p.getOpenTo(), p.getOpenText(),
+                p.getLastCargo(), p.getCargoPreferences(),
+                reporter != null ? reporter.getId() : null,
+                reporter != null ? reporter.getName() : null,
+                p.getReportedAt(), ageDays(p.getReportedAt()), p.getNotes());
+    }
+
+    public VesselExNameResponse toVesselExNameResponse(VesselExName e) {
+        return new VesselExNameResponse(
+                e.getId(), e.getVessel().getId(), e.getName(),
+                e.getSource(), e.getRenamedAt(), e.getNotes());
     }
 
     /**
@@ -190,5 +292,63 @@ public class DtoMapper {
                 s.getAnnotation() != null,
                 s.getBodyText() != null ? s.getBodyText().length() : 0,
                 s.getNotes(), s.getCreatedAt(), s.getUpdatedAt());
+    }
+
+    /**
+     * A cargo, with each place sent as id, name and raw text.
+     *
+     * <p>The area a place resolves to is the port's own when there is a port and the cargo's
+     * area column when there is not — the same precedence Match applies, kept in one place
+     * so the screen cannot show one thing while the scoring reads another.
+     */
+    public CargoResponse toCargoResponse(Cargo c) {
+        TradeArea loadArea = effectiveArea(c.getLoadPort(), c.getLoadArea());
+        TradeArea dischargeArea = effectiveArea(c.getDischargePort(), c.getDischargeArea());
+        Company charterer = c.getChartererCompany();
+        Company broker = c.getBrokerCompany();
+        Person brokerPerson = c.getBrokerPerson();
+        return new CargoResponse(
+                c.getId(), c.getStatus().name(), c.getStatusNote(),
+                c.getCommodity(), c.getStowageFactor(),
+                c.getQuantity(), c.getQuantityUnit(), c.getQuantityTolerance(),
+                c.getQuantityMin(), c.getQuantityMax(),
+                c.getLoadPort() != null ? c.getLoadPort().getId() : null,
+                c.getLoadPort() != null ? c.getLoadPort().getName() : null,
+                c.getLoadPortText(),
+                loadArea != null ? loadArea.getId() : null,
+                loadArea != null ? loadArea.getCode() : null,
+                loadArea != null ? loadArea.getName() : null,
+                c.getDischargePort() != null ? c.getDischargePort().getId() : null,
+                c.getDischargePort() != null ? c.getDischargePort().getName() : null,
+                c.getDischargePortText(),
+                dischargeArea != null ? dischargeArea.getId() : null,
+                dischargeArea != null ? dischargeArea.getCode() : null,
+                dischargeArea != null ? dischargeArea.getName() : null,
+                c.getLaycanFrom(), c.getLaycanTo(), c.getLaycanText(),
+                c.getMaxDraft(), c.getMinDwt(), c.getMaxDwt(), c.getMaxAgeYears(),
+                c.getRequiresGeared(), c.getRequiresGrainFitted(), c.getRequiresImoFitted(),
+                c.getFreightIdea(), c.getCommission(), c.getTerms(),
+                c.getLoadRate(), c.getDischargeRate(),
+                charterer != null ? charterer.getId() : null,
+                charterer != null ? charterer.getName() : null,
+                broker != null ? broker.getId() : null,
+                broker != null ? broker.getName() : null,
+                brokerPerson != null ? brokerPerson.getId() : null,
+                brokerPerson != null ? brokerPerson.getFullName() : null,
+                c.isFromMail(),
+                c.getSourceMailMessage() != null ? c.getSourceMailMessage().getId() : null,
+                c.getReceivedAt(), c.getNotes(), c.getCreatedAt(), c.getUpdatedAt());
+    }
+
+    /**
+     * The area a place actually sits in: the port's, else the one entered by hand.
+     *
+     * <p>A named port wins because it is the more precise statement — somebody who wrote
+     * "Salerno" said more than somebody who wrote "W.Med", and if the two disagree the port
+     * is the one that was looked up rather than typed.
+     */
+    public static TradeArea effectiveArea(Port port, TradeArea fallback) {
+        if (port != null && port.getTradeArea() != null) return port.getTradeArea();
+        return fallback;
     }
 }
