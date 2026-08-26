@@ -15,6 +15,14 @@ interface Props {
   /** Ids of the rows whose reasons are open. */
   expanded: number[];
   onToggleExpanded: (id: number) => void;
+  /**
+   * Open the cargo's own record. Only reachable on the by-ship side, where the cargo is
+   * what each row names — on the by-cargo side every row is about the one cargo already
+   * picked on the left, and a link to it on all fifteen rows would say nothing.
+   */
+  onOpenCargo: (cargoId: number) => void;
+  /** The mirror of it: the vessel's record, from the rows that name a vessel. */
+  onOpenVessel: (vesselId: number) => void;
 }
 
 /**
@@ -29,7 +37,15 @@ interface Props {
  * the only thing on this screen that writes anything at all — everything else is computed
  * fresh on each request.
  */
-export default function MatchList({ matches, loading, side, expanded, onToggleExpanded }: Props) {
+export default function MatchList({
+  matches,
+  loading,
+  side,
+  expanded,
+  onToggleExpanded,
+  onOpenCargo,
+  onOpenVessel,
+}: Props) {
   const { decide, clear } = useMatchMutations();
 
   if (loading) return <Spin style={{ display: 'block', margin: '48px auto' }} />;
@@ -77,9 +93,26 @@ export default function MatchList({ matches, loading, side, expanded, onToggleEx
 
               <div style={{ flex: '1 1 320px', minWidth: 0 }}>
                 <Space size={6} wrap>
-                  <Typography.Text strong>
-                    {side === 'cargo' ? m.position?.vessel.name ?? '—' : m.cargo.commodity}
-                  </Typography.Text>
+                  {/* Whichever half of the pairing the row names, its name opens its record:
+                      the vessel here, the cargo on the other side. Both are the same
+                      question — the scorer has said she fits, and the next thing anyone
+                      wants is everything about her the scorer did not weigh. */}
+                  {side === 'cargo' ? (
+                    m.position ? (
+                      <Typography.Link
+                        strong
+                        onClick={() => onOpenVessel(m.position!.vessel.id)}
+                      >
+                        {m.position.vessel.name}
+                      </Typography.Link>
+                    ) : (
+                      <Typography.Text strong>—</Typography.Text>
+                    )
+                  ) : (
+                    <Typography.Link strong onClick={() => onOpenCargo(m.cargo.id)}>
+                      {m.cargo.commodity}
+                    </Typography.Link>
+                  )}
                   {outcome && <Tag color={outcome.color}>{outcome.label}</Tag>}
                   {m.ruledOut && <Tag color="red">ruled out</Tag>}
                 </Space>

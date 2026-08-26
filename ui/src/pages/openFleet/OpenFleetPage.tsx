@@ -11,6 +11,8 @@ import { usePersistedFilters } from '../../components/usePersistedState';
 import TradeAreaSelect from '../../components/TradeAreaSelect';
 import CompanySelect from '../../components/CompanySelect';
 import PositionForm from './PositionForm';
+import VesselDrawer from '../vessels/VesselDrawer';
+import VesselForm from '../vessels/VesselForm';
 import {
   POSITION_STATUS_META,
   POSITION_STATUS_OPTIONS,
@@ -18,7 +20,7 @@ import {
   formatOpenDates,
   staleness,
 } from './status';
-import type { PositionFilter, VesselPositionResponse } from '../../api/types';
+import type { PositionFilter, VesselPositionResponse, VesselResponse } from '../../api/types';
 
 /**
  * Open fleet: where the tonnage we have been told about is free, and when.
@@ -41,6 +43,15 @@ export default function OpenFleetPage() {
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<VesselPositionResponse | null>(null);
+
+  // A row is a reading, but the question it usually raises is about the ship carrying it —
+  // what she is, who owns her, where else she has been reported. Clicking the row opens her
+  // record, the same drawer the Vessels tab opens, so that question is answered here rather
+  // than by searching the name out in another tab. The controls that write to the *position*
+  // — the status select, edit and delete — stop the click, so they still act on the reading.
+  const [vesselId, setVesselId] = useState<number>();
+  const [vesselFormOpen, setVesselFormOpen] = useState(false);
+  const [editingVessel, setEditingVessel] = useState<VesselResponse | null>(null);
 
   // Default on: the tab is called Open fleet, and that is what it means. The checkbox is on
   // screen rather than implied, so the narrowing is never invisible.
@@ -370,9 +381,22 @@ export default function OpenFleetPage() {
           { field: 'reportedAt', label: 'Reported' },
           { field: 'openFrom', label: 'Open date' },
         ]}
+        onRow={(p) => ({ onClick: () => setVesselId(p.vessel.id), style: { cursor: 'pointer' } })}
       />
 
       <PositionForm open={formOpen} editing={editing} onClose={() => setFormOpen(false)} />
+      <VesselDrawer
+        vesselId={vesselId}
+        onClose={() => setVesselId(undefined)}
+        onEdit={(v) => { setEditingVessel(v); setVesselFormOpen(true); }}
+      />
+      <VesselForm
+        open={vesselFormOpen}
+        editing={editingVessel}
+        onClose={() => setVesselFormOpen(false)}
+        // The drawer behind the form is showing the vessel that was just deleted.
+        onDeleted={() => setVesselId(undefined)}
+      />
     </>
   );
 }

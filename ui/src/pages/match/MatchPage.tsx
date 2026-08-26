@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Badge,
@@ -22,10 +22,16 @@ import {
   usePositions,
 } from '../../api/hooks';
 import { usePersistedState } from '../../components/usePersistedState';
+import { useIsMobile } from '../../responsive/useIsMobile';
 import MatchList from './MatchList';
 import { scoreColor } from './outcomes';
+import CargoDrawer from '../cargoes/CargoDrawer';
+import CargoForm from '../cargoes/CargoForm';
+import VesselDrawer from '../vessels/VesselDrawer';
+import VesselForm from '../vessels/VesselForm';
 import { formatLaycan, formatPlace, formatQuantity } from '../cargoes/status';
 import { formatFleetSize, formatOpenDates } from '../openFleet/status';
+import type { CargoResponse, VesselResponse } from '../../api/types';
 
 type Side = 'cargo' | 'position';
 
@@ -49,6 +55,28 @@ export default function MatchPage() {
   const [positionId, setPositionId] = useState<number>();
   const [expanded, setExpanded] = useState<number[]>([]);
 
+  // Opening a cargo's record is not the same act as matching against it, so it is not the
+  // same click: the card still picks the cargo the right-hand list is scored for, and the
+  // commodity on it opens the record. One control doing both would mean every glance at
+  // what the charterer actually wrote re-pointed the whole screen.
+  const [cargoDrawerId, setCargoDrawerId] = useState<number>();
+  const [cargoFormOpen, setCargoFormOpen] = useState(false);
+  const [editingCargo, setEditingCargo] = useState<CargoResponse | null>(null);
+
+  // The same for the other half of a pairing. A score is an argument about a ship, and the
+  // reasons under it are only the criteria this cargo happened to state — her record is
+  // where the rest of her is, gear description and all.
+  const [vesselDrawerId, setVesselDrawerId] = useState<number>();
+  const [vesselFormOpen, setVesselFormOpen] = useState(false);
+  const [editingVessel, setEditingVessel] = useState<VesselResponse | null>(null);
+
+  // On a phone the two columns are one column, so the tonnage for the cargo just picked is
+  // below however many summary cards were on screen — tapping one looked like it did
+  // nothing at all. The tap takes you to its answer; scrolling back up is the way back to
+  // the picker, which is what a stacked layout makes cheap.
+  const isMobile = useIsMobile();
+  const resultsRef = useRef<HTMLDivElement>(null);
+
   const overview = useMatchOverview();
   // Only used by the by-vessel side; the fleet is small enough to offer in one dropdown.
   const fleet = usePositions({ current: true, size: 200, sort: 'reportedAt,desc' });
@@ -64,6 +92,22 @@ export default function MatchPage() {
       setCargoId(summaries[0].cargo.id);
     }
   }, [side, cargoId, summaries]);
+
+  const pickCargo = (id: number) => {
+    setCargoId(id);
+    setExpanded([]);
+    // After the pick has rendered, or this scrolls to where the list used to be.
+    if (isMobile) {
+      requestAnimationFrame(() =>
+        resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+      );
+    }
+  };
+
+  // The ship this side is scoring against, so her record can be opened from here too. She
+  // is named only inside the picker's label otherwise, and a dropdown option is not
+  // something anyone can click through to.
+  const pickedVessel = (fleet.data?.content ?? []).find((p) => p.id === positionId)?.vessel;
 
   const toggleExpanded = (id: number) =>
     setExpanded((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -110,10 +154,7 @@ export default function MatchPage() {
                     key={s.cargo.id}
                     size="small"
                     hoverable
-                    onClick={() => {
-                      setCargoId(s.cargo.id);
-                      setExpanded([]);
-                    }}
+                    onClick={() => pickCargo(s.cargo.id)}
                     style={{
                       borderColor: s.cargo.id === cargoId ? '#1677ff' : undefined,
                       borderWidth: s.cargo.id === cargoId ? 2 : 1,
@@ -122,7 +163,15 @@ export default function MatchPage() {
                   >
                     <Space direction="vertical" size={2} style={{ width: '100%' }}>
                       <Space size={6} wrap>
-                        <Typography.Text strong>{s.cargo.commodity}</Typography.Text>
+                        <Typography.Link
+                          strong
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setCargoDrawerId(s.cargo.id);
+                          }}
+                        >
+                          {s.cargo.commodity}
+                        </Typography.Link>
                         <Typography.Text type="secondary">
                           {formatQuantity(
                             s.cargo.quantity,
@@ -175,6 +224,7 @@ export default function MatchPage() {
             )}
           </Col>
           <Col xs={24} lg={15}>
+            <div ref={resultsRef} />
             {cargoId == null ? (
               <Empty description="Pick a cargo" />
             ) : (
@@ -184,6 +234,8 @@ export default function MatchPage() {
                 side="cargo"
                 expanded={expanded}
                 onToggleExpanded={toggleExpanded}
+                onOpenCargo={setCargoDrawerId}
+                onOpenVessel={setVesselDrawerId}
               />
             )}
           </Col>
@@ -208,6 +260,16 @@ export default function MatchPage() {
                 } ${formatOpenDates(p.openFrom, p.openTo, p.openText)}`,
               }))}
             />
+            {/* Its own line rather than beside the picker: a control inside an antd Space
+                does not get the stylesheet's mobile width cap, and this picker is the one
+                thing on the screen that has to stay full width on a phone. */}
+            {pickedVessel && (
+              <div style={{ marginTop: 8 }}>
+                <Typography.Link onClick={() => setVesselDrawerId(pickedVessel.id)}>
+                  Open {pickedVessel.name}'s record
+                </Typography.Link>
+              </div>
+            )}
             {(fleet.data?.content.length ?? 0) === 0 && (
               <Alert
                 type="info"
@@ -226,10 +288,47 @@ export default function MatchPage() {
               side="position"
               expanded={expanded}
               onToggleExpanded={toggleExpanded}
+              onOpenCargo={setCargoDrawerId}
+              onOpenVessel={setVesselDrawerId}
             />
           )}
         </>
       )}
+
+      <CargoDrawer
+        cargoId={cargoDrawerId}
+        onClose={() => setCargoDrawerId(undefined)}
+        onEdit={(c) => {
+          setEditingCargo(c);
+          setCargoFormOpen(true);
+        }}
+      />
+      <VesselDrawer
+        vesselId={vesselDrawerId}
+        onClose={() => setVesselDrawerId(undefined)}
+        onEdit={(v) => {
+          setEditingVessel(v);
+          setVesselFormOpen(true);
+        }}
+      />
+      <VesselForm
+        open={vesselFormOpen}
+        editing={editingVessel}
+        onClose={() => setVesselFormOpen(false)}
+        onDeleted={() => setVesselDrawerId(undefined)}
+      />
+      <CargoForm
+        open={cargoFormOpen}
+        editing={editingCargo}
+        onClose={() => setCargoFormOpen(false)}
+        // The cargo just deleted may also be the one the right-hand list is scored against;
+        // clearing the selection lets the effect above land on whatever now heads the
+        // overview, rather than leaving the screen matching a cargo that is gone.
+        onDeleted={() => {
+          if (cargoDrawerId === cargoId) setCargoId(undefined);
+          setCargoDrawerId(undefined);
+        }}
+      />
     </>
   );
 }

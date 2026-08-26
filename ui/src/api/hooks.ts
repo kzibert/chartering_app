@@ -244,8 +244,10 @@ export function useVesselMutations() {
   const markDeleted = useMarkDeleted();
   // 'company' is included because the company drawer lists a company's fleet from
   // ['company', id, 'vessels'] — writes made there (or any owner change) would
-  // otherwise leave that list stale.
-  const touched = ['vessels', 'vessel', 'company'] as const;
+  // otherwise leave that list stale. 'positions' for the same reason: Open fleet draws
+  // every row's size, gear and name off the vessel carried on the position, and her record
+  // is editable from that screen, so a rename made there has to reach the row it was made on.
+  const touched = ['vessels', 'vessel', 'company', 'positions'] as const;
   const create = useMutation({
     mutationFn: (body: VesselRequest) => vesselsApi.create(body),
     onSuccess: () => invalidate(...touched),
@@ -259,7 +261,7 @@ export function useVesselMutations() {
     // Not `touched`: that includes 'vessel', which would refetch the vessel just deleted.
     onSuccess: (_deleted, id) => {
       markDeleted('vessel', id);
-      invalidate('vessels', 'company');
+      invalidate('vessels', 'company', 'positions');
     },
   });
   const confirm = useMutation({
@@ -269,7 +271,7 @@ export function useVesselMutations() {
   });
   const ban = useMutation({
     mutationFn: (v: { id: number; banned: boolean }) => vesselsApi.setBanned(v.id, v.banned),
-    onSuccess: () => invalidate('vessels', 'vessel', 'company'),
+    onSuccess: () => invalidate('vessels', 'vessel', 'company', 'positions'),
   });
   // Attach a company to a vessel as owner / exclusive broker / broker. Touches
   // 'company' too: the change shows up in that company's Vessels tab as well.
