@@ -2,6 +2,7 @@ package com.chartering.mapper;
 
 import com.chartering.audit.RevertSupport;
 import com.chartering.dto.*;
+import com.chartering.model.AnalysisSample;
 import com.chartering.model.Company;
 import com.chartering.model.Contact;
 import com.chartering.model.DataChange;
@@ -165,5 +166,29 @@ public class DtoMapper {
                         .map(c -> new MailRuleConditionResponse(
                                 c.getId(), c.getField().name(), c.getOperator().name(), c.getValue()))
                         .toList());
+    }
+
+    /**
+     * One row of the training corpus.
+     *
+     * <p>The snippet is passed in rather than derived here for the same reason
+     * {@code noWorkingEmail} is on the company mapping: this mapper holds no collaborators
+     * and does no work of its own, and a body flattened one way here and another way in the
+     * service would put two different previews of the same sample on one screen.
+     *
+     * <p>{@code mailMessage} is a lazy association read only for its id, which is already
+     * loaded on the proxy — so no query fires and a message deleted from the mailbox since
+     * simply reports null.
+     */
+    public AnalysisSampleResponse toAnalysisSampleResponse(AnalysisSample s, String snippet) {
+        return new AnalysisSampleResponse(
+                s.getId(), s.getSource(),
+                s.getMailMessage() != null ? s.getMailMessage().getId() : null,
+                s.getFromAddress(), s.getFromName(), s.getSubject(),
+                s.getSentAt(), s.getReceivedAt(), snippet, s.getAttachmentNames(),
+                s.getLabel(), s.getStatus(),
+                s.getAnnotation() != null,
+                s.getBodyText() != null ? s.getBodyText().length() : 0,
+                s.getNotes(), s.getCreatedAt(), s.getUpdatedAt());
     }
 }

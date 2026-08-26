@@ -209,6 +209,20 @@ chartering:
     connect-timeout-ms: ${IMAP_CONNECT_TIMEOUT_MS:15000}
     read-timeout-ms: ${IMAP_READ_TIMEOUT_MS:30000}
 
+  # Keeping incoming mail as training data for a model that reads cargo offers and vessel
+  # opening positions. A workbench, not a desk tool: it accumulates a corpus, it is worked
+  # through in long sittings, and what comes out of it is a file that goes somewhere else.
+  #
+  # OFF BY DEFAULT AND OFF ON THE HOSTED DEPLOYMENT ON PURPOSE (render.yaml sets it false
+  # explicitly). None of the above wants to happen on a free instance that sleeps after
+  # fifteen minutes idle. The schema is the same everywhere — Flyway builds one schema, not
+  # one per environment — so turning this on anywhere is this one variable and a restart,
+  # and with it off the tab is absent from the UI and every endpoint behind it answers 404.
+  analysis:
+    enabled: ${ANALYSIS_ENABLED:false}
+    max-body-chars: ${ANALYSIS_MAX_BODY_CHARS:20000}
+    max-capture-per-run: ${ANALYSIS_MAX_CAPTURE:500}
+
   # The second circular flow: Brevo's transactional API instead of the mailbox over SMTP.
   # Which of the two is used is a runtime setting ("Use Brevo for circs" on the Settings tab),
   # not an environment variable — only the key lives here, because it is a credential.

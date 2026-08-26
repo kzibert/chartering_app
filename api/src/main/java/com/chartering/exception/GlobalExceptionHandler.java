@@ -42,6 +42,15 @@ public class GlobalExceptionHandler {
         return body(HttpStatus.BAD_REQUEST, ex.getMessage());
     }
 
+    /**
+     * A feature this deployment does not carry. 404, not 403: nothing here is being withheld
+     * from this caller, the endpoint is simply not part of this environment.
+     */
+    @ExceptionHandler(FeatureDisabledException.class)
+    public ResponseEntity<Map<String, Object>> handleFeatureDisabled(FeatureDisabledException ex) {
+        return body(HttpStatus.NOT_FOUND, ex.getMessage());
+    }
+
     /** Mail isn't set up (or the SMTP host is unreachable) — the server can't serve the request yet. */
     @ExceptionHandler(MailNotConfiguredException.class)
     public ResponseEntity<Map<String, Object>> handleMailNotConfigured(MailNotConfiguredException ex) {

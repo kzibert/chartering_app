@@ -130,6 +130,13 @@ services:
       IMAP_MAX_BODY_CHARS: ${IMAP_MAX_BODY_CHARS:-200000}
       IMAP_CONNECT_TIMEOUT_MS: ${IMAP_CONNECT_TIMEOUT_MS:-15000}
       IMAP_READ_TIMEOUT_MS: ${IMAP_READ_TIMEOUT_MS:-30000}
+      # Keeping incoming mail as training data for a model that reads cargo offers and
+      # vessel positions — the Analysis tab. ON here and off on Render: it is a workbench
+      # for long labelling sittings against a local database, not something a sleeping free
+      # instance should be accumulating. Turning it off hides the tab and 404s its API.
+      ANALYSIS_ENABLED: ${ANALYSIS_ENABLED:-true}
+      ANALYSIS_MAX_BODY_CHARS: ${ANALYSIS_MAX_BODY_CHARS:-20000}
+      ANALYSIS_MAX_CAPTURE: ${ANALYSIS_MAX_CAPTURE:-500}
       # The other circular flow: Brevo's transactional API. Which of the two is used is a
       # runtime setting ("Use Brevo for circs" on the Settings tab), so only the key and
       # Brevo's own pacing baseline come from the environment. An empty key just means the

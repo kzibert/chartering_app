@@ -856,6 +856,77 @@ Endpoints: `GET /api/v1/mailbox/messages` (the search above), `GET /mailbox/mess
 thread), plus CRUD on `/api/v1/mailbox/folders` and `/api/v1/mailbox/rules` and
 `POST /mailbox/rules/apply`.
 
+## Analysis (training data for reading offers) — local only
+
+The Analysis tab keeps incoming mail as **training data for a model that reads cargo offers
+and vessel opening positions**. Nothing in it calls a model: it collects the examples one
+would be finetuned on, and hands them over as a file.
+
+**It is off on Render and on by default in compose.** `ANALYSIS_ENABLED=false` in
+`render.yaml`, `true` in `docker-compose.yml`. That is the intended split rather than a
+staged rollout: a corpus is accumulated over months, worked through in long labelling
+sittings, and ends in a file given to a training job somewhere else — none of which belongs
+on a free instance that sleeps after fifteen minutes idle, and a half-labelled corpus sitting
+on a server nobody is at is a liability rather than an asset. With it off the tab is absent
+from the navigation and every endpoint behind it answers **404** (not 403, not 503: the
+feature genuinely is not part of that deployment). `GET /api/v1/analysis/status` is the one
+endpoint that always answers, because it is what the UI asks in order to decide whether the
+tab exists.
+
+The table is created in every database regardless. Flyway builds one schema, not one per
+environment, so turning the feature on anywhere is one variable and a restart.
+
+### A sample is not a mail message
+
+`analysis_samples` carries its own copy of the email text. It could have been a view over
+`mail_messages` and deliberately is not: that table is a mirror of the IMAP server, written
+only by the sync, and its rows come and go with the mailbox — a folder cleaned out at the
+provider, a re-sync after a UIDVALIDITY reset, a retention rule nobody connected to a
+dataset. A corpus built on top of it would quietly lose examples, and the annotation would go
+with them. The expensive half of a sample is not the email; it is the human judgement typed
+underneath it. The `mail_message_id` beside it is provenance, `ON DELETE SET NULL`.
+
+Not audited, for the reason `circulation_list_entries` is not: it is a working document, and
+one capture run would write eighty change rows to record a machine copying eighty emails the
+database already held.
+
+### The loop
+
+1. **Capture** — `POST /api/v1/analysis/capture`, scoped with the same axes the Mailbox tab
+   filters on (server folder, app folder, free text, date range). Nothing in the mailbox is
+   touched: no flag, no move, the connection stays read-only. Everything lands `UNLABELLED` /
+   `NEW`, because a capture that guessed would produce a corpus whose labels are the guess.
+   Mail already captured is skipped on Message-ID, so re-running after a sync adds only what
+   is new. Or **paste one in** (`POST /analysis/samples`) — which is how a corpus gets started
+   on a machine with no IMAP configured.
+2. **Label** — what kind of email it is: `CARGO_OFFER`, `VESSEL_OPENING`, `BOTH`, `OTHER`.
+   `BOTH` is a real answer rather than a hedge: the daily circular carrying a page of cargoes
+   and a page of open tonnage is the commonest thing in the inbox.
+3. **Annotate** — the JSON a model should return for this email. The status endpoint serves a
+   skeleton per label and the review form prefills it, because a finetuning set only teaches a
+   shape if the shape is the same in every example — left to an empty text box, the first
+   fifty samples say `loadPort` and the next fifty say `load_port`. Stored as text and checked
+   only for *being* JSON: the shape is still being worked out, and a shape still moving must
+   not need a migration each time it moves.
+4. **Mark ready** — `READY` is the only status the export reads, and it is refused without
+   both a label and an annotation. `SKIPPED` is for junk, and it is kept rather than deleted
+   precisely so the next capture over that folder does not bring it back to be judged again.
+5. **Export** — `GET /api/v1/analysis/export` returns JSONL, one example per line, in the
+   chat shape every trainer accepts: a system prompt, the email as the user turn, the
+   annotation as the assistant turn. The **system prompt is the same on every line and is one
+   a real caller could send** — it asks for the classification too, because at inference time
+   nobody knows yet which kind of email arrived. That is the thing being asked. Rows come out
+   in id order, so two exports of the same corpus are the same file and a diff shows what a
+   session added.
+
+Endpoints: `GET /api/v1/analysis/status`, `GET /analysis/samples` (one search box, and unlike
+the mailbox it always scans the body — here you are looking for examples of a phrase, not for
+a message you half remember), `GET|PATCH|DELETE /analysis/samples/{id}`,
+`POST /analysis/samples`, `POST /analysis/capture`, `GET /analysis/export`.
+
+Tuning: `ANALYSIS_MAX_BODY_CHARS` (default 20000 — a cap, not a target; past it an email is a
+quoted chain and a disclaimer) and `ANALYSIS_MAX_CAPTURE` (default 500 per run).
+
 ## Local dev (without Docker)
 
 - **API:** needs JDK 21 + Maven and a Postgres on `localhost:5433`, which is exactly what the `dev` profile defaults to and exactly what `../chartering-db` publishes. Start that, then `cd api && mvn spring-boot:run` — the database will be empty and the app you are about to start is what migrates it. To work against the hosted database instead, set `DB_URL` / `DB_USER` / `DB_PASSWORD` in the environment.
@@ -1011,6 +1082,9 @@ how compose runs the ui locally, and still the way back if this moves to a paid 
   and a circular cannot go out to a sleeping instance. That is the actual cost of the free
   tier here, and it is fine for a desk that gets opened deliberately. `plan: starter` is the
   same file with one word changed.
+- **`ANALYSIS_ENABLED=false`.** The Analysis tab is a local workbench — see its section
+  above. Off, its tab is not in the navigation and its endpoints answer 404; the table exists
+  in the database either way.
 - **`SWAGGER_ENABLED=false`.** No published map of the API from a public instance. The
   endpoints refuse anonymous callers either way; this is just not advertising them.
 - **Redeploys log you out unless `JWT_SECRET` is fixed.** The blueprint's `generateValue`
