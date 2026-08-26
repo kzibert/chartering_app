@@ -347,6 +347,78 @@ export interface TradeAreaResponse {
   aliases?: string[];
 }
 
+/* ---------------- open fleet ---------------- */
+
+export type PositionStatus = 'LIVE' | 'FIXED' | 'WITHDRAWN' | 'SUPERSEDED' | 'EXPIRED';
+
+/**
+ * One reported opening position — one row per report, never one per vessel.
+ *
+ * A position is a fact with a date on it: "SPOT AT MARMARA" was true on Monday and is a lie
+ * by Friday. The same hull gets reported by several brokers who disagree, and both readings
+ * are kept. Open Fleet shows the newest live one per vessel; the vessel's own history shows
+ * the lot.
+ *
+ * The whole vessel rides along because every question asked of a row on that screen — how
+ * big, how deep, geared? — is answered from her record.
+ */
+export interface VesselPositionResponse {
+  id: number;
+  vessel: VesselResponse;
+  status: PositionStatus;
+
+  openPortId?: number;
+  openPortName?: string;
+  openPortText?: string;
+  openAreaId?: number;
+  openAreaCode?: string;
+  openAreaName?: string;
+
+  openFrom?: string;
+  openTo?: string;
+  openText?: string;
+
+  lastCargo?: string;
+  cargoPreferences?: string;
+
+  reportedByCompanyId?: number;
+  reportedByCompanyName?: string;
+  reportedByPersonId?: number;
+  reportedByPersonName?: string;
+
+  fromMail: boolean;
+  sourceMailMessageId?: number;
+  reportedAt?: string;
+  /** Whole days since the reading. Computed by the API so every view agrees on it. */
+  ageDays: number;
+
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/**
+ * A position being recorded. Only the vessel is required — "MV LADY LEYLA SPOT AT MARMARA"
+ * is a complete position as far as the market is concerned and names no date at all.
+ */
+export interface VesselPositionRequest {
+  vesselId: number;
+  status?: PositionStatus;
+  openPortId?: number;
+  openPortText?: string;
+  openAreaId?: number;
+  openFrom?: string;
+  openTo?: string;
+  openText?: string;
+  lastCargo?: string;
+  cargoPreferences?: string;
+  reportedByCompanyId?: number;
+  reportedByPersonId?: number;
+  sourceMailMessageId?: number;
+  reportedAt?: string;
+  notes?: string;
+}
+
 /* ---------------- cargoes ---------------- */
 
 export type CargoStatus =
@@ -559,6 +631,28 @@ export interface PageParams {
   page?: number;
   size?: number;
   sort?: string; // e.g. "name,asc"
+}
+
+export interface PositionFilter extends PageParams {
+  /** Matches the vessel's current name or any former one. */
+  vesselName?: string;
+  vesselId?: number;
+  /** Only meaningful with current=false; alongside current it would contradict rather than narrow. */
+  status?: PositionStatus[];
+  openAreaId?: number;
+  /** Overlap, not containment — and positions with no dates always come back. */
+  openFrom?: string;
+  openTo?: string;
+  reportedByCompanyId?: number;
+  /** A fleet list is worked with this on: older readings are an archive, not a fleet. */
+  reportedWithinDays?: number;
+  /** Reads DWCC where recorded and DWT where not — the position lists quote either. */
+  minSize?: number;
+  maxSize?: number;
+  geared?: boolean;
+  includeBanned?: boolean;
+  /** Newest live row per vessel. Default true — that is what "open fleet" means. */
+  current?: boolean;
 }
 
 export interface CargoFilter extends PageParams {

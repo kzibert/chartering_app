@@ -4,12 +4,16 @@ import { companiesApi } from './companies';
 import { peopleApi } from './people';
 import { contactsApi } from './contacts';
 import { cargoesApi } from './cargoes';
+import { positionsApi } from './positions';
 import { dataChangesApi, type DataChangeFilter } from './dataChanges';
 import { lookupsApi } from './lookups';
 import { settingsApi } from './settings';
 import { forgetRecent, type RecentKind } from '../recent/store';
 import type {
   CargoFilter,
+  PositionFilter,
+  PositionStatus,
+  VesselPositionRequest,
   CargoRequest,
   CargoStatus,
   CompanyFilter,
@@ -101,6 +105,51 @@ export const useTradeAreas = () =>
  */
 export const useWhatsappSettings = () =>
   useQuery({ queryKey: ['settings', 'whatsapp'], queryFn: settingsApi.whatsapp, ...LOOKUP_OPTS });
+
+/* ---------------- open fleet ---------------- */
+export const usePositions = (filter: PositionFilter) =>
+  useQuery({ queryKey: ['positions', filter], queryFn: () => positionsApi.search(filter) });
+
+export const usePosition = (id?: number) =>
+  useQuery({
+    queryKey: ['position', id],
+    queryFn: () => positionsApi.get(id as number),
+    enabled: id != null,
+  });
+
+/** A vessel's whole reporting history — read from her drawer, not from the fleet list. */
+export const useVesselPositionHistory = (vesselId?: number) =>
+  useQuery({
+    queryKey: ['positions', 'vessel', vesselId],
+    queryFn: () => positionsApi.history(vesselId as number),
+    enabled: vesselId != null,
+  });
+
+export function usePositionMutations() {
+  const invalidate = useInvalidator();
+  // 'vessel' is touched because her drawer shows the position history; 'matches' because
+  // Match scores live positions on every request and a new reading changes the answer.
+  const touched = ['positions', 'position', 'vessel', 'matches'] as const;
+  const create = useMutation({
+    mutationFn: (body: VesselPositionRequest) => positionsApi.create(body),
+    onSuccess: () => invalidate(...touched),
+  });
+  const update = useMutation({
+    mutationFn: (v: { id: number; body: VesselPositionRequest }) =>
+      positionsApi.update(v.id, v.body),
+    onSuccess: () => invalidate(...touched),
+  });
+  const setStatus = useMutation({
+    mutationFn: (v: { id: number; status: PositionStatus }) =>
+      positionsApi.setStatus(v.id, v.status),
+    onSuccess: () => invalidate(...touched),
+  });
+  const remove = useMutation({
+    mutationFn: (id: number) => positionsApi.remove(id),
+    onSuccess: () => invalidate('positions', 'vessel', 'matches'),
+  });
+  return { create, update, setStatus, remove };
+}
 
 /* ---------------- cargoes ---------------- */
 export const useCargoes = (filter: CargoFilter) =>

@@ -15,6 +15,7 @@ import com.chartering.model.Port;
 import com.chartering.model.TradeArea;
 import com.chartering.model.Vessel;
 import com.chartering.model.VesselExName;
+import com.chartering.model.VesselPosition;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
@@ -58,6 +59,53 @@ public class DtoMapper {
                 v.getNotes(),
                 v.isConfirmed(), v.getConfirmedAt(), v.getConfirmedBy(), v.getConfirmNotes(),
                 v.isBanned(), v.isLegacy());
+    }
+
+    /**
+     * One reported position, with the whole vessel it is about.
+     *
+     * <p>The vessel rides along rather than her id: Open Fleet is a fleet list, every
+     * question asked of a row ("how big, how deep, geared?") is answered from her record,
+     * and sending an id would make the screen fetch one per row.
+     */
+    public VesselPositionResponse toVesselPositionResponse(
+            VesselPosition p, List<VesselExNameResponse> exNames) {
+        TradeArea openArea = effectiveArea(p.getOpenPort(), p.getOpenArea());
+        Company reporter = p.getReportedByCompany();
+        Person reporterPerson = p.getReportedByPerson();
+        return new VesselPositionResponse(
+                p.getId(),
+                toVesselResponse(p.getVessel(), exNames),
+                p.getStatus().name(),
+                p.getOpenPort() != null ? p.getOpenPort().getId() : null,
+                p.getOpenPort() != null ? p.getOpenPort().getName() : null,
+                p.getOpenPortText(),
+                openArea != null ? openArea.getId() : null,
+                openArea != null ? openArea.getCode() : null,
+                openArea != null ? openArea.getName() : null,
+                p.getOpenFrom(), p.getOpenTo(), p.getOpenText(),
+                p.getLastCargo(), p.getCargoPreferences(),
+                reporter != null ? reporter.getId() : null,
+                reporter != null ? reporter.getName() : null,
+                reporterPerson != null ? reporterPerson.getId() : null,
+                reporterPerson != null ? reporterPerson.getFullName() : null,
+                p.isFromMail(),
+                p.getSourceMailMessage() != null ? p.getSourceMailMessage().getId() : null,
+                p.getReportedAt(),
+                ageDays(p.getReportedAt()),
+                p.getNotes(), p.getCreatedAt(), p.getUpdatedAt());
+    }
+
+    /**
+     * Whole days since a reading was reported.
+     *
+     * <p>Computed here rather than in the browser so the table and the phone card cannot
+     * disagree about it, and floored rather than rounded: something reported 23 hours ago is
+     * today's reading, and calling it a day old would make every morning's list look stale.
+     */
+    private static long ageDays(java.time.OffsetDateTime reportedAt) {
+        if (reportedAt == null) return 0;
+        return java.time.Duration.between(reportedAt, java.time.OffsetDateTime.now()).toDays();
     }
 
     public VesselExNameResponse toVesselExNameResponse(VesselExName e) {
