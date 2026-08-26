@@ -5,12 +5,14 @@ import { peopleApi } from './people';
 import { contactsApi } from './contacts';
 import { cargoesApi } from './cargoes';
 import { positionsApi } from './positions';
+import { matchesApi } from './matches';
 import { dataChangesApi, type DataChangeFilter } from './dataChanges';
 import { lookupsApi } from './lookups';
 import { settingsApi } from './settings';
 import { forgetRecent, type RecentKind } from '../recent/store';
 import type {
   CargoFilter,
+  MatchOutcomeRequest,
   PositionFilter,
   PositionStatus,
   VesselPositionRequest,
@@ -105,6 +107,43 @@ export const useTradeAreas = () =>
  */
 export const useWhatsappSettings = () =>
   useQuery({ queryKey: ['settings', 'whatsapp'], queryFn: settingsApi.whatsapp, ...LOOKUP_OPTS });
+
+/* ---------------- match ---------------- */
+/**
+ * Scores are computed per request, so these queries are not cached long: a position added a
+ * minute ago changes the answer, and every write in this feature invalidates 'matches'.
+ */
+export const useMatchOverview = () =>
+  useQuery({ queryKey: ['matches', 'overview'], queryFn: matchesApi.overview });
+
+export const useMatchesForCargo = (cargoId?: number, includeRuledOut = false) =>
+  useQuery({
+    queryKey: ['matches', 'cargo', cargoId, includeRuledOut],
+    queryFn: () => matchesApi.forCargo(cargoId as number, includeRuledOut),
+    enabled: cargoId != null,
+  });
+
+export const useMatchesForPosition = (positionId?: number, includeRuledOut = false) =>
+  useQuery({
+    queryKey: ['matches', 'position', positionId, includeRuledOut],
+    queryFn: () => matchesApi.forPosition(positionId as number, includeRuledOut),
+    enabled: positionId != null,
+  });
+
+export function useMatchMutations() {
+  const invalidate = useInvalidator();
+  const decide = useMutation({
+    mutationFn: (v: { cargoId: number; vesselId: number; body: MatchOutcomeRequest }) =>
+      matchesApi.decide(v.cargoId, v.vesselId, v.body),
+    onSuccess: () => invalidate('matches'),
+  });
+  const clear = useMutation({
+    mutationFn: (v: { cargoId: number; vesselId: number }) =>
+      matchesApi.clear(v.cargoId, v.vesselId),
+    onSuccess: () => invalidate('matches'),
+  });
+  return { decide, clear };
+}
 
 /* ---------------- open fleet ---------------- */
 export const usePositions = (filter: PositionFilter) =>

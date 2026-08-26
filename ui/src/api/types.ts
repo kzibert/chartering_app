@@ -347,6 +347,62 @@ export interface TradeAreaResponse {
   aliases?: string[];
 }
 
+/* ---------------- match ---------------- */
+
+/**
+ * PASS, FAIL or UNKNOWN — and the third is not the second.
+ *
+ * Half this fleet has no gear recorded and two thousand hulls have no DWCC. Reading "not on
+ * file" as "does not fit" would rule out most of the tonnage on the desk; reading it as
+ * "fits" would offer ships nobody had checked. UNKNOWN says so and costs the pairing points
+ * without excluding it.
+ */
+export type MatchVerdict = 'PASS' | 'FAIL' | 'UNKNOWN';
+
+export type MatchOutcome = 'SHORTLISTED' | 'OFFERED' | 'DECLINED' | 'FIXED' | 'DISMISSED';
+
+export interface MatchCheckResponse {
+  code: string;
+  label: string;
+  verdict: MatchVerdict;
+  weight: number;
+  /** Always the actual figures — "Draws 7.9m, berth takes 7.0m" — so it can be argued with. */
+  detail: string;
+}
+
+export interface MatchResponse {
+  cargo: CargoResponse;
+  /** Absent only when a decision was recorded for a vessel with no live position. */
+  position?: VesselPositionResponse;
+  /** 0–100: the share of the applicable weight that passed. */
+  score: number;
+  /** A check FAILed — we hold data saying she does not fit. */
+  ruledOut: boolean;
+  /** Checks the cargo asked for that her record could not answer. */
+  unknowns: number;
+  checks: MatchCheckResponse[];
+  ballastDays?: number;
+  earliestArrival?: string;
+  outcome?: MatchOutcome;
+  outcomeNote?: string;
+}
+
+/** One live cargo and how much tonnage stands against it. */
+export interface MatchSummaryResponse {
+  cargo: CargoResponse;
+  suitable: number;
+  /** Suitable ships nothing has been decided about — whether there is work here. */
+  untouched: number;
+  ruledOut: number;
+  bestScore: number;
+}
+
+export interface MatchOutcomeRequest {
+  outcome: MatchOutcome;
+  note?: string;
+  vesselPositionId?: number;
+}
+
 /* ---------------- open fleet ---------------- */
 
 export type PositionStatus = 'LIVE' | 'FIXED' | 'WITHDRAWN' | 'SUPERSEDED' | 'EXPIRED';
