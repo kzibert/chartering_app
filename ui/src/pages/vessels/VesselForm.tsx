@@ -102,59 +102,62 @@ export default function VesselForm({ open, editing, defaults, onClose, onDeleted
       destroyOnClose
     >
       <Form form={form} layout="vertical" onFinish={submit}>
+        {/* xs/md throughout, like the fittings rows below: `span` alone is every
+            breakpoint at once, and a third of a phone screen is not a field, it is a
+            place to lose a deadweight in. */}
         <Row gutter={12}>
-          <Col span={16}>
+          <Col xs={24} md={16}>
             <Form.Item name="name" label="Name" rules={[{ required: true, message: 'name is required' }]}>
               <Input />
             </Form.Item>
           </Col>
-          <Col span={8}>
+          <Col xs={24} md={8}>
             <Form.Item name="imoNumber" label="IMO">
               <Input />
             </Form.Item>
           </Col>
         </Row>
         <Row gutter={12}>
-          <Col span={8}>
+          <Col xs={12} md={8}>
             <Form.Item name="deadweightTonnage" label="DWT">
               <InputNumber style={{ width: '100%' }} min={0} />
             </Form.Item>
           </Col>
-          <Col span={8}>
+          <Col xs={12} md={8}>
             <Form.Item name="deadweightCargoCapacity" label="DWCC">
               <InputNumber style={{ width: '100%' }} min={0} />
             </Form.Item>
           </Col>
-          <Col span={8}>
+          <Col xs={12} md={8}>
             <Form.Item name="yearBuilt" label="Year built">
               <InputNumber style={{ width: '100%' }} min={1900} max={2100} />
             </Form.Item>
           </Col>
         </Row>
         <Row gutter={12}>
-          <Col span={8}>
+          <Col xs={12} md={8}>
             <Form.Item name="grainCapacityM3" label="Grain (m³)">
               <InputNumber style={{ width: '100%' }} min={0} />
             </Form.Item>
           </Col>
-          <Col span={8}>
+          <Col xs={12} md={8}>
             <Form.Item name="baleCapacityM3" label="Bale (m³)">
               <InputNumber style={{ width: '100%' }} min={0} />
             </Form.Item>
           </Col>
-          <Col span={8}>
+          <Col xs={12} md={8}>
             <Form.Item name="maximumDraft" label="Max draft">
               <InputNumber style={{ width: '100%' }} min={0} />
             </Form.Item>
           </Col>
         </Row>
         <Row gutter={12}>
-          <Col span={12}>
+          <Col xs={24} md={12}>
             <Form.Item name="vesselType" label="Type">
               <Select allowClear options={(types ?? []).map((t) => ({ value: t, label: t }))} />
             </Form.Item>
           </Col>
-          <Col span={12}>
+          <Col xs={24} md={12}>
             <Form.Item name="flag" label="Flag">
               <Select allowClear options={(flags ?? []).map((f) => ({ value: f, label: f }))} />
             </Form.Item>

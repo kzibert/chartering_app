@@ -50,14 +50,24 @@ export default function MatchChecks({ checks }: { checks: MatchCheckResponse[] }
       {checks.map((c) => {
         const v = VERDICT[c.verdict];
         return (
-          <div key={c.code} style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+          /* Wraps, and the reason is the phone: a detail line is "Draws 7.9m, berth takes
+             7.0m" and at 360px it needs the width of the row rather than what is left of it
+             beside the label. min-width:0 with it, or the flex item refuses to shrink below
+             its longest word and takes the card out past the screen edge. */
+          <div
+            key={c.code}
+            style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}
+          >
             <Tooltip title={v.hint}>
               <span style={{ color: v.color }}>{v.icon}</span>
             </Tooltip>
             <Typography.Text strong style={{ minWidth: 78 }}>
               {c.label}
             </Typography.Text>
-            <Typography.Text type={c.verdict === 'UNKNOWN' ? 'secondary' : undefined}>
+            <Typography.Text
+              type={c.verdict === 'UNKNOWN' ? 'secondary' : undefined}
+              style={{ flex: '1 1 200px', minWidth: 0 }}
+            >
               {c.detail}
             </Typography.Text>
           </div>
