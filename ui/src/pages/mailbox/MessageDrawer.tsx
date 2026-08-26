@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   App,
   Button,
@@ -15,17 +15,23 @@ import {
 import {
   BankOutlined,
   CloudServerOutlined,
+  CompassOutlined,
   DisconnectOutlined,
   FolderOutlined,
   InboxOutlined,
   LinkOutlined,
   MailOutlined,
   PaperClipOutlined,
+  PlusOutlined,
   SendOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { useMailFolders, useMailMessage, useMailMessageMutations } from '../../mailbox/store';
+import CargoForm from '../cargoes/CargoForm';
+import PositionForm from '../openFleet/PositionForm';
 import LinkCompanyModal from './LinkCompanyModal';
+import MailReference from './MailReference';
+import MessageBody from './MessageBody';
 import ReplyModal from './ReplyModal';
 
 interface Props {
@@ -49,8 +55,64 @@ export default function MessageDrawer({ messageId, onClose, onOpenCompany }: Pro
   const { setRead, move, unlink } = useMailMessageMutations();
   const [linkOpen, setLinkOpen] = useState(false);
   const [replyOpen, setReplyOpen] = useState(false);
+  // Which of the two records is being written out of this message, if either.
+  const [recording, setRecording] = useState<'position' | 'cargo' | null>(null);
+  // The menu's open state is held here rather than left to antd, because picking from it
+  // opens a modal over this drawer: on a phone the menu survived that and stayed floating
+  // over the form that had just opened underneath it.
+  const [recordMenuOpen, setRecordMenuOpen] = useState(false);
 
   const m = data?.message;
+
+  /*
+   * What the message itself already answers, filled in before the form opens.
+   *
+   * `sourceMailMessageId` is the load-bearing one: the API links the record to the message
+   * and marks it as having come from mail, which is what the Cargoes tab's "from mail"
+   * filter reads. The rest is provenance the mail states outright — a reading is as old as
+   * the email carrying it, not as old as the evening it got typed up, and the desk that
+   * sent the list is the desk that reported it.
+   *
+   * A cargo gets no company prefilled, and that is the difference. "Who told us" is a fact
+   * about a position; on a cargo the two company fields are charterer and broker, and which
+   * of those the sender is depends on how the enquiry was routed. Guessing would fill in a
+   * field nobody would then think to check.
+   *
+   * The timestamp is converted rather than passed on, because the two halves keep time
+   * differently: `mail_messages.received_at` is a `LocalDateTime` and arrives with no zone
+   * on it ("2026-08-26T14:40:11"), while a cargo's `received_at` and a position's
+   * `reported_at` are `OffsetDateTime`, where an offset is not optional — handing the raw
+   * string over is a 400 out of Jackson before the record is ever looked at. dayjs reads
+   * the zone-less string in the browser's own zone, which is the same reading every screen
+   * in the mailbox already gives it, so what gets stored is the instant shown on screen.
+   */
+  const mailReceivedAt = m ? dayjs(m.receivedAt).toISOString() : undefined;
+  const positionDefaults = useMemo(
+    () =>
+      m
+        ? {
+            sourceMailMessageId: m.id,
+            reportedByCompanyId: m.companyId,
+            reportedAt: mailReceivedAt,
+          }
+        : undefined,
+    [m?.id, m?.companyId, mailReceivedAt], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const cargoDefaults = useMemo(
+    () => (m ? { sourceMailMessageId: m.id, receivedAt: mailReceivedAt } : undefined),
+    [m?.id, mailReceivedAt], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
+  const recordMenu = {
+    items: [
+      { key: 'position', icon: <CompassOutlined />, label: 'Vessel position' },
+      { key: 'cargo', icon: <InboxOutlined />, label: 'Cargo' },
+    ],
+    onClick: ({ key }: { key: string }) => {
+      setRecording(key as 'position' | 'cargo');
+      setRecordMenuOpen(false);
+    },
+  };
   const named = (folders.data ?? []).filter((f) => f.id != null);
 
   const moveMenu = {
@@ -125,6 +187,16 @@ export default function MessageDrawer({ messageId, onClose, onOpenCompany }: Pro
               >
                 Reply
               </Button>
+              {/* Second, and the other half of what this desk does with its mail: a list of
+                  open tonnage or an enquiry is read once and then wants typing up. Both
+                  forms open over this drawer with the message still on screen beside them,
+                  because copying figures out of an email you cannot see is how a laycan
+                  ends up a month out. */}
+              <Dropdown menu={recordMenu} open={recordMenuOpen} onOpenChange={setRecordMenuOpen}>
+                <Button size="small" icon={<PlusOutlined />}>
+                  Record…
+                </Button>
+              </Dropdown>
               <Button
                 size="small"
                 onClick={() =>
@@ -278,73 +350,26 @@ export default function MessageDrawer({ messageId, onClose, onOpenCompany }: Pro
           quotes nothing itself, but it needs the sender, the subject and the links, and
           fetching them a second time would be a second chance to disagree. */}
       <ReplyModal open={replyOpen} detail={data} onClose={() => setReplyOpen(false)} />
+
+      {/* Both forms are mounted only once there is a message to reference — they are given
+          the detail this drawer already holds, so the pane beside the fields is the same
+          text being read behind them, not a second fetch of it. */}
+      {data && (
+        <>
+          <PositionForm
+            open={recording === 'position'}
+            defaults={positionDefaults}
+            reference={<MailReference detail={data} />}
+            onClose={() => setRecording(null)}
+          />
+          <CargoForm
+            open={recording === 'cargo'}
+            defaults={cargoDefaults}
+            reference={<MailReference detail={data} />}
+            onClose={() => setRecording(null)}
+          />
+        </>
+      )}
     </>
-  );
-}
-
-/**
- * The body itself.
- *
- * <p>HTML mail is rendered inside a sandboxed iframe rather than into the page. The markup
- * is already sanitized server-side, so this is not the security boundary — it is the style
- * boundary. A circular from a broker carries its own CSS, frequently including rules on
- * {@code body} and {@code table}, and dropping that straight into the document would
- * restyle the app around it. The sandbox attribute is empty, which also leaves scripting off
- * as a second line behind the sanitizer.
- */
-function MessageBody({ html, text }: { html?: string; text?: string }) {
-  // A long Outlook reply chain is a hundred kilobytes of nested tables and takes a second
-  // or two to lay out. Without this the reader stares at an empty white box in the meantime
-  // and reasonably concludes the message has no body.
-  const [rendered, setRendered] = useState(false);
-
-  if (html) {
-    return (
-      <div style={{ position: 'relative' }}>
-        {!rendered && (
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: '#fff',
-              border: '1px solid rgba(5,5,5,0.06)',
-              borderRadius: 6,
-              zIndex: 1,
-            }}
-          >
-            <Spin tip="Rendering the message…">
-              <div style={{ padding: 24 }} />
-            </Spin>
-          </div>
-        )}
-      <iframe
-        onLoad={() => setRendered(true)}
-        title="Message body"
-        sandbox=""
-        srcDoc={`<!doctype html><meta charset="utf-8">
-          <style>
-            body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; font-size: 14px;
-                   color: #262626; margin: 0; padding: 4px; word-break: break-word; }
-            img { max-width: 100%; height: auto; }
-            table { max-width: 100%; }
-          </style>${html}`}
-        style={{
-          width: '100%',
-          height: '60vh',
-          border: '1px solid rgba(5,5,5,0.06)',
-          borderRadius: 6,
-          background: '#fff',
-        }}
-      />
-      </div>
-    );
-  }
-  return (
-    <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', margin: 0 }}>
-      {text || <Typography.Text type="secondary">This message has no readable body.</Typography.Text>}
-    </Typography.Paragraph>
   );
 }
