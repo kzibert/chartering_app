@@ -19,6 +19,7 @@ import type {
   PeopleFilter,
   PersonRequest,
   VesselCompanyRole,
+  VesselExNameRequest,
   VesselFilter,
   VesselRequest,
   VesselResponse,
@@ -184,6 +185,18 @@ export function useVesselMutations() {
   });
   // Attach a company to a vessel as owner / exclusive broker / broker. Touches
   // 'company' too: the change shows up in that company's Vessels tab as well.
+  // Former names. 'vessels' is touched as well as 'vessel' because the list rows carry
+  // them — a name added here is what makes that ship findable in the search box.
+  const addExName = useMutation({
+    mutationFn: (v: { id: number; body: VesselExNameRequest }) =>
+      vesselsApi.addExName(v.id, v.body),
+    onSuccess: () => invalidate('vessels', 'vessel'),
+  });
+  const removeExName = useMutation({
+    mutationFn: (v: { id: number; exNameId: number }) =>
+      vesselsApi.removeExName(v.id, v.exNameId),
+    onSuccess: () => invalidate('vessels', 'vessel'),
+  });
   const setLink = useMutation({
     mutationFn: (v: { vesselId: number; companyId: number; role: VesselCompanyRole }) =>
       vesselsApi.setLink(v.vesselId, v.companyId, v.role),
@@ -202,7 +215,10 @@ export function useVesselMutations() {
       vesselsApi.update(v.vessel.id, { ...toVesselRequest(v.vessel), ownerId: v.ownerId }),
     onSuccess: () => invalidate(...touched),
   });
-  return { create, update, remove, confirm, ban, setOwner, setLink, removeLink };
+  return {
+    create, update, remove, confirm, ban, setOwner, setLink, removeLink,
+    addExName, removeExName,
+  };
 }
 
 /* ---------------- companies ---------------- */

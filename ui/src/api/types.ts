@@ -21,6 +21,24 @@ export interface VesselResponse {
   yearBuilt?: number;
   vesselType?: string;
   flag?: string;
+
+  /**
+   * What a charterer asks before anything else, and what the schema had no room for until
+   * now. All optional, and absent means "not on file" rather than "no" — false would be a
+   * claim about four thousand rows nobody has checked, and Match reads the difference.
+   */
+  geared?: boolean;
+  gearDescription?: string;
+  holds?: number;
+  hatches?: number;
+  grainFitted?: boolean;
+  timberFitted?: boolean;
+  imoFitted?: boolean;
+  iceClass?: string;
+
+  /** Names she used to carry. Always present, empty for a ship never renamed. */
+  exNames?: VesselExNameResponse[];
+
   ownerId?: number;
   ownerName?: string;
   notes?: string;
@@ -30,6 +48,28 @@ export interface VesselResponse {
   confirmNotes?: string;
   banned: boolean;
   legacy: boolean;
+}
+
+/**
+ * A name a vessel used to carry.
+ *
+ * `source: 'backfill'` means a migration extracted it out of a name somebody had typed a
+ * rename history into ("LOIRE RIVER/ EX AMIKO") — those are the ones to look at twice if a
+ * ship ever seems wrong. `'manual'` means a person added it.
+ */
+export interface VesselExNameResponse {
+  id: number;
+  vesselId: number;
+  name: string;
+  source: 'backfill' | 'manual';
+  renamedAt?: string;
+  notes?: string;
+}
+
+export interface VesselExNameRequest {
+  name: string;
+  renamedAt?: string;
+  notes?: string;
 }
 
 /** How a company relates to a vessel. One role per company per vessel. */
@@ -69,6 +109,20 @@ export interface VesselRequest {
   yearBuilt?: number;
   vesselType?: string;
   flag?: string;
+
+  /**
+   * Leaving one of these out says "still not on file", which is a different statement from
+   * false and the only honest one for most of the fleet. Match reads the difference.
+   */
+  geared?: boolean;
+  gearDescription?: string;
+  holds?: number;
+  hatches?: number;
+  grainFitted?: boolean;
+  timberFitted?: boolean;
+  imoFitted?: boolean;
+  iceClass?: string;
+
   ownerId?: number;
   notes?: string;
 }
@@ -529,7 +583,14 @@ export interface CargoFilter extends PageParams {
 }
 
 export interface VesselFilter extends PageParams {
+  /** Matches the current name OR any former name — which is the point of recording them. */
   name?: string;
+  /**
+   * Geared or gearless. Asking for geared returns only vessels a list has actually said
+   * are geared; ones with nothing on file do not come back, the same way a size range
+   * excludes an unrecorded figure.
+   */
+  geared?: boolean;
   imoNumber?: string;
   /**
    * DWT and DWCC are OR'd with each other, as are grain and bale — the two figures in

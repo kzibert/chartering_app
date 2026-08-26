@@ -14,9 +14,11 @@ import com.chartering.model.Person;
 import com.chartering.model.Port;
 import com.chartering.model.TradeArea;
 import com.chartering.model.Vessel;
+import com.chartering.model.VesselExName;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * Entity -> response-DTO mapping. Centralized so services stay thin and mapping is
@@ -26,18 +28,42 @@ import java.time.LocalDateTime;
 @Component
 public class DtoMapper {
 
+    /**
+     * A vessel without her former names — the shape every existing caller wanted.
+     *
+     * <p>Kept as the default rather than lazily loading the collection here: the ex-names
+     * are a separate table, and a mapper that fetched them per row would put a query behind
+     * every line of a twenty-row page. Callers that want them read them in one go and use
+     * the overload.
+     */
     public VesselResponse toVesselResponse(Vessel v) {
+        return toVesselResponse(v, List.of());
+    }
+
+    public VesselResponse toVesselResponse(Vessel v, List<VesselExNameResponse> exNames) {
         Company owner = v.getOwner();
         return new VesselResponse(
                 v.getId(), v.getName(), v.getImoNumber(),
                 v.getDeadweightTonnage(), v.getDeadweightCargoCapacity(),
                 v.getGrainCapacityM3(), v.getBaleCapacityM3(), v.getMaximumDraft(),
                 v.getYearBuilt(), v.getVesselType(), v.getFlag(),
+                v.getGeared(), v.getGearDescription(), v.getHolds(), v.getHatches(),
+                v.getGrainFitted(), v.getTimberFitted(), v.getImoFitted(), v.getIceClass(),
+                // Empty rather than null: an absent list and a vessel that has never been
+                // renamed are the same thing to every caller, and NON_NULL would send the
+                // first as nothing while sending the second as [].
+                exNames == null ? List.of() : exNames,
                 owner != null ? owner.getId() : null,
                 owner != null ? owner.getName() : null,
                 v.getNotes(),
                 v.isConfirmed(), v.getConfirmedAt(), v.getConfirmedBy(), v.getConfirmNotes(),
                 v.isBanned(), v.isLegacy());
+    }
+
+    public VesselExNameResponse toVesselExNameResponse(VesselExName e) {
+        return new VesselExNameResponse(
+                e.getId(), e.getVessel().getId(), e.getName(),
+                e.getSource(), e.getRenamedAt(), e.getNotes());
     }
 
     /**

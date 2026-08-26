@@ -2,6 +2,7 @@ package com.chartering.specification;
 
 import com.chartering.model.Vessel;
 import com.chartering.model.VesselCompanyLink;
+import com.chartering.model.VesselExName;
 import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
@@ -20,9 +21,40 @@ public final class VesselSpecification {
     private VesselSpecification() {
     }
 
+    /**
+     * By name — the one she carries now <em>or</em> any she used to.
+     *
+     * <p>Searching former names is the entire reason they were extracted. A position list
+     * arriving on Monday may use a name this database has never seen for a hull it has held
+     * for ten years, and the IMO number, which is the only identifier that never moves, is
+     * exactly what a broker's circular leaves out. Before this, "AMIKO" found LOIRE RIVER
+     * only by the accident of her old name still being glued onto the front of her new one.
+     *
+     * <p>EXISTS rather than a join, so a vessel with three former names is still one row.
+     */
     public static Specification<Vessel> nameContains(String name) {
-        return (root, query, cb) -> name == null || name.isBlank() ? null
-                : cb.like(cb.lower(root.get("name")), "%" + name.toLowerCase() + "%");
+        return (root, query, cb) -> {
+            if (name == null || name.isBlank()) return null;
+            String pattern = "%" + name.toLowerCase() + "%";
+            Subquery<Long> ex = query.subquery(Long.class);
+            Root<VesselExName> e = ex.from(VesselExName.class);
+            return cb.or(
+                    cb.like(cb.lower(root.get("name")), pattern),
+                    cb.exists(ex.select(e.get("id")).where(
+                            cb.equal(e.get("vessel").get("id"), root.get("id")),
+                            cb.like(cb.lower(e.get("name")), pattern))));
+        };
+    }
+
+    /**
+     * Geared, gearless, or unknown.
+     *
+     * <p>Asking for geared returns only vessels a list has actually said are geared. The
+     * ones with nothing on file do not come back, for the same reason a size range excludes
+     * an unrecorded figure: "not known to be gearless" is not an answer a charterer accepts.
+     */
+    public static Specification<Vessel> gearedEquals(Boolean geared) {
+        return (root, query, cb) -> geared == null ? null : cb.equal(root.get("geared"), geared);
     }
 
     public static Specification<Vessel> imoEquals(String imo) {

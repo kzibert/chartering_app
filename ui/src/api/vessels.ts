@@ -6,6 +6,8 @@ import type {
   VesselDetailResponse,
   VesselCompanyLinkResponse,
   VesselCompanyRole,
+  VesselExNameRequest,
+  VesselExNameResponse,
   VesselFilter,
   VesselRequest,
   VesselResponse,
@@ -26,6 +28,14 @@ export const toVesselRequest = (v: VesselResponse): VesselRequest => ({
   yearBuilt: v.yearBuilt,
   vesselType: v.vesselType,
   flag: v.flag,
+  geared: v.geared,
+  gearDescription: v.gearDescription,
+  holds: v.holds,
+  hatches: v.hatches,
+  grainFitted: v.grainFitted,
+  timberFitted: v.timberFitted,
+  imoFitted: v.imoFitted,
+  iceClass: v.iceClass,
   ownerId: v.ownerId,
   notes: v.notes,
 });
@@ -64,6 +74,21 @@ export const vesselsApi = {
     client
       .delete<VesselCompanyLinkResponse[]>(`/vessels/${id}/links/${companyId}`)
       .then((r) => r.data),
+
+  /**
+   * Names she used to carry. Their own endpoints rather than fields on the vessel: they are
+   * rows in another table, one gets added when a circular reveals one, and folding them
+   * into the whole-record PUT would mean a stale form could silently delete a ship's
+   * history while somebody was editing her deadweight.
+   */
+  exNames: (id: number) =>
+    client.get<VesselExNameResponse[]>(`/vessels/${id}/ex-names`).then((r) => r.data),
+
+  addExName: (id: number, body: VesselExNameRequest) =>
+    client.post<VesselExNameResponse>(`/vessels/${id}/ex-names`, body).then((r) => r.data),
+
+  removeExName: (id: number, exNameId: number) =>
+    client.delete<void>(`/vessels/${id}/ex-names/${exNameId}`).then((r) => r.data),
 
   confirm: (id: number, confirmed: boolean, body?: ConfirmRequest) =>
     client

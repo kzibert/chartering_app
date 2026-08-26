@@ -20,6 +20,17 @@ public class VesselRequest {
     private Integer yearBuilt;
     private String vesselType;
     private String flag;
+
+    // Nullable on purpose: leaving one out says "still not on file", which is a different
+    // statement from false and the only honest one for most of the fleet.
+    private Boolean geared;
+    private String gearDescription;
+    private Short holds;
+    private Short hatches;
+    private Boolean grainFitted;
+    private Boolean timberFitted;
+    private Boolean imoFitted;
+    private String iceClass;
     private Long ownerId;
     private String notes;
 }

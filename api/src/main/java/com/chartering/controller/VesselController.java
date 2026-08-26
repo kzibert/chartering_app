@@ -33,7 +33,13 @@ public class VesselController {
                     + "each other and with the rest. A size filter only matches vessels where "
                     + "that figure is recorded (0 means unknown, not zero tonnes). maxDraft has "
                     + "no minimum counterpart; yearFrom matches that build year and younger. "
-                    + "vesselType and flag accept repeated values (?vesselType=A&vesselType=B).")
+                    + "vesselType and flag accept repeated values (?vesselType=A&vesselType=B). "
+                    + "name matches the vessel's current name OR any former name on file, "
+                    + "which is the point of recording them: a position list may use a name "
+                    + "this database has never seen for a hull it has held for years. "
+                    + "geared=true returns only vessels a list has actually said are geared "
+                    + "- ones with nothing on file do not come back, for the same reason a "
+                    + "size range excludes an unrecorded figure.")
     public ResponseEntity<PageResponse<VesselResponse>> search(
             @RequestParam(required = false) String name,
             @RequestParam(required = false) String imoNumber,
@@ -47,6 +53,7 @@ public class VesselController {
             @RequestParam(required = false) BigDecimal maxBale,
             @RequestParam(required = false) BigDecimal maxDraft,
             @RequestParam(required = false) Integer yearFrom,
+            @RequestParam(required = false) Boolean geared,
             @RequestParam(required = false) List<String> vesselType,
             @RequestParam(required = false) List<String> flag,
             @RequestParam(required = false) Long companyId,
@@ -57,7 +64,7 @@ public class VesselController {
             @PageableDefault(size = 20, sort = "name") Pageable pageable) {
 
         VesselFilter filter = new VesselFilter(name, imoNumber, minDwt, maxDwt, minDwcc, maxDwcc,
-                minGrain, maxGrain, minBale, maxBale, maxDraft, yearFrom,
+                minGrain, maxGrain, minBale, maxBale, maxDraft, yearFrom, geared,
                 vesselType, flag, companyId, companyName, confirmed, includeBanned, legacy);
         return ResponseEntity.ok(vesselService.search(filter, pageable));
     }
@@ -83,6 +90,7 @@ public class VesselController {
             @RequestParam(required = false) BigDecimal maxBale,
             @RequestParam(required = false) BigDecimal maxDraft,
             @RequestParam(required = false) Integer yearFrom,
+            @RequestParam(required = false) Boolean geared,
             @RequestParam(required = false) List<String> vesselType,
             @RequestParam(required = false) List<String> flag,
             @RequestParam(required = false) Long companyId,
@@ -95,7 +103,7 @@ public class VesselController {
             @RequestParam(required = false) List<Long> vesselId) {
 
         VesselFilter filter = new VesselFilter(name, imoNumber, minDwt, maxDwt, minDwcc, maxDwcc,
-                minGrain, maxGrain, minBale, maxBale, maxDraft, yearFrom,
+                minGrain, maxGrain, minBale, maxBale, maxDraft, yearFrom, geared,
                 vesselType, flag, companyId, companyName, confirmed, includeBanned, legacy);
         return ResponseEntity.ok(vesselService.ownerEmailContacts(filter, vesselId, confirmedOnly));
     }
@@ -160,6 +168,31 @@ public class VesselController {
             @RequestParam(defaultValue = "true") boolean confirmed,
             @RequestBody(required = false) ConfirmRequest req) {
         return ResponseEntity.ok(vesselService.setConfirmed(id, confirmed, req));
+    }
+
+    @GetMapping("/{id}/ex-names")
+    @Operation(summary = "Names this vessel used to carry",
+            description = "source=backfill means the name was extracted by a migration out "
+                    + "of a name somebody had typed a rename history into; source=manual "
+                    + "means a person added it.")
+    public ResponseEntity<List<VesselExNameResponse>> exNames(@PathVariable Long id) {
+        return ResponseEntity.ok(vesselService.exNames(id));
+    }
+
+    @PostMapping("/{id}/ex-names")
+    @Operation(summary = "Record a former name",
+            description = "Only the name is required - the date she was renamed is almost "
+                    + "never known, and demanding it would mean a made-up date.")
+    public ResponseEntity<VesselExNameResponse> addExName(
+            @PathVariable Long id, @Valid @RequestBody VesselExNameRequest req) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(vesselService.addExName(id, req));
+    }
+
+    @DeleteMapping("/{id}/ex-names/{exNameId}")
+    @Operation(summary = "Remove a former name")
+    public ResponseEntity<Void> removeExName(@PathVariable Long id, @PathVariable Long exNameId) {
+        vesselService.removeExName(id, exNameId);
+        return ResponseEntity.noContent().build();
     }
 
     @PatchMapping("/{id}/ban")
