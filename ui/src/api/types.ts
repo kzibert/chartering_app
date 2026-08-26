@@ -257,6 +257,181 @@ export interface LookupResponse {
   name: string;
 }
 
+/**
+ * A port, with the water it sits on.
+ *
+ * Wider than LookupResponse by the two area fields, which is what lets a cargo or position
+ * form show "Salerno (WMED)" while you are choosing — so the consequence of the choice for
+ * matching is visible at the moment it is made. `tradeAreaCode` is absent for the dozen
+ * ports nothing has placed yet.
+ */
+export interface PortLookupResponse {
+  id: number;
+  name: string;
+  tradeAreaId?: number;
+  tradeAreaCode?: string;
+}
+
+/**
+ * One water a broker quotes tonnage and cargo in.
+ *
+ * Not a Region — that list is about who a circular goes to ("Israel - no", "Europe ports
+ * EXCLUDED"). This one is geography, and it nests: West Med's parent is the Mediterranean,
+ * which is containment and not adjacency.
+ *
+ * `aliases` are the spellings the market writes. "W.MED", "SPAIN MED" and "W.ITALY" all
+ * name the same water, and matching is only usable because of it.
+ */
+export interface TradeAreaResponse {
+  id: number;
+  code: string;
+  name: string;
+  parentId?: number;
+  parentCode?: string;
+  sortOrder: number;
+  notes?: string;
+  aliases?: string[];
+}
+
+/* ---------------- cargoes ---------------- */
+
+export type CargoStatus =
+  | 'OPEN'
+  | 'QUOTED'
+  | 'FIRM'
+  | 'FIXED'
+  | 'FAILED'
+  | 'EXPIRED'
+  | 'WITHDRAWN';
+
+/** The statuses still worth showing tonnage against — mirrors CargoStatus.isLive() on the API. */
+export const LIVE_CARGO_STATUSES: CargoStatus[] = ['OPEN', 'QUOTED', 'FIRM'];
+
+/**
+ * A cargo in hand.
+ *
+ * Every place comes back three ways — id, name and the raw text — because each is needed
+ * for something different: the id to re-open the edit form on the right dropdown value, the
+ * name to print, and the text to show what the email actually said when no port on file
+ * matched it. The area is the load port's own when there is a port, else the one entered by
+ * hand; the API resolves that precedence so the screen and the matching cannot disagree.
+ */
+export interface CargoResponse {
+  id: number;
+  status: CargoStatus;
+  statusNote?: string;
+  commodity: string;
+  stowageFactor?: number;
+
+  quantity?: number;
+  quantityUnit?: string;
+  quantityTolerance?: string;
+  /** What Match compares a hull against. Absent when the tolerance was not a percentage. */
+  quantityMin?: number;
+  quantityMax?: number;
+
+  loadPortId?: number;
+  loadPortName?: string;
+  loadPortText?: string;
+  loadAreaId?: number;
+  loadAreaCode?: string;
+  loadAreaName?: string;
+
+  dischargePortId?: number;
+  dischargePortName?: string;
+  dischargePortText?: string;
+  dischargeAreaId?: number;
+  dischargeAreaCode?: string;
+  dischargeAreaName?: string;
+
+  laycanFrom?: string;
+  laycanTo?: string;
+  laycanText?: string;
+
+  maxDraft?: number;
+  minDwt?: number;
+  maxDwt?: number;
+  maxAgeYears?: number;
+  requiresGeared?: boolean;
+  requiresGrainFitted?: boolean;
+  requiresImoFitted?: boolean;
+
+  freightIdea?: string;
+  commission?: string;
+  terms?: string;
+  loadRate?: string;
+  dischargeRate?: string;
+
+  chartererCompanyId?: number;
+  chartererCompanyName?: string;
+  brokerCompanyId?: number;
+  brokerCompanyName?: string;
+  brokerPersonId?: number;
+  brokerPersonName?: string;
+
+  fromMail: boolean;
+  sourceMailMessageId?: number;
+  receivedAt?: string;
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/**
+ * A cargo as it is written. Only the commodity is required, and that is the point: a first
+ * email says what the cargo is and often nothing else that can be relied on.
+ *
+ * Leave quantityMin/quantityMax out and the API derives them from the quantity and a
+ * percentage tolerance; send them and yours win, because a broker who typed a range knows
+ * something "+/- 10%" did not say.
+ */
+export interface CargoRequest {
+  commodity: string;
+  status?: CargoStatus;
+  statusNote?: string;
+  stowageFactor?: number;
+
+  quantity?: number;
+  quantityUnit?: string;
+  quantityTolerance?: string;
+  quantityMin?: number;
+  quantityMax?: number;
+
+  loadPortId?: number;
+  loadPortText?: string;
+  loadAreaId?: number;
+
+  dischargePortId?: number;
+  dischargePortText?: string;
+  dischargeAreaId?: number;
+
+  laycanFrom?: string;
+  laycanTo?: string;
+  laycanText?: string;
+
+  maxDraft?: number;
+  minDwt?: number;
+  maxDwt?: number;
+  maxAgeYears?: number;
+  requiresGeared?: boolean;
+  requiresGrainFitted?: boolean;
+  requiresImoFitted?: boolean;
+
+  freightIdea?: string;
+  commission?: string;
+  terms?: string;
+  loadRate?: string;
+  dischargeRate?: string;
+
+  chartererCompanyId?: number;
+  brokerCompanyId?: number;
+  brokerPersonId?: number;
+
+  sourceMailMessageId?: number;
+  receivedAt?: string;
+  notes?: string;
+}
+
 /* ---------------- circulation lists ---------------- */
 
 /**
@@ -330,6 +505,27 @@ export interface PageParams {
   page?: number;
   size?: number;
   sort?: string; // e.g. "name,asc"
+}
+
+export interface CargoFilter extends PageParams {
+  commodity?: string;
+  /** Repeatable. Left out, every status comes back — which is not what the tab wants. */
+  status?: CargoStatus[];
+  loadAreaId?: number;
+  dischargeAreaId?: number;
+  loadPortId?: number;
+  /**
+   * Matches cargoes whose laycan OVERLAPS this window rather than sits inside it, and
+   * returns cargoes with no laycan on file whatever the window: "the charterer has not
+   * said" is not the same as "not in September".
+   */
+  laycanFrom?: string;
+  laycanTo?: string;
+  minQuantity?: number;
+  maxQuantity?: number;
+  companyId?: number;
+  /** Read out of an email, or typed. */
+  fromMail?: boolean;
 }
 
 export interface VesselFilter extends PageParams {

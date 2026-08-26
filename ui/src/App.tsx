@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import AppLayout from './components/AppLayout';
 import Dashboard from './pages/Dashboard';
 import VesselsPage from './pages/vessels/VesselsPage';
+import CargoesPage from './pages/cargoes/CargoesPage';
 import CompaniesPage from './pages/companies/CompaniesPage';
 import PeoplePage from './pages/people/PeoplePage';
 import CirculationListsPage from './pages/circulationLists/CirculationListsPage';
@@ -61,6 +62,7 @@ function AuthenticatedApp() {
     <AppLayout username={session.data?.username}>
       <Routes>
         <Route path="/" element={<Dashboard />} />
+        <Route path="/cargoes" element={<CargoesPage />} />
         <Route path="/vessels" element={<VesselsPage />} />
         <Route path="/companies" element={<CompaniesPage />} />
         <Route path="/people" element={<PeoplePage />} />

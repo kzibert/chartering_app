@@ -3,11 +3,15 @@ import { toVesselRequest, vesselsApi } from './vessels';
 import { companiesApi } from './companies';
 import { peopleApi } from './people';
 import { contactsApi } from './contacts';
+import { cargoesApi } from './cargoes';
 import { dataChangesApi, type DataChangeFilter } from './dataChanges';
 import { lookupsApi } from './lookups';
 import { settingsApi } from './settings';
 import { forgetRecent, type RecentKind } from '../recent/store';
 import type {
+  CargoFilter,
+  CargoRequest,
+  CargoStatus,
   CompanyFilter,
   CompanyRequest,
   ConfirmRequest,
@@ -54,14 +58,20 @@ function useInvalidator() {
  * The dashboard's "recently opened" trail is pruned at the same time, and for the same
  * reason: it is the one place that still holds a link to a record after it has gone from
  * every list, and following that link would otherwise land on the tombstone and sit there
- * loading forever. The three cache keys are named to match RecentKind exactly so this
- * cannot be wired up wrong.
+ * loading forever. The cache keys for those three are named to match RecentKind exactly so
+ * this cannot be wired up wrong.
+ *
+ * Records with no trail — a cargo — still want the tombstone half, which is the part that
+ * stops an open drawer refetching a deleted id. They pass their own cache key and the
+ * pruning simply does not apply to them.
  */
+const RECENT_KINDS: readonly string[] = ['vessel', 'company', 'person'];
+
 function useMarkDeleted() {
   const qc = useQueryClient();
-  return (key: RecentKind, id: number) => {
+  return (key: RecentKind | 'cargo', id: number) => {
     qc.setQueryData([key, id], null);
-    forgetRecent(key, id);
+    if (RECENT_KINDS.includes(key)) forgetRecent(key as RecentKind, id);
   };
 }
 
@@ -77,6 +87,12 @@ export const usePorts = () =>
   useQuery({ queryKey: ['lookups', 'ports'], queryFn: lookupsApi.ports, ...LOOKUP_OPTS });
 export const useTonnageCategories = () =>
   useQuery({ queryKey: ['lookups', 'tonnage'], queryFn: lookupsApi.tonnageCategories, ...LOOKUP_OPTS });
+/**
+ * The trade-area vocabulary. Long-lived like the other lookups and more so than most —
+ * twenty-seven rows that change when somebody adds an alias, which is to say almost never.
+ */
+export const useTradeAreas = () =>
+  useQuery({ queryKey: ['lookups', 'trade-areas'], queryFn: lookupsApi.tradeAreas, ...LOOKUP_OPTS });
 
 /**
  * The greeting prefilled into WhatsApp links. Long-lived and shared: every phone row on a
@@ -84,6 +100,48 @@ export const useTonnageCategories = () =>
  */
 export const useWhatsappSettings = () =>
   useQuery({ queryKey: ['settings', 'whatsapp'], queryFn: settingsApi.whatsapp, ...LOOKUP_OPTS });
+
+/* ---------------- cargoes ---------------- */
+export const useCargoes = (filter: CargoFilter) =>
+  useQuery({ queryKey: ['cargoes', filter], queryFn: () => cargoesApi.search(filter) });
+
+export const useCargo = (id?: number) =>
+  useQuery({
+    queryKey: ['cargo', id],
+    queryFn: () => cargoesApi.get(id as number),
+    enabled: id != null,
+  });
+
+export function useCargoMutations() {
+  const invalidate = useInvalidator();
+  const markDeleted = useMarkDeleted();
+  // 'matches' rides along on every write: the Match tab scores live cargoes against live
+  // positions on each request, so a cargo that moved to FIXED or grew a draft limit changes
+  // what that screen should be showing.
+  const touched = ['cargoes', 'cargo', 'matches'] as const;
+  const create = useMutation({
+    mutationFn: (body: CargoRequest) => cargoesApi.create(body),
+    onSuccess: () => invalidate(...touched),
+  });
+  const update = useMutation({
+    mutationFn: (v: { id: number; body: CargoRequest }) => cargoesApi.update(v.id, v.body),
+    onSuccess: () => invalidate(...touched),
+  });
+  const setStatus = useMutation({
+    mutationFn: (v: { id: number; status: CargoStatus; note?: string }) =>
+      cargoesApi.setStatus(v.id, v.status, v.note),
+    onSuccess: () => invalidate(...touched),
+  });
+  const remove = useMutation({
+    mutationFn: (id: number) => cargoesApi.remove(id),
+    // Not `touched`: that includes 'cargo', which would refetch the id just deleted.
+    onSuccess: (_deleted, id) => {
+      markDeleted('cargo', id);
+      invalidate('cargoes', 'matches');
+    },
+  });
+  return { create, update, setStatus, remove };
+}
 
 /* ---------------- vessels ---------------- */
 export const useVessels = (filter: VesselFilter) =>

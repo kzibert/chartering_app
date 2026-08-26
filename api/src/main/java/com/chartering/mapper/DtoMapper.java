@@ -3,6 +3,7 @@ package com.chartering.mapper;
 import com.chartering.audit.RevertSupport;
 import com.chartering.dto.*;
 import com.chartering.model.AnalysisSample;
+import com.chartering.model.Cargo;
 import com.chartering.model.Company;
 import com.chartering.model.Contact;
 import com.chartering.model.DataChange;
@@ -10,6 +11,8 @@ import com.chartering.model.MailFolder;
 import com.chartering.model.MailMessage;
 import com.chartering.model.MailRule;
 import com.chartering.model.Person;
+import com.chartering.model.Port;
+import com.chartering.model.TradeArea;
 import com.chartering.model.Vessel;
 import org.springframework.stereotype.Component;
 
@@ -190,5 +193,63 @@ public class DtoMapper {
                 s.getAnnotation() != null,
                 s.getBodyText() != null ? s.getBodyText().length() : 0,
                 s.getNotes(), s.getCreatedAt(), s.getUpdatedAt());
+    }
+
+    /**
+     * A cargo, with each place sent as id, name and raw text.
+     *
+     * <p>The area a place resolves to is the port's own when there is a port and the cargo's
+     * area column when there is not — the same precedence Match applies, kept in one place
+     * so the screen cannot show one thing while the scoring reads another.
+     */
+    public CargoResponse toCargoResponse(Cargo c) {
+        TradeArea loadArea = effectiveArea(c.getLoadPort(), c.getLoadArea());
+        TradeArea dischargeArea = effectiveArea(c.getDischargePort(), c.getDischargeArea());
+        Company charterer = c.getChartererCompany();
+        Company broker = c.getBrokerCompany();
+        Person brokerPerson = c.getBrokerPerson();
+        return new CargoResponse(
+                c.getId(), c.getStatus().name(), c.getStatusNote(),
+                c.getCommodity(), c.getStowageFactor(),
+                c.getQuantity(), c.getQuantityUnit(), c.getQuantityTolerance(),
+                c.getQuantityMin(), c.getQuantityMax(),
+                c.getLoadPort() != null ? c.getLoadPort().getId() : null,
+                c.getLoadPort() != null ? c.getLoadPort().getName() : null,
+                c.getLoadPortText(),
+                loadArea != null ? loadArea.getId() : null,
+                loadArea != null ? loadArea.getCode() : null,
+                loadArea != null ? loadArea.getName() : null,
+                c.getDischargePort() != null ? c.getDischargePort().getId() : null,
+                c.getDischargePort() != null ? c.getDischargePort().getName() : null,
+                c.getDischargePortText(),
+                dischargeArea != null ? dischargeArea.getId() : null,
+                dischargeArea != null ? dischargeArea.getCode() : null,
+                dischargeArea != null ? dischargeArea.getName() : null,
+                c.getLaycanFrom(), c.getLaycanTo(), c.getLaycanText(),
+                c.getMaxDraft(), c.getMinDwt(), c.getMaxDwt(), c.getMaxAgeYears(),
+                c.getRequiresGeared(), c.getRequiresGrainFitted(), c.getRequiresImoFitted(),
+                c.getFreightIdea(), c.getCommission(), c.getTerms(),
+                c.getLoadRate(), c.getDischargeRate(),
+                charterer != null ? charterer.getId() : null,
+                charterer != null ? charterer.getName() : null,
+                broker != null ? broker.getId() : null,
+                broker != null ? broker.getName() : null,
+                brokerPerson != null ? brokerPerson.getId() : null,
+                brokerPerson != null ? brokerPerson.getFullName() : null,
+                c.isFromMail(),
+                c.getSourceMailMessage() != null ? c.getSourceMailMessage().getId() : null,
+                c.getReceivedAt(), c.getNotes(), c.getCreatedAt(), c.getUpdatedAt());
+    }
+
+    /**
+     * The area a place actually sits in: the port's, else the one entered by hand.
+     *
+     * <p>A named port wins because it is the more precise statement — somebody who wrote
+     * "Salerno" said more than somebody who wrote "W.Med", and if the two disagree the port
+     * is the one that was looked up rather than typed.
+     */
+    public static TradeArea effectiveArea(Port port, TradeArea fallback) {
+        if (port != null && port.getTradeArea() != null) return port.getTradeArea();
+        return fallback;
     }
 }
