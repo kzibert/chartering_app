@@ -224,7 +224,13 @@ public class MailReplyService {
      */
     private String replyFromAddress(CirculationSettings cfg) {
         String mailbox = transport.username();
-        return isSet(mailbox) ? mailbox : cfg.fromAddress();
+        // Only when it is actually an address. On Zoho and most mailbox providers the SMTP
+        // username *is* the mailbox, which is the whole reason this prefers it — but a relay
+        // is entitled to authenticate on a bare login ("desk01", an API key id), and putting
+        // that in a From header builds a message no server will accept. The refusal that
+        // came back would be about the envelope, not about the login, so it would send
+        // whoever read it looking in the wrong place.
+        return isAddress(mailbox) ? mailbox : cfg.fromAddress();
     }
 
     private void send(JavaMailSenderImpl sender, CirculationSettings cfg, String from,
@@ -273,9 +279,18 @@ public class MailReplyService {
             // message somebody sent us it offers to unsubscribe them from a correspondence.
             sender.send(mime);
         } catch (MailException | MessagingException | UnsupportedEncodingException e) {
+            // Named endpoint, deliberately. A reply goes out over SMTP whatever the Circulars
+            // tab is set to, so the host it used is not the one the screen was last showing —
+            // and the host comes from Settings while the credentials come from the
+            // environment, so the two can be made to disagree by changing one of them. Told
+            // only that "the mail server would not send this", the first guess is the message;
+            // told which account tried to talk to which host, an authentication failure
+            // against a host somebody repointed reads as exactly that.
             throw new MailSendFailedException(
-                    "The mail server would not send this reply: "
-                            + CircularSendException.rootMessage(e), e);
+                    "The mail server would not send this reply. %s:%d, as %s, said: %s"
+                            .formatted(sender.getHost(), sender.getPort(),
+                                    isSet(sender.getUsername()) ? sender.getUsername() : "no user",
+                                    CircularSendException.rootMessage(e)), e);
         }
     }
 
@@ -300,5 +315,18 @@ public class MailReplyService {
 
     private static boolean isSet(String s) {
         return s != null && !s.isBlank();
+    }
+
+    /**
+     * Enough of a check to keep a non-address out of a From header, and no more. Real
+     * address validation belongs to the {@code @Email} constraint on what the user typed;
+     * this only asks whether a configured SMTP username is the mailbox or a bare login.
+     */
+    private static boolean isAddress(String s) {
+        if (!isSet(s)) {
+            return false;
+        }
+        int at = s.indexOf('@');
+        return at > 0 && at < s.length() - 1 && s.indexOf(' ') < 0;
     }
 }

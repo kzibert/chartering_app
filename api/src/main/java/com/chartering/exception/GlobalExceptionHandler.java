@@ -1,6 +1,7 @@
 package com.chartering.exception;
 
 import jakarta.validation.ConstraintViolationException;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -13,6 +14,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 @RestControllerAdvice
+@Slf4j
 public class GlobalExceptionHandler {
 
     @ExceptionHandler(ResourceNotFoundException.class)
@@ -57,10 +59,34 @@ public class GlobalExceptionHandler {
         return body(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
     }
 
-    /** The provider refused a message we did try to send. Its own words, verbatim. */
+    /**
+     * The provider refused a message we did try to send. Its own words, verbatim.
+     *
+     * <p><b>503, and deliberately not 502</b> — which is what this returned until a reply
+     * that would not go out was reported as "a 502 from the Mailbox tab" and nobody could
+     * tell what had happened. On paper 502 is the better fit: this application really is
+     * acting as a gateway to a mail server that gave it an answer it could not use. In a
+     * browser it is unreadable. Every hop in front of this app emits 502 of its own —
+     * Cloudflare, Render's edge, Render's router, the nginx in front of the api under
+     * compose — and all of them mean "the instance is asleep, crashed, or unreachable".
+     * A status that says something true about the mail and a status that says the
+     * deployment is broken must not be the same number, because the person reading it is
+     * being asked to tell those two apart.
+     *
+     * <p>So it is reported as 503, alongside {@link MailNotConfiguredException}: the mail
+     * service this app depends on would not take the message. Which of the two it was is in
+     * the body — the provider's own refusal, verbatim — and that is the part worth reading
+     * either way.
+     *
+     * <p>Logged as well as returned, which it was not before: an SMTP refusal produced a
+     * status code in the browser and <em>nothing at all</em> in the server log, so the one
+     * place holding the provider's reply code never mentioned it. On a hosted instance that
+     * log is the only forensics there is.
+     */
     @ExceptionHandler(MailSendFailedException.class)
     public ResponseEntity<Map<String, Object>> handleMailSendFailed(MailSendFailedException ex) {
-        return body(HttpStatus.BAD_GATEWAY, ex.getMessage());
+        log.warn("Outgoing mail was refused: {}", ex.getMessage(), ex);
+        return body(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
     }
 
     /**
