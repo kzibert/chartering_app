@@ -117,6 +117,31 @@ services:
       # the annotated list of what they are.
       - key: MAIL_ENABLED
         value: false
+      # REPLIES CANNOT GO OVER SMTP FROM HERE, and this is the line that works around it.
+      #
+      # Render blocks outbound traffic to ports 25, 465 and 587 on free instances (and 25
+      # on every plan, free or paid, because it runs on EC2). Nothing about that is
+      # visible until somebody answers a broker: IMAP 993 is not blocked, so the Mailbox
+      # tab syncs perfectly, and the reply then fails with "Connect timed out" - the
+      # packets are dropped rather than refused, so there is no refusal to read.
+      #
+      # BREVO sends the identical message through Brevo's API over HTTPS instead, still
+      # from the mailbox address. Two things have to be true for it to work, and the
+      # first is not optional: the sending domain must be AUTHENTICATED in Brevo (Senders
+      # -> Domains, DKIM and SPF in DNS), because the From here is the mailbox address
+      # rather than the verified circulars one. And BREVO_API_KEY must be set below.
+      #
+      # What it costs is a Sent-folder copy - the mail never passes through the mailbox -
+      # and possibly threading, since Brevo documents its headers field as carrying
+      # non-standard headers only. Both are gone for good on this route. Moving the api
+      # to any paid instance type unblocks 465/587 and makes SMTP work again, at which
+      # point this key should be deleted rather than set to SMTP.
+      #
+      # Correspondingly absent from docker-compose: a desk on an ordinary network has no
+      # reason for it, and the office deployment shares this database, so this could not
+      # have been a Settings-tab option.
+      - key: MAIL_REPLY_PROVIDER
+        value: BREVO
 
       # ---- analysis workbench -----------------------------------------------
       # ON HERE, and it was deliberately off before, so it is worth saying what changed.

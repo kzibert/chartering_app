@@ -240,9 +240,24 @@ stays read-only: nothing is appended to a folder, no flag is set. A reply goes o
 the mailbox and comes *back* through the ordinary sync, as the provider's own copy in the
 Sent folder.
 
-- **Always the mailbox, never Brevo**, whichever provider circulars are set to. A reply has
-  to come from the address the correspondent wrote to and thread with what they sent;
-  Brevo is bulk infrastructure with its own envelope and reputation.
+- **The mailbox, not whichever provider circulars are set to.** A reply has to come from the
+  address the correspondent wrote to and thread with what they sent; Brevo is bulk
+  infrastructure with its own envelope and reputation. The circulars setting has no bearing
+  on it in either direction.
+- **`MAIL_REPLY_PROVIDER=BREVO` is the one exception, and it is a deployment fact, not a
+  preference.** Some hosts do not permit the mailbox flow at all: Render blocks outbound
+  ports 25, 465 and 587 on free instances, and the symptom is not a refusal but silence —
+  IMAP 993 is untouched, so the mailbox syncs normally and only replying fails, with
+  "Connect timed out" after fifteen seconds. There the choice is Brevo or no reply, so the
+  variable exists and `render.yaml` sets it. It is **not** a Settings-tab option and must
+  not become one: settings live in `app_settings`, and the hosted instance and the office
+  one point at the same database while needing opposite answers. Everything below the
+  transport is identical — same composition, footer, merge, quoted original, same
+  `mail_replies` row. What is given up is real and permanent: no Sent-folder copy at all,
+  and threading only if Brevo passes `In-Reply-To` through, which its API documents as
+  carrying non-standard headers only. It also needs the sending *domain* authenticated in
+  Brevo rather than a single verified sender, because the From is the mailbox address and
+  not the one circulars go out as. A paid instance unblocks 465/587 and is the better fix.
 - **The footer, the quote and the merge are applied server-side**, so what is stored as
   having been sent is the string the mail server was handed. The composer holds only what
   the user typed — which is also why a 100KB Outlook chain is not in the editor.
@@ -273,7 +288,10 @@ The third overlaps the first: the provider files this app's own SMTP circulars i
 same Sent folder (Zoho does; not every provider does), so adding them would double-count by
 an amount only the provider knows. The Sent-folder figure is also only as fresh as the last
 poll, which is why this app's own replies are counted separately from `mail_replies` as
-well — exact and immediate, and inside the folder figure once it syncs.
+well — exact and immediate, and inside the folder figure once it syncs. Under
+`MAIL_REPLY_PROVIDER=BREVO` it never joins that figure at all, because the reply does
+not pass through the mailbox: there the `mail_replies` count is the whole record, which
+is the clearest reason the two are reported side by side rather than reconciled.
 
 ### Analysis: mail kept as training data (local deployments only)
 

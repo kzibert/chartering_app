@@ -82,4 +82,29 @@ public class MailCampaignProperties {
 
     /** Where the campaign log lives. Overwritten on a new run only if the last one fully succeeded. */
     private String logFile = "logs/campaign-current.log";
+
+    /**
+     * Which transport a <em>reply</em> leaves by — {@code SMTP} (the default, and the only
+     * one before this existed) or {@code BREVO}.
+     *
+     * <p><b>Why this is an environment variable and not a setting</b>, when the same choice
+     * for circulars deliberately is one. The circulars provider is a preference: a person
+     * decides on Tuesday that this list should go through Brevo, and unticks it on Thursday.
+     * This is not that. It answers "can this machine open an SMTP connection at all", which
+     * is a fact about where the app is running and nothing the user gets an opinion about.
+     *
+     * <p>It also could not be a setting even if it wanted to be. Settings live in
+     * {@code app_settings}, and the hosted deployment and the office one point at the
+     * <em>same database</em> — so a stored value is necessarily the same value in both, and
+     * the whole point here is that it must differ. A cloud instance whose host blocks
+     * outbound SMTP needs Brevo; the desk running under compose, on a network that does not,
+     * should carry on sending replies out of the mailbox itself.
+     *
+     * <p>Left alone, replies go over SMTP, which is what {@code MailReplyService} explains at
+     * length and still prefers: the answer then comes from the address the correspondent
+     * wrote to, threads on real headers, and is filed in the mailbox's own Sent folder.
+     * Brevo gives up the last of those outright and part of the second — read that class
+     * before switching a deployment over.
+     */
+    private String replyProvider;
 }

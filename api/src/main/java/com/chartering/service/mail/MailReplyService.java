@@ -45,14 +45,22 @@ import java.util.UUID;
 /**
  * Answering a message in the mailbox, from the app.
  *
- * <h2>Always through the mailbox, never through Brevo</h2>
- * <p>The Circulars tab can send either way, and this deliberately cannot. A reply belongs to
- * a conversation the correspondent started: it has to come from the address they wrote to,
- * land in their thread, and sit in the Sent folder of the mailbox whose owner will be asked
- * about it next week. Brevo is bulk infrastructure with its own reputation and its own
- * envelope — right for two hundred cold circulars, wrong for one answer to one broker. So
- * this reads the same SMTP settings the mailbox flow uses, even while circulars are going
- * out through Brevo.
+ * <h2>Through the mailbox, and not because Brevo happens to be selected</h2>
+ * <p>The Circulars tab can send either way, and which way it is set makes no difference here.
+ * A reply belongs to a conversation the correspondent started: it has to come from the
+ * address they wrote to, land in their thread, and sit in the Sent folder of the mailbox
+ * whose owner will be asked about it next week. Brevo is bulk infrastructure with its own
+ * reputation and its own envelope — right for two hundred cold circulars, wrong for one
+ * answer to one broker. So this reads the same SMTP settings the mailbox flow uses, even
+ * while circulars are going out through Brevo.
+ *
+ * <p><b>The one exception is a deployment that cannot reach an SMTP port at all</b>, which
+ * is not a preference and is not read from Settings — see
+ * {@code MailCampaignProperties#replyProvider} and {@link BrevoReplySender}. There the choice
+ * is between Brevo and no reply at all, and it is made per environment because the hosted
+ * instance and the office one share a database and must answer it differently. Everything
+ * below the transport is identical either way: the same composition, the same merge, the
+ * same footer, the same quoted original, the same row in {@code mail_replies}.
  *
  * <h2>What is stored, and what is not</h2>
  * <p>A reply that goes out is written to {@code mail_replies} — see {@link MailReply} for
@@ -76,8 +84,34 @@ public class MailReplyService {
     private final HtmlSanitizer sanitizer;
     private final SmtpTransport transport;
     private final SmtpCircularSender smtp;
+    private final BrevoReplySender brevo;
     private final SettingsService settings;
     private final MailCampaignProperties props;
+
+    /**
+     * Which transport replies leave by on this deployment. Parsed forgivingly, the same way
+     * the circulars setting is: an unreadable value falls back to SMTP, which is what worked
+     * before the option existed. Logged as a warning rather than refused at startup, because
+     * an api that will not boot over a typo in one environment variable is a worse failure
+     * than one that boots and says on the reply screen which route it is actually using.
+     */
+    public CircularProvider replyProvider() {
+        String configured = props.getReplyProvider();
+        CircularProvider parsed = CircularProvider.parse(configured);
+        if (configured != null && !configured.isBlank() && parsed == CircularProvider.SMTP
+                && !configured.trim().equalsIgnoreCase(CircularProvider.SMTP.name())) {
+            log.warn("MAIL_REPLY_PROVIDER is set to '{}', which is not a transport this app has."
+                    + " Replies will go out over SMTP.", configured);
+        }
+        return parsed;
+    }
+
+    /** What is stopping a reply going out by the route in force, in words the user can act on. */
+    public List<String> missingSettings(CirculationSettings cfg) {
+        return replyProvider() == CircularProvider.BREVO
+                ? brevo.missingSettings(replyFromAddress(cfg))
+                : smtp.missingSettings(cfg);
+    }
 
     /**
      * Compose, send and record one reply.
@@ -99,14 +133,19 @@ public class MailReplyService {
         }
 
         CirculationSettings cfg = settings.circulation();
-        List<String> missing = smtp.missingSettings(cfg);
+        CircularProvider route = replyProvider();
+        List<String> missing = missingSettings(cfg);
         if (!missing.isEmpty()) {
             throw new MailNotConfiguredException(
-                    "The mailbox is not fully configured, so the reply was not sent. Still "
+                    (route == CircularProvider.BREVO
+                            ? "Brevo is not fully configured, so the reply was not sent. Still "
+                            : "The mailbox is not fully configured, so the reply was not sent. Still ")
                             + "needed: " + String.join(", ", missing) + ".");
         }
-        JavaMailSenderImpl sender = transport.senderFor(cfg);
-        if (sender == null) {
+        // Resolved before anything is composed, so a transport that is not there at all fails
+        // the same way a missing setting does rather than half way through a send.
+        JavaMailSenderImpl sender = route == CircularProvider.BREVO ? null : transport.senderFor(cfg);
+        if (route == CircularProvider.SMTP && sender == null) {
             throw new MailNotConfiguredException(
                     "No SMTP transport is configured on this server, so the reply was not sent.");
         }
@@ -119,12 +158,22 @@ public class MailReplyService {
         String html = templates.renderHtml(composed, recipientFor(original, req.getTo()));
 
         String from = replyFromAddress(cfg);
-        String ourMessageId = messageIdFor(from);
-        send(sender, cfg, from, req, original, html, ourMessageId);
+        // Under SMTP the Message-ID is ours to choose and worth choosing — it is what lets the
+        // Sent-folder copy be recognised as this reply when it syncs back. Brevo stamps its
+        // own and files nothing in any folder, so there the id is whatever it hands back.
+        String sentMessageId;
+        if (route == CircularProvider.BREVO) {
+            sentMessageId = brevo.send(from, cfg.fromName(), req.getTo().trim(),
+                    req.getSubject().trim(), html, templates.htmlToText(html),
+                    original.getMessageId());
+        } else {
+            sentMessageId = messageIdFor(from);
+            send(sender, cfg, from, req, original, html, sentMessageId);
+        }
 
         MailReply record = new MailReply();
         record.setMailMessage(original);
-        record.setMessageId(ourMessageId);
+        record.setMessageId(sentMessageId);
         record.setToAddress(req.getTo().trim());
         record.setSubject(req.getSubject().trim());
         record.setBodyHtml(html);
@@ -134,7 +183,8 @@ public class MailReplyService {
         record.setSentBy(currentUser());
         replies.save(record);
 
-        log.info("Replied to message {}: \"{}\" to {}", messageId, req.getSubject(), req.getTo());
+        log.info("Replied to message {} via {}: \"{}\" to {}",
+                messageId, route.label(), req.getSubject(), req.getTo());
         return new MailReplyResponse(record.getId(), original.getId(), record.getToAddress(),
                 record.getSubject(), record.getFooterName(), record.getSentAt());
     }
