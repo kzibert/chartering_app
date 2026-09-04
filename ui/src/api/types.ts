@@ -934,6 +934,17 @@ export interface CampaignConfig {
   provider: CircularProvider;
   /** The same choice, worded for display: "Mailbox (SMTP)" or "Brevo API". */
   providerLabel: string;
+  /**
+   * Which route a *reply* takes, which is a separate question with usually a different
+   * answer — replies ignore the circulars provider entirely and normally go out through the
+   * mailbox. `BREVO` here means the server was told its host cannot open an SMTP connection
+   * (MAIL_REPLY_PROVIDER), so a reply goes out as the mailbox address through Brevo instead
+   * and never reaches the mailbox's own Sent folder.
+   */
+  replyProvider: CircularProvider;
+  replyProviderLabel: string;
+  /** What is missing for a *reply* specifically — a different list once the routes differ. */
+  replyMissingSettings?: string[];
   /** Only meaningful under SMTP. */
   smtpHost?: string;
   smtpPort: number;
