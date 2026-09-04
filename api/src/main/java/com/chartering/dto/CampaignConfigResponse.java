@@ -23,6 +23,22 @@ public record CampaignConfigResponse(
         String provider,
         /** The same choice, worded for display: "Mailbox (SMTP)" or "Brevo API". */
         String providerLabel,
+        /**
+         * Which transport a <em>reply</em> leaves by, which is a different question and
+         * usually a different answer — a reply ignores the circulars provider entirely.
+         * Reported because the Reply box has to say where the message will come from, and
+         * because the two routes differ in ways the person answering a broker cares about:
+         * under Brevo the message never reaches the mailbox's Sent folder.
+         */
+        String replyProvider,
+        String replyProviderLabel,
+        /**
+         * What is missing for a reply specifically. Not the same list as
+         * {@link #missingSettings} once the two routes differ: a deployment sending
+         * circulars through Brevo may still have every SMTP setting a reply needs, and one
+         * replying through Brevo needs an API key rather than a mailbox password.
+         */
+        List<String> replyMissingSettings,
         /** Only meaningful under SMTP; kept in the payload so switching back shows the endpoint. */
         String smtpHost,
         int smtpPort,
