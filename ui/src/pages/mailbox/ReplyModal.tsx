@@ -96,8 +96,15 @@ export default function ReplyModal({ open, detail, onClose }: Props) {
   // The same two conditions the Circulars tab refuses to send under, asked here rather than
   // discovered by a 503: with sending off, or a setting missing, there is nothing this
   // screen can do about it and no reason to let somebody type an answer first.
-  const missing = cfg?.missingSettings ?? [];
+  //
+  // Asked of the *reply* route, not the circulars one. They are different questions with
+  // usually different answers — a desk sending circulars through Brevo still replies out of
+  // its mailbox — and reading the circulars list here would block the Send button over an
+  // SMTP setting a Brevo-routed reply does not need, or offer it when the route a reply
+  // actually takes is the unconfigured one.
+  const missing = cfg?.replyMissingSettings ?? [];
   const blocked = !cfg?.enabled || missing.length > 0;
+  const viaBrevo = cfg?.replyProvider === 'BREVO';
 
   const send = () => {
     if (!m) return;
@@ -144,9 +151,11 @@ export default function ReplyModal({ open, detail, onClose }: Props) {
               type="warning"
               showIcon
               message={
-                cfg?.enabled
-                  ? 'The mailbox is not fully configured'
-                  : 'Sending is switched off on this server'
+                !cfg?.enabled
+                  ? 'Sending is switched off on this server'
+                  : viaBrevo
+                    ? 'Brevo is not fully configured'
+                    : 'The mailbox is not fully configured'
               }
               description={
                 cfg?.enabled ? (
@@ -174,9 +183,19 @@ export default function ReplyModal({ open, detail, onClose }: Props) {
                   <Typography.Text type="secondary">
                     &lt;{cfg.username || cfg.fromAddress}&gt;
                   </Typography.Text>
-                  <Tooltip title="Replies go out through your mailbox over SMTP, never through Brevo, and from the mailbox's own address rather than the one circulars are sent as — that is the address this message was written to, and the one your replies from Outlook already come from.">
+                  {/* The route is named, not assumed. It is normally the mailbox over SMTP,
+                      and where it is not the difference is one the person answering a broker
+                      needs to know: the message will not be in the mailbox's Sent folder
+                      afterwards, so this box is the only place it was ever seen. */}
+                  <Tooltip
+                    title={
+                      viaBrevo
+                        ? "This server cannot open an SMTP connection — its host blocks the port — so replies go out through Brevo instead, still as your mailbox address. The correspondent sees the same From they wrote to, but the message never passes through your mailbox, so no copy is filed in its Sent folder and it may start a new thread rather than joining theirs."
+                        : "Replies go out through your mailbox over SMTP, never through Brevo, and from the mailbox's own address rather than the one circulars are sent as — that is the address this message was written to, and the one your replies from Outlook already come from."
+                    }
+                  >
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      (your mailbox)
+                      {viaBrevo ? `(your mailbox, sent via ${cfg.replyProviderLabel})` : '(your mailbox)'}
                     </Typography.Text>
                   </Tooltip>
                 </Space>

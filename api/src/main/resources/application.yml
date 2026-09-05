@@ -185,6 +185,20 @@ chartering:
     retry-backoff-ms: ${MAIL_RETRY_BACKOFF_MS:10000}
     abort-after-consecutive-failures: ${MAIL_ABORT_AFTER_FAILURES:5}
     log-file: ${MAIL_LOG_FILE:logs/campaign-current.log}
+    # Which transport a REPLY leaves by - blank (the default) means the mailbox over SMTP,
+    # BREVO means Brevo's API. Only a host that blocks outbound SMTP needs the second; see
+    # MailCampaignProperties#replyProvider for why this is an environment variable and not
+    # a Settings-tab option.
+    #
+    # This line is not optional decoration, and leaving it out is a bug that hides well.
+    # Spring's relaxed binding maps CHARTERING_MAIL_REPLY_PROVIDER onto this property by
+    # itself, but MAIL_REPLY_PROVIDER is a name of our own choosing and nothing connects
+    # the two except this reference. Without it the field simply stays null, the parse
+    # falls back to SMTP exactly as it would for an unset value, and the deployment sends
+    # over a port its host drops - with no warning anywhere, because a null here is
+    # indistinguishable from a deliberate default. Every key in this block is wired the
+    # same way for the same reason.
+    reply-provider: ${MAIL_REPLY_PROVIDER:}
 
   # Reading the mailbox: the Mailbox tab's IMAP sync. Separate from the sending block
   # above because reading and sending fail independently — a broken IMAP host must not

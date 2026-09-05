@@ -12,6 +12,7 @@ import com.chartering.repository.ContactRepository;
 import com.chartering.service.mail.CircularProvider;
 import com.chartering.service.mail.CircularSendException;
 import com.chartering.service.mail.CircularSender;
+import com.chartering.service.mail.MailReplyService;
 import com.chartering.service.mail.SmtpCircularSender;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -104,6 +105,12 @@ public class EmailCampaignService {
     private final CirculationHistoryService history;
     private final CirculationListService circulationLists;
     private final SettingsService settings;
+    /**
+     * Only for the config endpoint, which reports the reply route alongside the circulars
+     * one. Nothing in a campaign goes through it: a reply and a circular share no path, and
+     * this class deciding anything about a reply would be the first step to their doing so.
+     */
+    private final MailReplyService mailReplies;
 
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "email-campaign");
@@ -139,7 +146,8 @@ public class EmailCampaignService {
                                 ContactRepository contacts,
                                 CirculationHistoryService history,
                                 CirculationListService circulationLists,
-                                SettingsService settings) {
+                                SettingsService settings,
+                                MailReplyService mailReplies) {
         availableSenders.forEach(s -> this.senders.put(s.provider(), s));
         // Named separately as well as being in the map: the config endpoint reports the SMTP
         // username whichever provider is sending, so the screen can show the mailbox the app
@@ -153,6 +161,7 @@ public class EmailCampaignService {
         this.history = history;
         this.circulationLists = circulationLists;
         this.settings = settings;
+        this.mailReplies = mailReplies;
     }
 
     /**
@@ -528,12 +537,19 @@ public class EmailCampaignService {
         // still come from the environment, which is why they are read off different objects.
         SettingsService.CirculationSettings cfg = settings.circulation();
         List<String> missing = missingSettings(cfg);
+        // The reply route is asked of the reply service rather than worked out here: it is a
+        // deployment fact rather than a circulation setting, and only that class knows what
+        // the route in force needs before it will send.
+        CircularProvider replyRoute = mailReplies.replyProvider();
         return new CampaignConfigResponse(
                 props.isEnabled(),
                 props.isEnabled() && missing.isEmpty(),
                 missing,
                 cfg.provider().name(),
                 cfg.provider().label(),
+                replyRoute.name(),
+                replyRoute.label(),
+                mailReplies.missingSettings(cfg),
                 cfg.smtpHost(),
                 cfg.smtpPort(),
                 smtp.username(),

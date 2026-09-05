@@ -101,10 +101,14 @@ public class MailboxController {
 
     @PostMapping("/messages/{id}/reply")
     @Operation(summary = "Reply to a message from the app",
-            description = "Sends one message to one address through the mailbox over SMTP — "
-                    + "never through Brevo, whichever provider circulars are using: a reply "
-                    + "has to come from the address the correspondent wrote to and land in "
-                    + "their thread. The chosen footer is appended and the original is quoted "
+            description = "Sends one message to one address through the mailbox over SMTP, "
+                    + "whichever provider circulars are using: a reply has to come from the "
+                    + "address the correspondent wrote to and land in their thread. A "
+                    + "deployment whose host blocks outbound SMTP can set "
+                    + "MAIL_REPLY_PROVIDER=BREVO, which sends the identical message through "
+                    + "Brevo as the mailbox address instead — GET /campaigns/config reports "
+                    + "which route is in force. The chosen footer is appended and the "
+                    + "original is quoted "
                     + "underneath unless includeOriginal=false; mail-merge placeholders are "
                     + "substituted against whatever contact this message is linked to. A "
                     + "reply that is sent is recorded and counted in the day's outgoing "
