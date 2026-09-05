@@ -48,6 +48,9 @@ class MailReplyServiceTest {
     @Mock private EmailFooterService footers;
     @Mock private SmtpTransport transport;
     @Mock private SmtpCircularSender smtp;
+    // Present only to satisfy the constructor: every test here drives the SMTP route, which
+    // is what these assertions are about. MailReplyRoutingTest covers the Brevo one.
+    @Mock private BrevoReplySender brevo;
     @Mock private SettingsService settings;
 
     private MailCampaignProperties props;
@@ -97,7 +100,7 @@ class MailReplyServiceTest {
         Mockito.when(messages.findById(7L)).thenReturn(Optional.of(original));
 
         service = new MailReplyService(messages, replies, footers, new MailTemplateService(),
-                new HtmlSanitizer(), transport, smtp, settings, props);
+                new HtmlSanitizer(), transport, smtp, brevo, settings, props);
     }
 
     /**
