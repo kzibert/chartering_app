@@ -23,6 +23,17 @@ Pushing `render` triggers a Render deploy, so treat it as an outward-facing acti
 `render.yaml` pins no `branch:` — which branch each service tracks is set in the Render
 dashboard.
 
+**A deploy that carries a changed `render.yaml` re-syncs the blueprint, and every key the
+file pins a `value:` for is re-asserted over whatever the dashboard holds.** It is not a
+default that a dashboard edit overrides; it is an assertion, reapplied. This has already
+cost one outage — `MAIL_ENABLED` had been switched on by hand months earlier and a commit
+touching an unrelated key in the same file turned sending back off, with the mailbox still
+syncing (that is IMAP, and a different switch) so that nothing looked wrong until somebody
+tried to answer a broker. Keys the file does not mention are left alone, which is why the
+credentials survived. So: a value that is a fact about the repository (`ANALYSIS_ENABLED`,
+`MAIL_REPLY_PROVIDER`) is pinned deliberately; a value that is a fact about one deployment
+gets `sync: false`, which names the key and leaves the dashboard owning it.
+
 ## Commands
 
 ```bash
