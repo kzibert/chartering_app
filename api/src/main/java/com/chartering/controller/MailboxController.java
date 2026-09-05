@@ -112,7 +112,8 @@ public class MailboxController {
                     + "underneath unless includeOriginal=false; mail-merge placeholders are "
                     + "substituted against whatever contact this message is linked to. A "
                     + "reply that is sent is recorded and counted in the day's outgoing "
-                    + "volume; one the server refuses is a 502 and is not stored.")
+                    + "volume; one the server refuses is a 503 carrying the provider's own "
+                    + "words and is not stored.")
     public ResponseEntity<MailReplyResponse> reply(
             @PathVariable Long id,
             @Valid @RequestBody MailReplyRequest body) {
