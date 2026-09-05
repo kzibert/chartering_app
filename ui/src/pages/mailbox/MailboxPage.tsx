@@ -55,10 +55,12 @@ import { useTableControls } from '../../components/useTableControls';
 import ResponsiveTable from '../../components/ResponsiveTable';
 import { useIsMobile } from '../../responsive/useIsMobile';
 import CompanyDrawer from '../companies/CompanyDrawer';
+import CompanyForm from '../companies/CompanyForm';
 import MessageDrawer from './MessageDrawer';
 import FoldersRulesModal from './FoldersRulesModal';
 import type {
   CirculationToday,
+  CompanyResponse,
   MailMessage,
   MailServerFolder,
   MailboxFilter,
@@ -126,6 +128,11 @@ export default function MailboxPage() {
   const [typed, setTyped] = useState(filters.search);
   const [openId, setOpenId] = useState<number>();
   const [companyId, setCompanyId] = useState<number>();
+  // The company being edited, and the form's own open flag — the same pair the
+  // Companies tab keeps. Separate from `companyId` because the form edits the record
+  // the drawer is showing while that drawer stays open behind it.
+  const [editingCompany, setEditingCompany] = useState<CompanyResponse | null>(null);
+  const [companyFormOpen, setCompanyFormOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   const [picked, setPicked] = useState<number[]>([]);
   const isMobile = useIsMobile();
@@ -722,14 +729,35 @@ export default function MailboxPage() {
         onClose={() => setOpenId(undefined)}
         onOpenCompany={(id) => setCompanyId(id)}
       />
-      {/* Opened read-only from a message: onEdit is a no-op here deliberately. Editing a
-          company belongs on the Companies tab, and the drawer's own form would open behind
-          the reading pane with no way back to the message that led here. */}
+      {/* Three layers deep by the time the form is open — message, company, form — and
+          that is the point: the correction a message prompts ("they have moved to Piraeus")
+          is made without losing the mail that prompted it, and closing each layer walks
+          back to the one underneath.
+
+          They stack in that order for a reason worth knowing, because it is not z-index.
+          antd only computes one for an overlay rendered *inside* another; these three are
+          siblings, so all three take the stylesheet's 1000 and DOM order decides. Each
+          overlay's portal is created when it opens and removed again when it closes
+          (rc-portal's autoDestroy), so the last one opened is the last node in the body —
+          which is this one. Mounting the form inside CompanyDrawer instead would be the
+          belt-and-braces version and costs the drawer a prop it does not otherwise need;
+          the Companies tab keeps the same pair side by side. */}
       <CompanyDrawer
         companyId={companyId}
         initialTab="contacts"
         onClose={() => setCompanyId(undefined)}
-        onEdit={() => undefined}
+        onEdit={(c) => {
+          setEditingCompany(c);
+          setCompanyFormOpen(true);
+        }}
+      />
+      <CompanyForm
+        open={companyFormOpen}
+        editing={editingCompany}
+        onClose={() => setCompanyFormOpen(false)}
+        // The drawer behind the form is showing the company that was just deleted. The
+        // message stays open underneath — deleting a company only unlinks its mail.
+        onDeleted={() => setCompanyId(undefined)}
       />
       <FoldersRulesModal open={manageOpen} onClose={() => setManageOpen(false)} />
     </Space>
