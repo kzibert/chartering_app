@@ -115,8 +115,23 @@ services:
       # is missing; add them in the Render dashboard (Environment) when you want the desk
       # to send, rather than answering fifteen prompts at blueprint time. .env.example is
       # the annotated list of what they are.
+      #
+      # THE MASTER SWITCH IS DASHBOARD-OWNED, and `sync: false` is what makes it so. It
+      # held `value: false` until a deploy proved why that is wrong: a blueprint value is
+      # not a default, it is an assertion, and Render re-applies it on every sync. Somebody
+      # had turned sending on in the dashboard months earlier; the next commit that touched
+      # this file re-synced the blueprint, and the file's `false` silently won. The mailbox
+      # went on syncing - that is IMAP and a different switch - so the only symptom was the
+      # Reply box saying sending was switched off on a server where it had worked all along.
+      #
+      # `sync: false` means the blueprint names the key and does not own its value: Render
+      # asks once at blueprint apply and never overwrites it again. That is the same
+      # treatment DB_URL and the login get above, and for the same reason - these are facts
+      # about one deployment, not about the repository. Keys added in the dashboard and
+      # absent from this file (MAIL_USERNAME, MAIL_PASSWORD, BREVO_API_KEY) are left alone
+      # by a sync and always were; it is the ones written down here that get enforced.
       - key: MAIL_ENABLED
-        value: false
+        sync: false
       # REPLIES CANNOT GO OVER SMTP FROM HERE, and this is the line that works around it.
       #
       # Render blocks outbound traffic to ports 25, 465 and 587 on free instances (and 25
@@ -165,6 +180,11 @@ services:
       # so a service whose environment was last set by hand in the dashboard keeps the value
       # it has there until the blueprint is re-applied — check the api's Environment tab
       # after the deploy and set it there too if the tab has not appeared.
+      #
+      # The other half of that, learned the hard way and written up against MAIL_ENABLED
+      # above: when the sync does come, the file wins. A pinned value here is re-asserted
+      # over whatever the dashboard holds, which is right for this key - the tab is either
+      # part of this deployment or it is not - and was wrong for the master switch.
       - key: ANALYSIS_ENABLED
         value: true
 
