@@ -95,6 +95,30 @@ class VesselFinderScraperTest {
     }
 
     @Test
+    void dropsARowListedByMmsiRatherThanInventingAnImoOutOfIt() {
+        // Not every row is a ship with an IMO: pleasure craft and yachts are listed by MMSI,
+        // nine digits, and the pattern used to take the first seven and report 2240664 as an
+        // IMO - a number belonging to no vessel anywhere, offered for somebody to accept onto
+        // a hull. A search for TARANTO returned six rows and three carried a number invented
+        // this way; two of them, named TARANTO exactly, tied with the real ship and had the
+        // whole lookup refused as ambiguous.
+        String page = """
+                <html><body><table><tbody>
+                <tr><td><a class="ship-link" href="/vessels/details/224066450">
+                  <div class="slna">TARANTO</div><div class="slty">Pleasure craft</div>
+                </a></td></tr>
+                <tr><td><a class="ship-link" href="/vessels/details/9133513">
+                  <div class="slna">TARANTO</div><div class="slty">General Cargo Ship</div>
+                </a></td><td class="v5">3005</td></tr>
+                </tbody></table></body></html>
+                """;
+
+        assertThat(scraper.parse(Jsoup.parse(page)))
+                .extracting(VesselParticulars::imo)
+                .containsExactly("9133513");
+    }
+
+    @Test
     void readsEveryRowOnThePageAndLeavesTheTrimmingToTheMatcher() {
         // It used to stop at max-candidates here, which is the wrong end to cut at: the page
         // is in the source's own order and that order knows only the name it was asked for.
@@ -107,9 +131,10 @@ class VesselFinderScraperTest {
 
         StringBuilder many = new StringBuilder("<html><body><table><tbody>");
         for (int i = 0; i < 20; i++) {
-            many.append("<tr><td><a class=\"ship-link\" href=\"/vessels/details/900000")
-                    .append(i).append("\"><div class=\"slna\">SHIP ").append(i)
-                    .append("</div></a></td><td class=\"v5\">5000</td></tr>");
+            // Seven digits each, or the MMSI guard drops them - which is the point of it.
+            many.append("<tr><td><a class=\"ship-link\" href=\"/vessels/details/90")
+                    .append(String.format("%05d", i)).append("\"><div class=\"slna\">SHIP ")
+                    .append(i).append("</div></a></td><td class=\"v5\">5000</td></tr>");
         }
         many.append("</tbody></table></body></html>");
 

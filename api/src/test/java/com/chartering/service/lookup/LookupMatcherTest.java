@@ -134,6 +134,36 @@ class LookupMatcherTest {
     }
 
     @Test
+    void doesNotCountASubstringHitAsAnotherShipAnsweringToTheName() {
+        // The source matches a name as a substring, so a search for TARANTO brings back MSC
+        // TARANTO and SPIRIT OF TARANTO as well. They are two other ships, they score
+        // nothing, and counting them as competition had the real hull withheld as ambiguous
+        // on a name-only lookup - which is every lookup where the email gave only a name.
+        LookupMatcher.Known known = new LookupMatcher.Known("TARANTO", null, null, null);
+
+        Optional<LookupMatcher.Scored> best = LookupMatcher.best(known, List.of(
+                withImo("9133513", "TARANTO", null, null),
+                withImo("9475258", "MSC TARANTO", null, null),
+                withImo("9911111", "SPIRIT OF TARANTO", null, null)), 55);
+
+        assertThat(best).isPresent();
+        assertThat(best.get().candidate().imo()).isEqualTo("9133513");
+        // Offered, and said out loud to rest on nothing but the name.
+        assertThat(best.get().corroborated()).isFalse();
+    }
+
+    @Test
+    void stillRefusesWhenTwoHullsGenuinelyAnswerToTheName() {
+        // The rule the test above must not have broken. Two ships of one name, nothing else
+        // to tell them apart, is a question for a person and not a match.
+        LookupMatcher.Known known = new LookupMatcher.Known("TARANTO", null, null, null);
+
+        assertThat(LookupMatcher.best(known, List.of(
+                withImo("9133513", "TARANTO", null, null),
+                withImo("9222222", "TARANTO", null, null)), 55)).isEmpty();
+    }
+
+    @Test
     void scoresNothingWhenThereIsNothingToCheck() {
         LookupMatcher.Known blank = new LookupMatcher.Known(null, null, null, null);
         List<LookupMatcher.Scored> scored =

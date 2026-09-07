@@ -50,8 +50,24 @@ import java.util.regex.Pattern;
 @Slf4j
 public class VesselFinderScraper implements VesselLookupProvider {
 
-    /** The IMO lives in the row's own link: {@code /vessels/details/9014561}. */
-    private static final Pattern DETAILS_IMO = Pattern.compile("/vessels/details/(\\d{7})");
+    /**
+     * The IMO lives in the row's own link: {@code /vessels/details/9014561}.
+     *
+     * <p><b>The trailing guard is load-bearing, and its absence produced invented IMO
+     * numbers.</b> Not every row on a search page is a ship with an IMO - pleasure craft,
+     * sailing yachts and small workboats are listed by MMSI, and the link is then
+     * {@code /vessels/details/224066450}, nine digits. Without the guard the pattern took
+     * the first seven of them and reported 2240664 as an IMO: a number belonging to no
+     * vessel anywhere, on a candidate somebody could have accepted onto a hull. A search
+     * for TARANTO returned six rows and three carried a fabricated number this way - and
+     * two of those three, being named TARANTO exactly, tied with the real ship and had the
+     * whole lookup refused as ambiguous.
+     *
+     * <p>Seven digits and then something that is not one. A row that cannot supply a real
+     * number is dropped, which is what {@code readRow} does with a null.
+     */
+    private static final Pattern DETAILS_IMO =
+            Pattern.compile("/vessels/details/(\\d{7})(?!\\d)");
 
     /** "112 / 15" — length and beam in metres, in one cell. */
     private static final Pattern LENGTH_BEAM =

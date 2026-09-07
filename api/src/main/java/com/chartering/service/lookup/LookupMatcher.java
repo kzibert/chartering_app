@@ -57,7 +57,18 @@ public final class LookupMatcher {
                           * nothing else scores 100% and is entirely unverified, and the
                           * screen has to be able to say so.
                           */
-                         boolean corroborated) {
+                         boolean corroborated,
+                         /**
+                          * Whether this candidate answers to the name at all.
+                          *
+                          * <p>Separate from the score because the ambiguity test needs
+                          * counting rather than ranking. <b>The source matches a name as a
+                          * substring</b>, so a search brings back everything containing it:
+                          * TARANTO returns MSC TARANTO and SPIRIT OF TARANTO, which are two
+                          * other ships and no evidence of anything. Counting rows made those
+                          * look like competition for a hull that had none.
+                          */
+                         boolean nameAgreed) {
     }
 
     /** Deadweights this close are the same ship rounded differently by two databases. */
@@ -83,10 +94,16 @@ public final class LookupMatcher {
         }
         // Nothing but the name agreed, and more than one ship answers to it. That is the
         // shape of the mistake this whole class exists to avoid: the name is the query, so
-        // agreeing on it proves nothing, and with several candidates there is no reason to
-        // prefer this one. A single unambiguous hit is still offered - flagged uncorroborated
-        // so the screen can say what it rests on.
-        if (!top.corroborated() && candidates.size() > 1) return Optional.empty();
+        // agreeing on it proves nothing, and where two hulls both answer there is no reason
+        // to prefer this one. A single unambiguous hit is still offered - flagged
+        // uncorroborated so the screen can say what it rests on.
+        //
+        // Counted on the candidates that actually answer to the name, not on how many rows
+        // came back. The source matches a substring, so a search for TARANTO returns MSC
+        // TARANTO and SPIRIT OF TARANTO as well - different ships, scoring nothing, and
+        // previously enough to have the real hull withheld as ambiguous.
+        long answering = scored.stream().filter(Scored::nameAgreed).count();
+        if (!top.corroborated() && answering > 1) return Optional.empty();
         return Optional.of(top);
     }
 
@@ -104,6 +121,7 @@ public final class LookupMatcher {
         int earned = 0;
         int available = 0;
         boolean corroborated = false;
+        boolean nameAgreed = false;
         List<String> reasons = new ArrayList<>();
         List<String> disagreements = new ArrayList<>();
 
@@ -116,11 +134,13 @@ public final class LookupMatcher {
             String b = squash(c.name());
             if (a.equals(b)) {
                 earned += 2;
+                nameAgreed = true;
                 reasons.add("Name matches exactly");
             } else if (b.startsWith(a) || a.startsWith(b)) {
                 // "HACI HILMI" against "HACI HILMI-II" - the punctuation and the suffix are
                 // how one database writes what another writes differently.
                 earned += 1;
+                nameAgreed = true;
                 reasons.add("Name is close (\"%s\" against \"%s\")".formatted(c.name(), known.name()));
             } else {
                 disagreements.add("Name differs (\"%s\" against \"%s\")"
@@ -185,7 +205,7 @@ public final class LookupMatcher {
         // candidate is the one most in need of being marked unverifiable.
         int confidence = available == 0 ? 0 : Math.round((earned * 100f) / available);
         return new Scored(c, confidence, List.copyOf(reasons), List.copyOf(disagreements),
-                corroborated);
+                corroborated, nameAgreed);
     }
 
     private static Double relativeGap(BigDecimal a, BigDecimal b) {
