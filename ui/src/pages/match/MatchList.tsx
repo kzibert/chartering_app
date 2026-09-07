@@ -156,6 +156,15 @@ export default function MatchList({
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                     Could present {m.earliestArrival}
                     {m.ballastDays != null && m.ballastDays > 0 && ` · ${m.ballastDays}d ballast`}
+                    {/* Miles only when both ends named a berth. Their absence says the days
+                        came from the trade-area table instead — a round figure between two
+                        waters, which is the honest answer to a position quoted as one. The
+                        tooltip is where that distinction belongs; the row is being scanned. */}
+                    {m.ballastDistanceNm != null && (
+                      <Tooltip title="Measured berth to berth across the sea network, straits and all. Without a figure here the leg is a broker's round number between two trade areas, because one end of this pairing was only ever quoted as a water.">
+                        {` · ${Math.round(m.ballastDistanceNm).toLocaleString()} nm`}
+                      </Tooltip>
+                    )}
                   </Typography.Text>
                 )}
               </div>

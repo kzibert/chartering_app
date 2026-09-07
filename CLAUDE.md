@@ -93,7 +93,9 @@ Three things bite here:
   `V8__add_analysis_samples.sql`, `V9__add_trade_areas.sql`, `V10__seed_trade_areas.sql`,
   `V11__add_vessel_ex_names.sql`, `V12__add_vessel_specs.sql`, `V13__add_cargoes.sql` and
   `V14__add_vessel_positions.sql`, `V15__add_trade_area_aliases_from_corpus.sql`,
-  `V16__add_email_parsing.sql` and `V17__add_vessel_lookups.sql` exist; the next one is V18.
+  `V16__add_email_parsing.sql`, `V17__add_vessel_lookups.sql`,
+  `V18__add_port_geography_and_sea_routes.sql` and
+  `V19__seed_sea_routes_and_port_geography.sql` exist; the next one is V20.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
@@ -407,6 +409,49 @@ entities**. A cached entity is a detached entity, and the first caller to read `
 outside the transaction that loaded it gets a lazy-init failure from the very field the class
 exists to answer questions about.
 
+**Ports are the same vocabulary one level finer, and they answer a different question.** An
+area says which water; `ports.latitude/longitude` say where the berth is, which is what a
+laycan actually turns on. Constanza and Rostov are both "Black Sea" and two days apart — one
+is a deepwater berth two hours off the lane, the other is 250 miles up the Don and behind the
+Kerch Strait — and no trade area can tell them apart. `port_aliases` is `trade_area_aliases`
+again, down to the generated `alias_key` and the unique index on it, and for the same reason:
+a circular arriving this week still writes ILLICHIVSK for a berth renamed in 2016 and BOMBAY
+for one renamed in 1995, and `findByExactName` finds neither.
+
+`PortDirectory` holds it, flattened like the areas, with two rules that are not constraints
+and cannot be. **A port's own name beats any alias** — the two tables share no index, so the
+rule lives in the class, and it is what makes an alias safe to add: the worst a wrong one can
+do is answer a question no port name already answered. **A name two berths share answers
+nothing**, the refusal the vessel and company lookups make. Scanning a phrase (`findIn`)
+joins *words*, not substrings, unlike the area graph: area names are distinctive and port
+names are often ordinary words, and a substring scan finds a berth in Montenegro inside
+"grain in bulk, bar none".
+
+**Marine distance is a waypoint network, not a matrix and not a straight line.**
+`sea_waypoints` are points at sea and `sea_legs` join the pairs with open water between them;
+every port hangs off one by `gateway_waypoint_id`. A great circle alone is wrong in the
+direction that loses money — Odessa to Genoa on one crosses Bulgaria, Serbia and the Alps and
+reads 1,050 miles against a real 1,650. A port-to-port table is forty thousand numbers nobody
+would keep true. Sixty-odd nodes and a hundred legs describe every route this desk quotes, a
+new berth costs one link, and `SeaRouteGraph` runs Dijkstra over it — checked against
+published distances on fifteen real routes and landing between 4% short and 9% long.
+
+Three things in there are load-bearing:
+
+- **A leg's `distance_nm` is normally null, and that is the design.** Putting the row there
+  asserts the water is open, so the great circle between the two coordinates *is* the
+  distance. The override is for the legs that are not straight — the Bosphorus is seventeen
+  miles of bends, Suez is a canal, the Don is a river — and `ports.gateway_nm` is the same
+  idea for a berth 250 miles up one.
+- **`delay_hours` on a waypoint is what a distance table cannot hold.** A bulker at anchor
+  off Kavak waiting for a northbound convoy is not sailing, and on this desk that is every
+  Black Sea passage there is. Charged for waypoints *passed through*, never for the ends: a
+  ship opening at Istanbul has not queued for the Bosphorus, she is there.
+- **No route is an answer.** The Caspian waypoint has no legs at all, which produces the same
+  honest "too far to consider" the sparse area table gives. Everywhere the network answers
+  nothing — an unplaced berth, a pair it does not join — Match falls back to the area table,
+  so a port nobody has placed is never worse off than before the network existed.
+
 **Matching computes on every request and stores nothing but the human's answer.** A stored
 score goes stale the moment a position or a cargo moves, so it would need invalidating on
 every write in the feature — for arithmetic over fields already in memory. What *is* stored
@@ -422,17 +467,42 @@ four already offered and two the owner declined on Tuesday.
 
 Half this fleet has no gear recorded and 2,355 hulls have no DWCC. Reading "not on file" as
 "does not fit" would rule out most of the tonnage on the desk; reading it as "fits" would
-offer ships nobody had checked. The score is the share of the *applicable* weight that
-passed — criteria the cargo says nothing about drop out of both halves of the fraction, so a
+offer ships nobody had checked. The score is the share of the *applicable* weight that was
+earned — criteria the cargo says nothing about drop out of both halves of the fraction, so a
 cargo with no draft limit does not reward a shallow ship, while criteria it does state and
 the vessel cannot answer stay in the denominator, which is what makes a documented hull
 outrank an unknown one carrying the same guesses.
 
-Two asymmetries in there are deliberate and easy to "fix" wrongly. A cargo needing gear rules
-out a gearless ship, but a cargo *not* needing gear does not rule out a geared one — cranes
-she does not need cost the charterer nothing. And timing counts from her **last** free day,
-not her first: a ship open 1/3 September is not sailing on the 1st, and the optimistic end
-would put ships on lists they cannot make.
+A check normally earns all of its weight or none, and `Check.credit` reads as the verdict
+does. **Intake is the exception the field exists for**, and it is the check that stops a
+14,000-tonner being offered for a 4,000-tonne parcel. Size has no objection to that pairing —
+she lifts it easily, which is exactly the problem — but freight is earned by the tonne and
+the ship is paid for whole, so at 29% full she earns 29% of what she costs and no owner takes
+it. Below the floor she is ruled out; above the ideal she scores full marks; between them she
+passes and earns the share of the distance she has come, because part cargoes are real and a
+60%-full ship is an argument rather than a mistake. Both figures live in `app_settings` with
+the ballast speed and the port allowance (`MatchSettings`, the Settings tab) — they are what
+a broker argues with the screen about, and a constant would make that argument a redeploy.
+
+Four asymmetries in there are deliberate and easy to "fix" wrongly:
+
+- A cargo needing gear rules out a gearless ship, but a cargo *not* needing gear does not
+  rule out a geared one — cranes she does not need cost the charterer nothing.
+- Timing counts from her **last** free day, not her first: a ship open 1/3 September is not
+  sailing on the 1st, and the optimistic end would put ships on lists they cannot make.
+- Intake is measured against the **most** the cargo could load, never the least. A "25,000
+  +/- 10%" enquiry will put 27,500 into a hull that takes it, because the option is the
+  charterer's — and where the cargo gives no upper figure at all ("min 3,000 mt") the check
+  does not apply, because a floor is not a bound on the intake.
+- Intake is **silent whenever the cargo states a DWT range**. "Abt 28-35,000 DWT" is the
+  charterer's own answer, size has already tested it, and a ratio arguing with it would rule
+  out a ship they asked for by name.
+
+The ballast leg has two sources, asked in order of what they can tell apart: the sea network
+where both ends name a placed berth (miles, the straits on the way, the convoy wait in the
+total), the trade-area table where either end is only a water — which is how most circulars
+write a position, and what that table was built for. Half a day is as fine as the result is
+quoted, because the speed is an assumption and the laycan is a spread.
 
 Match reads in both directions, because the desk does. Most of the mail here is somebody
 else's tonnage asking for work — "pls propose suitable cgoes for our below home tonnages"

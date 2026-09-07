@@ -34,4 +34,16 @@ public interface PortRepository extends JpaRepository<Port, Long> {
     @EntityGraph(attributePaths = "tradeArea")
     @Query("select p from Port p where lower(trim(p.name)) = lower(?1)")
     List<Port> findByExactName(String name);
+
+    /**
+     * Every port with its water, for {@code PortDirectory} to hold the vocabulary in memory.
+     *
+     * <p>The join is done once here rather than per port on the way out. Reading the area
+     * lazily off a few hundred cached rows would be a few hundred queries on the first
+     * refresh — and would leave detached proxies in a cache, which is the failure
+     * {@code TradeAreaGraph} flattens its records to make impossible.
+     */
+    @EntityGraph(attributePaths = "tradeArea")
+    @Query("select p from Port p")
+    List<Port> findAllWithArea();
 }

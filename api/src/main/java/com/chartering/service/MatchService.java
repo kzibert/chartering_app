@@ -36,7 +36,22 @@ public class MatchService {
     private final VesselExNameRepository exNameRepository;
     private final VesselRepository vesselRepository;
     private final TradeAreaGraph tradeAreas;
+    private final SeaRouteGraph seaRoutes;
+    private final MatchSettings settings;
     private final DtoMapper mapper;
+
+    /**
+     * The collaborators and the tuning, read once for a whole request.
+     *
+     * <p>{@link MatchSettings#values()} is a database read, and every method here scores
+     * hundreds or thousands of pairings; building this per pairing would ask for the same
+     * four numbers once per comparison. Fixing the date at the same moment closes a smaller
+     * hole in the same place - a request that ran across midnight would age half its ships a
+     * year.
+     */
+    private MatchContext context() {
+        return new MatchContext(tradeAreas, seaRoutes, settings.values(), LocalDate.now());
+    }
 
     /**
      * The Match tab's landing view: every live cargo with the tonnage against it counted.
@@ -51,7 +66,7 @@ public class MatchService {
         if (cargoes.isEmpty()) return List.of();
 
         List<VesselPosition> positions = livePositions();
-        LocalDate today = LocalDate.now();
+        MatchContext ctx = context();
 
         List<MatchSummaryResponse> out = new ArrayList<>(cargoes.size());
         for (Cargo cargo : cargoes) {
@@ -61,7 +76,7 @@ public class MatchService {
             int ruledOut = 0;
             int best = 0;
             for (VesselPosition p : positions) {
-                MatchScorer.Result r = MatchScorer.score(cargo, p, tradeAreas, today);
+                MatchScorer.Result r = MatchScorer.score(cargo, p, ctx);
                 if (r.ruledOut()) {
                     ruledOut++;
                     continue;
@@ -97,11 +112,11 @@ public class MatchService {
         Map<Long, CargoVesselMatch> decided = decisionsFor(cargoId);
         Map<Long, List<VesselExNameResponse>> exNames = exNamesFor(positions);
         CargoResponse cargoDto = mapper.toCargoResponse(cargo);
-        LocalDate today = LocalDate.now();
+        MatchContext ctx = context();
 
         return positions.stream()
                 .map(p -> {
-                    MatchScorer.Result r = MatchScorer.score(cargo, p, tradeAreas, today);
+                    MatchScorer.Result r = MatchScorer.score(cargo, p, ctx);
                     return toResponse(cargoDto, p, r, decided.get(p.getVessel().getId()), exNames);
                 })
                 .filter(m -> includeRuledOut || !m.ruledOut())
@@ -126,11 +141,11 @@ public class MatchService {
         Map<Long, CargoVesselMatch> byCargo = matchRepository
                 .findByVesselId(position.getVessel().getId()).stream()
                 .collect(Collectors.toMap(m -> m.getCargo().getId(), m -> m, (a, b) -> a));
-        LocalDate today = LocalDate.now();
+        MatchContext ctx = context();
 
         return cargoes.stream()
                 .map(cargo -> {
-                    MatchScorer.Result r = MatchScorer.score(cargo, position, tradeAreas, today);
+                    MatchScorer.Result r = MatchScorer.score(cargo, position, ctx);
                     return toResponse(mapper.toCargoResponse(cargo), position, r,
                             byCargo.get(cargo.getId()), exNames);
                 })
@@ -175,9 +190,9 @@ public class MatchService {
             // She has no live position - the decision still stands, there is simply nothing
             // to score it against.
             return new MatchResponse(mapper.toCargoResponse(cargo), null, 0, false, 0, List.of(),
-                    null, null, saved.getOutcome().name(), saved.getNote());
+                    null, null, null, saved.getOutcome().name(), saved.getNote());
         }
-        MatchScorer.Result r = MatchScorer.score(cargo, position, tradeAreas, LocalDate.now());
+        MatchScorer.Result r = MatchScorer.score(cargo, position, context());
         return toResponse(mapper.toCargoResponse(cargo), position, r, saved,
                 exNamesFor(List.of(position)));
     }
@@ -232,7 +247,9 @@ public class MatchService {
                         .map(c -> new MatchCheckResponse(c.code(), c.label(),
                                 c.verdict().name(), c.weight(), c.detail()))
                         .toList(),
-                r.ballastDays(), r.earliestArrival(),
+                r.ballastDays(),
+                r.ballast() == null ? null : r.ballast().distanceNm(),
+                r.earliestArrival(),
                 decision == null ? null : decision.getOutcome().name(),
                 decision == null ? null : decision.getNote());
     }

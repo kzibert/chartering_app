@@ -5,6 +5,7 @@ import com.chartering.repository.CompanyRepository;
 import com.chartering.repository.PortRepository;
 import com.chartering.repository.TradeAreaRepository;
 import com.chartering.repository.VesselRepository;
+import com.chartering.service.PortDirectory;
 import com.chartering.service.TradeAreaGraph;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,7 +38,7 @@ class IntakeResolverTest {
         vessels = mock(VesselRepository.class);
         resolver = new IntakeResolver(vessels, mock(PortRepository.class),
                 mock(CompanyRepository.class), mock(TradeAreaRepository.class),
-                mock(TradeAreaGraph.class));
+                mock(TradeAreaGraph.class), mock(PortDirectory.class));
     }
 
     private static Vessel vessel(long id, String name, String dwt, Integer built) {
