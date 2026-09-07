@@ -34,8 +34,23 @@ public final class LookupMatcher {
     private LookupMatcher() {
     }
 
-    /** What is known about the hull being looked for. Any field may be absent. */
-    public record Known(String name, Integer yearBuilt, BigDecimal deadweight, String flag) {
+    /**
+     * What is known about the hull being looked for. Any field may be absent.
+     *
+     * @param imo <b>not a fifth fact, but the answer.</b> An IMO is unique and survives a
+     *            rename, so where both sides carry one it settles identity outright: nothing
+     *            else on the row can make an agreeing number the wrong ship, and nothing can
+     *            make a disagreeing one the right ship. It is scored that way below rather
+     *            than weighted against a name and a deadweight, which are neither unique nor
+     *            stable
+     */
+    public record Known(String imo, String name, Integer yearBuilt, BigDecimal deadweight,
+                        String flag) {
+
+        /** Without a number, which is how most of this mail arrives. */
+        public Known(String name, Integer yearBuilt, BigDecimal deadweight, String flag) {
+            this(null, name, yearBuilt, deadweight, flag);
+        }
     }
 
     /**
@@ -125,6 +140,18 @@ public final class LookupMatcher {
         List<String> reasons = new ArrayList<>();
         List<String> disagreements = new ArrayList<>();
 
+        // ---- the IMO ----
+        // Not weighted, because it is not evidence among other evidence - it is the answer.
+        // The number is unique and it survives a rename, which is the whole reason
+        // vessel_ex_names exists. Where both sides carry one and they agree, this is that
+        // hull: a name that differs means she has been renamed and a deadweight that differs
+        // means one of the two databases rounds, and neither is a reason for doubt. Where
+        // they disagree it is not her, however well everything else reads - which is the more
+        // important half, because a name search brings back ships that answer to the name and
+        // one of them may be another owner's vessel with a hundred per cent of the name.
+        Boolean imoAgrees = known.imo() != null && c.imo() != null
+                ? known.imo().equals(c.imo()) : null;
+
         // ---- the name (weight 2) ----
         // Lowest weight of the three real tests, because it is the thing that was searched
         // for: every candidate resembles it, so agreement here says least.
@@ -204,6 +231,23 @@ public final class LookupMatcher {
         // Nothing to go on at all. Zero rather than a false hundred: an unverifiable
         // candidate is the one most in need of being marked unverifiable.
         int confidence = available == 0 ? 0 : Math.round((earned * 100f) / available);
+
+        if (imoAgrees != null) {
+            // The other tests still ran, and their reasons and disagreements are kept: "she
+            // is called TARANTO now" is exactly what somebody opening this needs to read.
+            // What they no longer do is move the figure.
+            if (imoAgrees) {
+                reasons.add(0, "IMO " + c.imo() + " matches");
+                confidence = 100;
+                corroborated = true;
+            } else {
+                disagreements.add(0, "IMO %s, not %s".formatted(c.imo(), known.imo()));
+                // Below any floor worth setting, so she can never be offered.
+                confidence = 0;
+                corroborated = false;
+            }
+        }
+
         return new Scored(c, confidence, List.copyOf(reasons), List.copyOf(disagreements),
                 corroborated, nameAgreed);
     }

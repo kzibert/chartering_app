@@ -98,10 +98,47 @@ public class VesselFinderScraper implements VesselLookupProvider {
         return "vesselfinder";
     }
 
+    /**
+     * The hull carrying a number, from the same search box.
+     *
+     * <p><b>The same parameter, because this source has no other.</b> Its search field takes
+     * a number as readily as a name and answers with the one hull: {@code ?name=9133513}
+     * returns TARANTO and nothing else. There is no {@code imo=} parameter — passing one is
+     * not refused, it is <em>ignored</em>, and the reply is an unfiltered page of twenty
+     * unrelated ships that arrives here looking exactly like a result.
+     *
+     * <p>Which is why what comes back is checked against what was asked for. That guard costs
+     * nothing on a source that understood the question and is the whole defence on a day one
+     * stops understanding it — and the thing being guarded is an identity: a wrong IMO is not
+     * a wrong number, it is another owner's vessel wearing this one's history.
+     */
+    @Override
+    public List<VesselParticulars> searchByImo(String imo) {
+        String number = imo == null ? "" : imo.trim();
+        if (number.isEmpty()) return List.of();
+        return carrying(number, search(number));
+    }
+
+    /**
+     * Only the hulls that actually carry the number.
+     *
+     * <p>Its own method so it can be tested without a network: it is the half that has to
+     * hold on the day the source stops understanding the question, and a test that made the
+     * request would be exercising the source rather than the guard.
+     */
+    static List<VesselParticulars> carrying(String imo, List<VesselParticulars> found) {
+        return found.stream().filter(c -> imo.equals(c.imo())).toList();
+    }
+
     @Override
     public List<VesselParticulars> searchByName(String name) {
+        return search(name.trim());
+    }
+
+    /** One request against the search page, whatever was typed into it. */
+    private List<VesselParticulars> search(String query) {
         String url = props.getSearchUrl()
-                .replace("{name}", URLEncoder.encode(name.trim(), StandardCharsets.UTF_8));
+                .replace("{name}", URLEncoder.encode(query, StandardCharsets.UTF_8));
 
         Document doc;
         try {

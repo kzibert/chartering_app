@@ -95,6 +95,28 @@ class VesselFinderScraperTest {
     }
 
     @Test
+    void keepsOnlyTheHullActuallyCarryingTheNumberItAskedFor() {
+        // The guard that matters most, and it is not defensive habit. This source has no imo
+        // parameter: passing one is not refused, it is ignored, and the reply is an unfiltered
+        // page of other ships that arrives looking exactly like a result. A source that does
+        // not understand the question is far more dangerous than one that answers it with
+        // nothing, because what is being decided here is an identity.
+        List<VesselParticulars> pageOfOtherShips = List.of(
+                found("9648714", "PRELUDE"), found("9593505", "PIONEERING SPIRIT"),
+                found("9133513", "TARANTO"));
+
+        assertThat(VesselFinderScraper.carrying("9133513", pageOfOtherShips))
+                .extracting(VesselParticulars::name)
+                .containsExactly("TARANTO");
+        assertThat(VesselFinderScraper.carrying("9999999", pageOfOtherShips)).isEmpty();
+    }
+
+    private static VesselParticulars found(String imo, String name) {
+        return new VesselParticulars(imo, name, null, null, null, null, null, null, null,
+                "https://example.test/" + imo);
+    }
+
+    @Test
     void dropsARowListedByMmsiRatherThanInventingAnImoOutOfIt() {
         // Not every row is a ship with an IMO: pleasure craft and yachts are listed by MMSI,
         // nine digits, and the pattern used to take the first seven and report 2240664 as an

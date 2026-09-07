@@ -11,6 +11,7 @@ import com.chartering.repository.IntakeItemRepository;
 import com.chartering.repository.VesselLookupRepository;
 import com.chartering.repository.VesselRepository;
 import com.chartering.service.parser.Extraction;
+import com.chartering.service.parser.IntakeResolver;
 import com.chartering.service.parser.IntakePayloads;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -188,27 +189,38 @@ public class VesselLookupService {
         row.setProvider(provider.name());
         row.setFetchedAt(OffsetDateTime.now());
 
-        // At most two, and the second only because the first found nothing. The source
-        // matches the name as a literal substring, so "HACI HILMI II" misses a hull held as
-        // "HACI HILMI-II" while "HACI HILMI" finds her - a punctuation mark between the way
-        // two databases write one name, and the whole difference between an answer and
-        // "nothing came back". See VesselNameQuery for why the loosening stops where it does.
+        // At most two name forms, and the second only because the first found nothing. The
+        // source matches the name as a literal substring, so "HACI HILMI II" misses a hull
+        // held as "HACI HILMI-II" while "HACI HILMI" finds her - a punctuation mark between
+        // the way two databases write one name, and the whole difference between an answer
+        // and "nothing came back". See VesselNameQuery for why the loosening stops there.
         //
-        // Each form goes through the throttle separately: a fallback is a second request
+        // Each attempt goes through the throttle separately: a fallback is another request
         // against somebody else's server and must be paced like the first, not smuggled
         // inside one turn of the gate.
         List<String> forms = VesselNameQuery.forms(known.searchName());
-        row.setQuery(forms.isEmpty() ? known.searchName() : forms.get(0));
+        String imo = known.facts().imo();
+        row.setQuery(imo != null ? imo : forms.isEmpty() ? known.searchName() : forms.get(0));
 
         List<VesselParticulars> candidates = List.of();
         try {
+            // The number first wherever there is one, because it is the only question with a
+            // single answer. A name is neither unique nor stable: searching by it for a hull
+            // whose IMO we hold means asking an ambiguous question and then reasoning about
+            // the ambiguity, which is how a renamed ship comes back as "no such ship" and a
+            // common name comes back as three of them. The provider returns only hulls
+            // actually carrying the number, so one row here is an identification and not a
+            // resemblance.
+            if (imo != null) {
+                candidates = throttled(() -> provider.searchByImo(imo));
+            }
+            // Her number is not in that database, or we never had one. Fall back to the name
+            // and let the matcher do the harder work.
             for (String form : forms) {
+                if (!candidates.isEmpty()) break;
                 candidates = throttled(() -> provider.searchByName(form));
-                if (!candidates.isEmpty()) {
-                    // What was actually sent, not what was meant - the drawer prints it.
-                    row.setQuery(form);
-                    break;
-                }
+                // What was actually sent, not what was meant - the drawer prints it.
+                if (!candidates.isEmpty()) row.setQuery(form);
             }
         } catch (VesselLookupProvider.LookupException e) {
             row.setStatus(VesselLookup.STATUS_FAILED);
@@ -301,9 +313,13 @@ public class VesselLookupService {
             Extraction.ExtractedVessel v = payload.vessel();
             String name = VesselNameQuery.clean(Extraction.text(v.name()));
             if (name == null) return null;
+            // The email's own number, where it gave one. It matched no hull here - that is
+            // why this item exists - and the source can still say whose it is, which is the
+            // rename case: she is on file under the name she carried three owners ago.
+            String imo = IntakeResolver.normaliseImo(v.imo());
             // Nothing on file answers to her at all, so there is always something to gain.
             return new Known(name, new LookupMatcher.Known(
-                    name, v.built(), v.dwt(), Extraction.text(v.flag())), false);
+                    imo, name, v.built(), v.dwt(), Extraction.text(v.flag())), false);
         }
 
         if (item.getKind() != IntakeItemKind.VESSEL_FIELDS) return null;
@@ -319,7 +335,19 @@ public class VesselLookupService {
 
         String name = VesselNameQuery.clean(vessel.getName());
         if (name == null || name.isBlank()) return null;
+
+        // The record's number ahead of the email's, and the order is not a preference about
+        // whose typing is better - it is about which hull is being described. Everything this
+        // lookup produces is written onto the vessel on file, so the search has to be about
+        // her. The email's number is used only where the record has none, which is the case
+        // this whole feature exists for; and where the two disagree, that disagreement is a
+        // row in the table above and a question for a person, not something to resolve by
+        // quietly asking the web about the other one.
+        String imo = recordHasImo ? vessel.getImoNumber().trim()
+                : parsed != null ? IntakeResolver.normaliseImo(parsed.imo()) : null;
+
         return new Known(name, new LookupMatcher.Known(
+                imo,
                 name,
                 vessel.getYearBuilt() != null ? vessel.getYearBuilt()
                         : parsed != null ? parsed.built() : null,
