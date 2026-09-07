@@ -5,17 +5,21 @@ import com.chartering.dto.*;
 import com.chartering.model.AnalysisSample;
 import com.chartering.model.Cargo;
 import com.chartering.model.Company;
+import com.chartering.model.CargoSource;
 import com.chartering.model.Contact;
 import com.chartering.model.DataChange;
+import com.chartering.model.IntakeItem;
 import com.chartering.model.MailFolder;
 import com.chartering.model.MailMessage;
 import com.chartering.model.MailRule;
+import com.chartering.model.ParsedEmail;
 import com.chartering.model.Person;
 import com.chartering.model.Port;
 import com.chartering.model.TradeArea;
 import com.chartering.model.Vessel;
 import com.chartering.model.VesselExName;
 import com.chartering.model.VesselPosition;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
@@ -338,6 +342,83 @@ public class DtoMapper {
                 c.isFromMail(),
                 c.getSourceMailMessage() != null ? c.getSourceMailMessage().getId() : null,
                 c.getReceivedAt(), c.getNotes(), c.getCreatedAt(), c.getUpdatedAt());
+    }
+
+    /**
+     * One review item, with the email it came out of.
+     *
+     * <p>The payload is handed through as parsed JSON rather than re-serialised into typed
+     * fields. The three kinds share nothing but an id, so a response record covering all of
+     * them would be mostly nulls on every row — and the shape is deliberately free to move
+     * between releases, which is the whole argument for the column being text.
+     *
+     * <p>{@code summary} is built here rather than stored, because it is a rendering of the
+     * payload and a stored copy would be a second version of it to keep in step.
+     *
+     * @param payload already parsed by the caller, which is the one place that can decide
+     *                what to do about an item written by an older build
+     */
+    public IntakeItemResponse toIntakeItemResponse(IntakeItem item, JsonNode payload,
+                                                   String summary) {
+        MailMessage m = item.getParsedEmail() != null
+                ? item.getParsedEmail().getMailMessage() : null;
+        return new IntakeItemResponse(
+                item.getId(), item.getKind(), item.getStatus(),
+                item.getSubjectLabel(), summary,
+                item.getVesselId(), item.getCargoId(),
+                m != null ? m.getId() : null,
+                m != null ? m.getFromAddress() : null,
+                m != null ? m.getFromName() : null,
+                m != null ? m.getSubject() : null,
+                m != null ? m.getReceivedAt() : null,
+                payload,
+                item.getCreatedAt(), item.getResolvedAt(), item.getResolvedBy(),
+                item.getResolutionNote());
+    }
+
+    /**
+     * One parse, for the log view.
+     *
+     * <p>{@code rawJson} is passed in rather than read off the entity, so the list can omit
+     * it and the detail endpoint can include it from one mapper. A page of twenty answers is
+     * a megabyte of JSON to render a table of counts.
+     */
+    public ParsedEmailResponse toParsedEmailResponse(ParsedEmail p, String rawJson) {
+        MailMessage m = p.getMailMessage();
+        return new ParsedEmailResponse(
+                p.getId(),
+                m != null ? m.getId() : null,
+                p.getStatus(), p.getEmailType(),
+                m != null ? m.getFromAddress() : null,
+                m != null ? m.getFromName() : null,
+                m != null ? m.getSubject() : null,
+                m != null ? m.getReceivedAt() : null,
+                p.getPositionsApplied(), p.getCargoesApplied(), p.getItemsRaised(),
+                p.getModelName(), p.getDurationMs(), p.getPromptChars(),
+                p.getAttempts(), p.getError(), p.getParsedAt(), rawJson);
+    }
+
+    /**
+     * Who has told us about a cargo, one row per arrival.
+     *
+     * <p>The associations are read straight off the entity because the repository fetches
+     * them with it: this list is rendered whole in a drawer, so a lazy load per row would be
+     * eleven queries to draw one panel.
+     */
+    public CargoSourceResponse toCargoSourceResponse(CargoSource s) {
+        Company company = s.getReportedByCompany();
+        Person person = s.getReportedByPerson();
+        MailMessage m = s.getMailMessage();
+        return new CargoSourceResponse(
+                s.getId(),
+                company != null ? company.getId() : null,
+                company != null ? company.getName() : null,
+                person != null ? person.getId() : null,
+                person != null ? person.getFullName() : null,
+                s.getFromAddress(),
+                m != null ? m.getId() : null,
+                m != null ? m.getSubject() : null,
+                s.getReportedAt(), s.getNotes());
     }
 
     /**

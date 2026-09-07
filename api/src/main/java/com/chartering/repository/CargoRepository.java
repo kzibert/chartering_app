@@ -44,5 +44,29 @@ public interface CargoRepository extends JpaRepository<Cargo, Long>, JpaSpecific
             + "where c.status in :statuses order by c.id desc")
     List<Cargo> findForMatching(List<CargoStatus> statuses);
 
+    /**
+     * Cargoes a freshly read one might be a second sighting of.
+     *
+     * <p>Narrowed by the one thing a duplicate can never differ on — it is still worth
+     * working — and by nothing else. Matching the commodity in SQL was the first attempt and
+     * it was too brittle against real readings: the same enquiry arrived as "Wheat" from one
+     * broker and "wheat moloo" from another, because the model had folded the tolerance into
+     * the commodity, and an equality test never brought the two together. So the commodity is
+     * compared in Java on a shared significant word, along with the laycan, the load point
+     * and the quantity, which are ranges and nulls rather than equalities anyway.
+     *
+     * <p>Reading every live cargo to do it is the same bargain {@link #findForMatching} makes
+     * and for the same reason: a desk's live cargo list is tens of rows, not thousands, and
+     * one query beats a page of criteria that still would not express the rule.
+     *
+     * <p>The load point comes with them because the comparison reads it on every candidate.
+     */
+    @Query("select c from Cargo c "
+            + "left join fetch c.loadPort lp left join fetch lp.tradeArea "
+            + "left join fetch c.loadArea "
+            + "where c.status in :statuses "
+            + "order by c.id desc")
+    List<Cargo> findLive(List<CargoStatus> statuses);
+
     long countByStatus(CargoStatus status);
 }

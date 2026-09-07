@@ -1,0 +1,355 @@
+{
+  "type": "object",
+  "properties": {
+    "type": {
+      "enum": [
+        "cargo_offer",
+        "vessel_opening",
+        "mixed",
+        "other"
+      ]
+    },
+    "cargoes": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "properties": {
+          "commodity": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "quantityUnit": {
+            "type": "string"
+          },
+          "quantityTolerance": {
+            "type": "string"
+          },
+          "quantityMin": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "quantityMax": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "stowageFactor": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "loadPort": {
+            "type": "string"
+          },
+          "loadArea": {
+            "type": "string"
+          },
+          "dischargePort": {
+            "type": "string"
+          },
+          "dischargeArea": {
+            "type": "string"
+          },
+          "laycanFrom": {
+            "type": "string"
+          },
+          "laycanTo": {
+            "type": "string"
+          },
+          "laycanText": {
+            "type": "string"
+          },
+          "loadRate": {
+            "type": "string"
+          },
+          "dischargeRate": {
+            "type": "string"
+          },
+          "minDwt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "maxDwt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "maxDraft": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "maxAgeYears": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "requiresGeared": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "requiresGrainFitted": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "requiresImoFitted": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "freightIdea": {
+            "type": "string"
+          },
+          "commission": {
+            "type": "string"
+          },
+          "terms": {
+            "type": "string"
+          },
+          "charterer": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "commodity",
+          "quantity",
+          "quantityUnit",
+          "quantityTolerance",
+          "quantityMin",
+          "quantityMax",
+          "stowageFactor",
+          "loadPort",
+          "loadArea",
+          "dischargePort",
+          "dischargeArea",
+          "laycanFrom",
+          "laycanTo",
+          "laycanText",
+          "loadRate",
+          "dischargeRate",
+          "minDwt",
+          "maxDwt",
+          "maxDraft",
+          "maxAgeYears",
+          "requiresGeared",
+          "requiresGrainFitted",
+          "requiresImoFitted",
+          "freightIdea",
+          "commission",
+          "terms",
+          "charterer",
+          "notes"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "vessels": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "imo": {
+            "type": "string"
+          },
+          "vesselType": {
+            "type": "string"
+          },
+          "dwt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "dwcc": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "draft": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "built": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "flag": {
+            "type": "string"
+          },
+          "grainCapacity": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "baleCapacity": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "capacityUnit": {
+            "type": "string"
+          },
+          "geared": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "gearDescription": {
+            "type": "string"
+          },
+          "holds": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "hatches": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "grainFitted": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "timberFitted": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "imoFitted": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "iceClass": {
+            "type": "string"
+          },
+          "openPort": {
+            "type": "string"
+          },
+          "openArea": {
+            "type": "string"
+          },
+          "openFrom": {
+            "type": "string"
+          },
+          "openTo": {
+            "type": "string"
+          },
+          "openText": {
+            "type": "string"
+          },
+          "lastCargo": {
+            "type": "string"
+          },
+          "cargoPreferences": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "imo",
+          "vesselType",
+          "dwt",
+          "dwcc",
+          "draft",
+          "built",
+          "flag",
+          "grainCapacity",
+          "baleCapacity",
+          "capacityUnit",
+          "geared",
+          "gearDescription",
+          "holds",
+          "hatches",
+          "grainFitted",
+          "timberFitted",
+          "imoFitted",
+          "iceClass",
+          "openPort",
+          "openArea",
+          "openFrom",
+          "openTo",
+          "openText",
+          "lastCargo",
+          "cargoPreferences",
+          "notes"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "broker": {
+      "type": "object",
+      "properties": {
+        "company": {
+          "type": "string"
+        },
+        "person": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "company",
+        "person",
+        "email"
+      ],
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "type",
+    "cargoes",
+    "vessels"
+  ],
+  "additionalProperties": false
+}

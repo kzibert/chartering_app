@@ -2,6 +2,7 @@ import { Button, Descriptions, Drawer, Empty, Select, Space, Spin, Tag, Typograp
 import { EditOutlined } from '@ant-design/icons';
 import { useCargo, useCargoMutations } from '../../api/hooks';
 import RecordHistory from '../../components/RecordHistory';
+import CargoSources from './CargoSources';
 import { CARGO_STATUS_META, CARGO_STATUS_OPTIONS, formatLaycan, formatPlace, formatQuantity } from './status';
 import type { CargoResponse, CargoStatus } from '../../api/types';
 
@@ -139,6 +140,8 @@ export default function CargoDrawer({ cargoId, onClose, onEdit }: Props) {
               <Typography.Paragraph style={{ whiteSpace: 'pre-wrap' }}>{data.notes}</Typography.Paragraph>
             </>
           )}
+
+          <CargoSources cargoId={data.id} />
 
           <RecordHistory entityType="cargo" entityId={data.id} />
         </>
