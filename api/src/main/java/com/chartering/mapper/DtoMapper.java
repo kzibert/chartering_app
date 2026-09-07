@@ -359,9 +359,13 @@ public class DtoMapper {
      *                what to do about an item written by an older build
      */
     public IntakeItemResponse toIntakeItemResponse(IntakeItem item, JsonNode payload,
-                                                   String summary) {
+                                                   String summary, VesselLookupResponse lookup) {
         MailMessage m = item.getParsedEmail() != null
                 ? item.getParsedEmail().getMailMessage() : null;
+        // The sender's company is read off the message's own link, which the mail sync
+        // resolved from the envelope against the contacts table - a better answer than any
+        // name in a signature block, and already loaded.
+        Company sender = m != null ? m.getCompany() : null;
         return new IntakeItemResponse(
                 item.getId(), item.getKind(), item.getStatus(),
                 item.getSubjectLabel(), summary,
@@ -369,9 +373,12 @@ public class DtoMapper {
                 m != null ? m.getId() : null,
                 m != null ? m.getFromAddress() : null,
                 m != null ? m.getFromName() : null,
+                sender != null ? sender.getId() : null,
+                sender != null ? sender.getName() : null,
                 m != null ? m.getSubject() : null,
                 m != null ? m.getReceivedAt() : null,
                 payload,
+                lookup,
                 item.getCreatedAt(), item.getResolvedAt(), item.getResolvedBy(),
                 item.getResolutionNote());
     }

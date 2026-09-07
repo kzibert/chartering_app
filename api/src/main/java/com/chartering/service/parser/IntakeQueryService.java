@@ -18,7 +18,15 @@ import com.chartering.model.ParsedEmail;
 import com.chartering.repository.CargoSourceRepository;
 import com.chartering.repository.IntakeItemRepository;
 import com.chartering.repository.ParsedEmailRepository;
+import com.chartering.dto.VesselLookupResponse;
+import com.chartering.model.Vessel;
+import com.chartering.model.VesselLookup;
+import com.chartering.repository.VesselRepository;
 import com.chartering.service.ParserSettings;
+import com.chartering.service.lookup.LookupFields;
+import com.chartering.service.lookup.LookupMatcher;
+import com.chartering.service.lookup.VesselLookupService;
+import com.chartering.service.lookup.VesselParticulars;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.criteria.Predicate;
@@ -56,6 +64,8 @@ public class IntakeQueryService {
     private final ParsedEmailRepository parsedEmails;
     private final CargoSourceRepository cargoSources;
     private final IntakeService intake;
+    private final VesselLookupService lookups;
+    private final VesselRepository vessels;
     private final DtoMapper mapper;
     private final ObjectMapper json;
 
@@ -143,13 +153,66 @@ public class IntakeQueryService {
             return where.isEmpty() ? null : cb.and(where.toArray(new Predicate[0]));
         };
         Page<IntakeItem> page = items.findAll(spec, pageable);
-        return PageResponse.from(page.map(this::toResponse));
+        return PageResponse.from(page.map(i -> toResponse(i, null)));
     }
 
+    /**
+     * One item, with whatever an outside source found about the hull.
+     *
+     * <p>The lookup rides on the detail call and not on the list: it carries every candidate
+     * a search returned, and a page of twenty rows would be mostly that.
+     */
     @Transactional(readOnly = true)
     public IntakeItemResponse get(Long id) {
         requireEnabled();
-        return toResponse(load(id));
+        IntakeItem item = load(id);
+        return toResponse(item, lookupFor(item));
+    }
+
+    /** What the source said about this item's hull, assembled for the drawer. */
+    public VesselLookupResponse lookupFor(IntakeItem item) {
+        if (!lookups.isEnabled()) return null;
+        VesselLookup row = lookups.forItem(item.getId()).orElse(null);
+        if (row == null) return null;
+
+        VesselParticulars matched = lookups.matched(row).orElse(null);
+        List<VesselParticulars> candidates = lookups.candidates(row);
+
+        List<String> reasons = List.of();
+        List<String> disagreements = List.of();
+        Boolean corroborated = null;
+        List<LookupFields.Proposal> proposals = List.of();
+        Long onFileId = null;
+        String onFileName = null;
+
+        if (matched != null) {
+            // Scored against exactly the facts the lookup itself used - asking the service
+            // rather than rebuilding them here. A second, thinner set would print weaker
+            // evidence than the stored confidence was earned on, which is precisely the
+            // contradiction this once shipped with: "name only, uncorroborated" beside 63%.
+            Vessel vessel = item.getVesselId() == null ? null
+                    : vessels.findById(item.getVesselId()).orElse(null);
+            VesselLookupService.Known known = lookups.knownFacts(item);
+            LookupMatcher.Known facts = known != null ? known.facts()
+                    : new LookupMatcher.Known(item.getSubjectLabel(), null, null, null);
+            LookupMatcher.Scored scored = LookupMatcher.score(facts, List.of(matched)).get(0);
+            reasons = scored.reasons();
+            disagreements = scored.disagreements();
+            corroborated = scored.corroborated();
+            proposals = LookupFields.proposals(vessel, matched);
+
+            Vessel onFile = lookups.alreadyOnFile(row).orElse(null);
+            if (onFile != null && !onFile.getId().equals(item.getVesselId())) {
+                onFileId = onFile.getId();
+                onFileName = onFile.getName();
+            }
+        }
+
+        return new VesselLookupResponse(
+                row.getId(), row.getProvider(), row.getQuery(), row.getStatus(),
+                row.getConfidence(), corroborated, row.getSourceUrl(), row.getError(),
+                row.getFetchedAt(),
+                matched, reasons, disagreements, onFileId, onFileName, proposals, candidates);
     }
 
     /** Which fields a {@code VESSEL_FIELDS} accept may name, for the UI to render and check. */
@@ -201,7 +264,7 @@ public class IntakeQueryService {
                 .orElseThrow(() -> new ResourceNotFoundException("Intake item", id));
     }
 
-    private IntakeItemResponse toResponse(IntakeItem item) {
+    private IntakeItemResponse toResponse(IntakeItem item, VesselLookupResponse lookup) {
         JsonNode payload;
         try {
             payload = json.readTree(item.getPayload());
@@ -211,7 +274,7 @@ public class IntakeQueryService {
             log.warn("Intake item {} has an unreadable payload: {}", item.getId(), e.getMessage());
             payload = null;
         }
-        return mapper.toIntakeItemResponse(item, payload, summarise(item, payload));
+        return mapper.toIntakeItemResponse(item, payload, summarise(item, payload), lookup);
     }
 
     /**
@@ -234,7 +297,12 @@ public class IntakeQueryService {
                 int diffs = payload.path("diffs").size();
                 int filled = payload.path("filled").size();
                 String head = diffs + (diffs == 1 ? " field differs" : " fields differ");
-                yield filled == 0 ? head : head + "; " + filled + " empty field(s) already filled";
+                if (filled > 0) head += "; " + filled + " empty field(s) already filled";
+                // How she was identified belongs on the row, not only in the drawer: a
+                // former-name match is the one worth opening first, and a queue that reads
+                // the same for all three gives no reason to open any particular one.
+                String matched = matchLabel(payload.path("matchedBy").asText(null));
+                yield matched == null ? head : matched + " · " + head;
             }
             case CARGO_MERGE -> {
                 JsonNode reasons = payload.path("reasons");
@@ -243,6 +311,23 @@ public class IntakeQueryService {
                 yield parts.isEmpty() ? "Looks like a cargo already in hand."
                         : String.join("; ", parts);
             }
+        };
+    }
+
+    /**
+     * The match code as a phrase, or null when there is nothing to say.
+     *
+     * <p>Anything unrecognised comes back as it stands rather than as null: items raised
+     * before the payload carried a code hold an English sentence, and printing it is better
+     * than dropping the one fact the row most needs.
+     */
+    private static String matchLabel(String code) {
+        if (code == null || code.isBlank()) return null;
+        return switch (code) {
+            case "IMO" -> "Matched by IMO";
+            case "NAME" -> "Matched by name";
+            case "EX_NAME" -> "Matched by a former name";
+            default -> code;
         };
     }
 

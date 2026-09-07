@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Button,
-  Checkbox,
+  Card,
   Descriptions,
   Drawer,
   Divider,
@@ -15,11 +15,18 @@ import {
   Typography,
   message,
 } from 'antd';
+import { MailOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import VesselSelect from '../../components/VesselSelect';
+import { useVessel } from '../../api/hooks';
 import { useIntakeItem, useIntakeMutations } from '../../intake/store';
+import CompanyDrawer from '../companies/CompanyDrawer';
+import FromTheWeb from './FromTheWeb';
+import OriginalEmail from './OriginalEmail';
+import LinkSender from './LinkSender';
 import { kindMeta } from './labels';
 import type { FieldDiff, IntakeAction, IntakeItemResponse } from '../../api/intake';
+import type { VesselResponse } from '../../api/types';
 
 interface Props {
   itemId?: number;
@@ -52,6 +59,10 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
 
   const [chosen, setChosen] = useState<string[]>([]);
   const [linkTo, setLinkTo] = useState<number>();
+  const [emailOpen, setEmailOpen] = useState(false);
+  // The company the sender resolved to, opened over this drawer rather than navigated to:
+  // leaving the review to look a firm up would lose the half-made decision on this screen.
+  const [companyId, setCompanyId] = useState<number>();
 
   // Everything ticked when the drawer opens: the common answer is "the list is right", and a
   // screen that starts with nothing selected makes the common answer the most clicking.
@@ -110,6 +121,15 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
           'Loading…'
         )
       }
+      extra={
+        item?.mailMessageId ? (
+          <Tooltip title="What the model actually read. The only thing that settles whether a figure on this screen is right.">
+            <Button size="small" icon={<MailOutlined />} onClick={() => setEmailOpen(true)}>
+              Original email
+            </Button>
+          </Tooltip>
+        ) : undefined
+      }
       footer={
         item && pending ? (
           <Footer item={item} busy={resolve.isPending} onAnswer={answer} />
@@ -119,7 +139,7 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
     >
       {item && (
         <>
-          <SourceEmail item={item} />
+          <SourceEmail item={item} onOpenCompany={setCompanyId} />
 
           {!pending && (
             <Alert
@@ -158,12 +178,23 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
               chosen={chosen}
               onChange={setChosen}
               editable={pending}
+              onOpenCompany={setCompanyId}
             />
           ) : item.kind === 'NEW_VESSEL' ? (
             <NewVesselBody item={item} linkTo={linkTo} onLink={setLinkTo} editable={pending} />
           ) : (
             <CargoMergeBody item={item} />
           )}
+
+          <OriginalEmail
+            mailMessageId={item.mailMessageId}
+            open={emailOpen}
+            onClose={() => setEmailOpen(false)}
+          />
+          {/* Read-only from here: this drawer is open to answer a question about a ship,
+              and editing a company underneath it would be two half-finished jobs at once.
+              Omitting onEdit hides the Edit button rather than leaving a dead one. */}
+          <CompanyDrawer companyId={companyId} onClose={() => setCompanyId(undefined)} />
         </>
       )}
     </Drawer>
@@ -171,11 +202,26 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
 }
 
 /** Which email this came out of. A question about the market, not about a spreadsheet. */
-function SourceEmail({ item }: { item: IntakeItemResponse }) {
+function SourceEmail({
+  item,
+  onOpenCompany,
+}: {
+  item: IntakeItemResponse;
+  onOpenCompany: (id: number) => void;
+}) {
   return (
     <Descriptions size="small" column={1} style={{ marginBottom: 16 }}>
       <Descriptions.Item label="From">
-        {item.fromName ? `${item.fromName} <${item.fromAddress}>` : item.fromAddress || '—'}
+        <Space size={6} wrap>
+          <span>
+            {item.fromName ? `${item.fromName} <${item.fromAddress}>` : item.fromAddress || '—'}
+          </span>
+          {item.senderCompanyId && (
+            <Typography.Link onClick={() => onOpenCompany(item.senderCompanyId!)}>
+              {item.senderCompanyName}
+            </Typography.Link>
+          )}
+        </Space>
       </Descriptions.Item>
       <Descriptions.Item label="Subject">{item.mailSubject || '(no subject)'}</Descriptions.Item>
       <Descriptions.Item label="Arrived">
@@ -200,23 +246,40 @@ function VesselFieldsBody({
   chosen,
   onChange,
   editable,
+  onOpenCompany,
 }: {
   item: IntakeItemResponse;
   diffs: FieldDiff[];
   chosen: string[];
   onChange: (fields: string[]) => void;
   editable: boolean;
+  onOpenCompany: (id: number) => void;
 }) {
   const filled = item.payload?.filled ?? [];
   const renamed = diffs.some((d) => d.field === 'name');
+  // Live, not the snapshot taken when the item was raised: this is about to overwrite what
+  // is on file now, so what is on file now is what should be on screen.
+  const { data: detail } = useVessel(item.payload?.vesselId);
+  const vessel = detail?.vessel;
+  const disputed = new Set(diffs.map((d) => d.field));
 
   return (
     <>
-      <Space wrap style={{ marginBottom: 12 }}>
-        <Typography.Text type="secondary">
-          {item.payload?.matchedBy ?? 'Matched'} · her position has already been filed.
-        </Typography.Text>
-      </Space>
+      <OnFile
+        vessel={vessel}
+        owner={detail?.owner?.name}
+        matchedBy={item.payload?.matchedBy}
+        disputed={disputed}
+      />
+
+      <FromTheWeb item={item} vesselId={item.payload?.vesselId} />
+
+      <LinkSender
+        item={item}
+        ownerId={vessel?.ownerId}
+        ownerName={vessel?.ownerName}
+        onOpenCompany={onOpenCompany}
+      />
 
       {renamed && (
         <Alert
@@ -278,6 +341,163 @@ function VesselFieldsBody({
 }
 
 /**
+ * How she was identified, ranked.
+ *
+ * <b>The three are not equally good and the screen has to say so.</b> An IMO is the only
+ * identifier that survives a rename, so a hit on it is as close to certain as this gets. A
+ * current-name match is exact but a name can be re-used — an owner scraps a ship and gives
+ * the name to the next one. A former-name match is the one to look at twice: it is usually
+ * right, and it is right for a reason the reader cannot see from the row, because the record
+ * comes back called something else entirely.
+ *
+ * An unrecognised value is printed as it stands rather than dropped — items raised before
+ * this was a code carry an English sentence, and showing it is better than showing nothing.
+ */
+const MATCH_META: Record<string, { label: string; colour: string; hint: string }> = {
+  IMO: {
+    label: 'Matched by IMO',
+    colour: 'green',
+    hint: 'Her IMO number, which is the only identifier that survives a rename. As certain as this gets.',
+  },
+  NAME: {
+    label: 'Matched by name',
+    colour: 'blue',
+    hint: 'Her current name, exactly — no partial matching. A name can be re-used by a later ship, so the particulars below are worth a glance.',
+  },
+  EX_NAME: {
+    label: 'Matched by a former name',
+    colour: 'gold',
+    hint: 'The email used a name she used to carry. Usually right — that is what former names are for — but check the particulars: the record is called something else.',
+  },
+};
+
+/**
+ * The ship as she stands, before anything is written to her.
+ *
+ * <b>Why this is here at all.</b> The table underneath lists only what disagrees, which is
+ * the decision but not the context: three rows of numbers with no ship attached. Accepting
+ * them overwrites a real record, and the reader has to be able to see which record —
+ * her name, her IMO, and enough of her particulars to recognise her — and how confident the
+ * identification was. A wrong match is not a wrong number; it is one owner's ship wearing
+ * another owner's data, and this block is where that gets caught.
+ *
+ * Disputed fields are tagged rather than hidden, so the eye joins this block to the table.
+ */
+function OnFile({
+  vessel,
+  owner,
+  matchedBy,
+  disputed,
+}: {
+  vessel?: VesselResponse;
+  owner?: string;
+  matchedBy?: string;
+  disputed: Set<string>;
+}) {
+  const match = matchedBy ? MATCH_META[matchedBy] : undefined;
+
+  const row = (field: string, label: string, value: unknown, unit?: string) => ({
+    key: field,
+    label,
+    value:
+      value === null || value === undefined || value === ''
+        ? '—'
+        : `${typeof value === 'boolean' ? (value ? 'yes' : 'no') : value}${unit ? ` ${unit}` : ''}`,
+    disputed: disputed.has(field),
+  });
+
+  const rows = vessel
+    ? [
+        row('deadweightTonnage', 'DWT', vessel.deadweightTonnage, 't'),
+        row('deadweightCargoCapacity', 'DWCC', vessel.deadweightCargoCapacity, 't'),
+        row('maximumDraft', 'Draft', vessel.maximumDraft, 'm'),
+        row('yearBuilt', 'Built', vessel.yearBuilt),
+        row('vesselType', 'Type', vessel.vesselType),
+        row('flag', 'Flag', vessel.flag),
+        row('geared', 'Geared', vessel.geared),
+        row('gearDescription', 'Gear', vessel.gearDescription),
+        row('holds', 'Holds', vessel.holds),
+        row('hatches', 'Hatches', vessel.hatches),
+        row('grainCapacityM3', 'Grain', vessel.grainCapacityM3, 'm3'),
+        row('baleCapacityM3', 'Bale', vessel.baleCapacityM3, 'm3'),
+        row('grainFitted', 'Grain fitted', vessel.grainFitted),
+        row('timberFitted', 'Timber fitted', vessel.timberFitted),
+        row('imoFitted', 'IMO fitted', vessel.imoFitted),
+        row('iceClass', 'Ice class', vessel.iceClass),
+      ]
+    : [];
+
+  return (
+    <Card size="small" style={{ marginBottom: 16 }}>
+      <Space direction="vertical" size={8} style={{ width: '100%' }}>
+        <Space wrap size={8} align="center">
+          <Typography.Text strong style={{ fontSize: 16 }}>
+            {vessel?.name ?? '—'}
+          </Typography.Text>
+          {vessel?.imoNumber ? (
+            <Tag>IMO {vessel.imoNumber}</Tag>
+          ) : (
+            <Tooltip title="No IMO on this record, so she cannot have been matched by one — the name did it, and her particulars below are the only other check available.">
+              <Tag color="default">no IMO on file</Tag>
+            </Tooltip>
+          )}
+          {match ? (
+            <Tooltip title={match.hint}>
+              <Tag color={match.colour}>{match.label}</Tag>
+            </Tooltip>
+          ) : (
+            matchedBy && <Tag>{matchedBy}</Tag>
+          )}
+        </Space>
+
+        {owner && (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Owner: {owner}
+          </Typography.Text>
+        )}
+
+        {vessel?.exNames && vessel.exNames.length > 0 && (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Formerly: {vessel.exNames.map((e) => e.name).join(', ')}
+          </Typography.Text>
+        )}
+
+        {vessel ? (
+          <Descriptions
+            size="small"
+            column={{ xs: 1, sm: 2, md: 3 }}
+            items={rows.map((r) => ({
+              key: r.key,
+              label: r.label,
+              children: r.disputed ? (
+                <Tooltip title="The email disagrees about this one — see the table below.">
+                  <Space size={4}>
+                    <Typography.Text>{r.value}</Typography.Text>
+                    <Tag color="orange" style={{ marginInlineEnd: 0 }}>
+                      differs
+                    </Tag>
+                  </Space>
+                </Tooltip>
+              ) : (
+                r.value
+              ),
+            }))}
+          />
+        ) : (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Loading her record…
+          </Typography.Text>
+        )}
+
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          Her position has already been filed — this is only about what she is.
+        </Typography.Text>
+      </Space>
+    </Card>
+  );
+}
+
+/**
  * A hull nothing on file answers to.
  *
  * The suggestions are the third matching tier, and they carry their evidence: IMO and name
@@ -312,6 +532,8 @@ function NewVesselBody({
         message={`Nothing on file matched ${item.payload?.searchedBy ?? 'this vessel'}.`}
         description="Create her from what the email said, or point this position at a ship already on file — which is also the answer when she has simply been renamed."
       />
+
+      <FromTheWeb item={item} />
 
       <Descriptions size="small" column={2} bordered style={{ marginBottom: 16 }}>
         <Descriptions.Item label="Name">{show('name')}</Descriptions.Item>

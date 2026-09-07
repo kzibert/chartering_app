@@ -1,0 +1,39 @@
+package com.chartering.repository;
+
+import com.chartering.model.VesselLookup;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+
+import java.util.List;
+import java.util.Optional;
+
+public interface VesselLookupRepository extends JpaRepository<VesselLookup, Long> {
+
+    Optional<VesselLookup> findByIntakeItemId(Long intakeItemId);
+
+    boolean existsByIntakeItemId(Long intakeItemId);
+
+    /**
+     * Review items that are still waiting and have never been looked up.
+     *
+     * <p>The trigger for the whole feature: a hull is searched for because somebody has to
+     * answer a question about her, not because an email mentioned her. That keeps the number
+     * of outside requests to the size of the queue rather than the size of the mailbox —
+     * eighty positions in one circular produce a handful of questions, and only those are
+     * worth somebody else's bandwidth.
+     *
+     * <p>Oldest first: the queue is worked from the top, so the item most likely to be opened
+     * next is the one most worth having an answer ready for.
+     */
+    @Query("""
+            select i.id from IntakeItem i
+            where i.status = com.chartering.model.IntakeItemStatus.PENDING
+              and i.kind in (com.chartering.model.IntakeItemKind.NEW_VESSEL,
+                             com.chartering.model.IntakeItemKind.VESSEL_FIELDS)
+              and not exists (select 1 from VesselLookup l where l.intakeItem = i)
+            order by i.id asc
+            """)
+    List<Long> pendingWithoutLookup(org.springframework.data.domain.Pageable pageable);
+
+    long countByStatus(String status);
+}

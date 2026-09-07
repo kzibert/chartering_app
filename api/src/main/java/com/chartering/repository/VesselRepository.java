@@ -31,10 +31,15 @@ public interface VesselRepository
      * By IMO number — the only identifier that survives a rename, and the reason the
      * extraction asks the model for one at all.
      *
-     * <p>A list rather than an Optional, because nothing constrains this column to be unique
-     * and the legacy rows were not entered under something that did. Two hulls sharing an
-     * IMO is a data fault; the caller treats it as no match and falls through to the name,
-     * which is safer than picking whichever row came first.
+     * <p><b>The column is unique where it is set</b> — {@code ux_vessels_imo} is a partial
+     * unique index over the non-null values — so this can return at most one row, and two
+     * hulls sharing a number is something the database refuses rather than something to guard
+     * against. The list shape is kept anyway because it costs nothing and makes the empty
+     * case explicit at the call site, and because the callers already branch on the count.
+     *
+     * <p>That index is also what makes writing an IMO onto the wrong hull fail loudly instead
+     * of silently: see {@code VesselLookupService#applyToVessel}, where a number already held
+     * by another vessel is the strongest evidence there is that the two are one ship.
      */
     @Query("select v from Vessel v where v.imoNumber is not null and trim(v.imoNumber) = ?1")
     List<Vessel> findByImoNumber(String imoNumber);

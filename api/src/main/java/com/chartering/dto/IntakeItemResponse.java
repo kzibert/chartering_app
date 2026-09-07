@@ -35,9 +35,20 @@ public record IntakeItemResponse(
         Long mailMessageId,
         String fromAddress,
         String fromName,
+        /**
+         * The company the sender was resolved to by the mail sync. What makes "link this
+         * broker to the ship" possible without anybody typing a company name.
+         */
+        Long senderCompanyId,
+        String senderCompanyName,
         String mailSubject,
         LocalDateTime receivedAt,
         JsonNode payload,
+        /**
+         * What an outside source found, on the detail call only. Absent from the list: it
+         * carries every candidate a search returned and a page of rows would be mostly that.
+         */
+        VesselLookupResponse lookup,
         OffsetDateTime createdAt,
         OffsetDateTime resolvedAt,
         String resolvedBy,
