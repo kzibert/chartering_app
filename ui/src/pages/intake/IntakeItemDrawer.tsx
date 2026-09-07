@@ -15,10 +15,15 @@ import {
   Typography,
   message,
 } from 'antd';
+import { MailOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import VesselSelect from '../../components/VesselSelect';
 import { useVessel } from '../../api/hooks';
 import { useIntakeItem, useIntakeMutations } from '../../intake/store';
+import CompanyDrawer from '../companies/CompanyDrawer';
+import FromTheWeb from './FromTheWeb';
+import OriginalEmail from './OriginalEmail';
+import LinkSender from './LinkSender';
 import { kindMeta } from './labels';
 import type { FieldDiff, IntakeAction, IntakeItemResponse } from '../../api/intake';
 import type { VesselResponse } from '../../api/types';
@@ -54,6 +59,10 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
 
   const [chosen, setChosen] = useState<string[]>([]);
   const [linkTo, setLinkTo] = useState<number>();
+  const [emailOpen, setEmailOpen] = useState(false);
+  // The company the sender resolved to, opened over this drawer rather than navigated to:
+  // leaving the review to look a firm up would lose the half-made decision on this screen.
+  const [companyId, setCompanyId] = useState<number>();
 
   // Everything ticked when the drawer opens: the common answer is "the list is right", and a
   // screen that starts with nothing selected makes the common answer the most clicking.
@@ -112,6 +121,15 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
           'Loading…'
         )
       }
+      extra={
+        item?.mailMessageId ? (
+          <Tooltip title="What the model actually read. The only thing that settles whether a figure on this screen is right.">
+            <Button size="small" icon={<MailOutlined />} onClick={() => setEmailOpen(true)}>
+              Original email
+            </Button>
+          </Tooltip>
+        ) : undefined
+      }
       footer={
         item && pending ? (
           <Footer item={item} busy={resolve.isPending} onAnswer={answer} />
@@ -121,7 +139,7 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
     >
       {item && (
         <>
-          <SourceEmail item={item} />
+          <SourceEmail item={item} onOpenCompany={setCompanyId} />
 
           {!pending && (
             <Alert
@@ -160,12 +178,23 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
               chosen={chosen}
               onChange={setChosen}
               editable={pending}
+              onOpenCompany={setCompanyId}
             />
           ) : item.kind === 'NEW_VESSEL' ? (
             <NewVesselBody item={item} linkTo={linkTo} onLink={setLinkTo} editable={pending} />
           ) : (
             <CargoMergeBody item={item} />
           )}
+
+          <OriginalEmail
+            mailMessageId={item.mailMessageId}
+            open={emailOpen}
+            onClose={() => setEmailOpen(false)}
+          />
+          {/* Read-only from here: this drawer is open to answer a question about a ship,
+              and editing a company underneath it would be two half-finished jobs at once.
+              Omitting onEdit hides the Edit button rather than leaving a dead one. */}
+          <CompanyDrawer companyId={companyId} onClose={() => setCompanyId(undefined)} />
         </>
       )}
     </Drawer>
@@ -173,11 +202,26 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
 }
 
 /** Which email this came out of. A question about the market, not about a spreadsheet. */
-function SourceEmail({ item }: { item: IntakeItemResponse }) {
+function SourceEmail({
+  item,
+  onOpenCompany,
+}: {
+  item: IntakeItemResponse;
+  onOpenCompany: (id: number) => void;
+}) {
   return (
     <Descriptions size="small" column={1} style={{ marginBottom: 16 }}>
       <Descriptions.Item label="From">
-        {item.fromName ? `${item.fromName} <${item.fromAddress}>` : item.fromAddress || '—'}
+        <Space size={6} wrap>
+          <span>
+            {item.fromName ? `${item.fromName} <${item.fromAddress}>` : item.fromAddress || '—'}
+          </span>
+          {item.senderCompanyId && (
+            <Typography.Link onClick={() => onOpenCompany(item.senderCompanyId!)}>
+              {item.senderCompanyName}
+            </Typography.Link>
+          )}
+        </Space>
       </Descriptions.Item>
       <Descriptions.Item label="Subject">{item.mailSubject || '(no subject)'}</Descriptions.Item>
       <Descriptions.Item label="Arrived">
@@ -202,12 +246,14 @@ function VesselFieldsBody({
   chosen,
   onChange,
   editable,
+  onOpenCompany,
 }: {
   item: IntakeItemResponse;
   diffs: FieldDiff[];
   chosen: string[];
   onChange: (fields: string[]) => void;
   editable: boolean;
+  onOpenCompany: (id: number) => void;
 }) {
   const filled = item.payload?.filled ?? [];
   const renamed = diffs.some((d) => d.field === 'name');
@@ -224,6 +270,15 @@ function VesselFieldsBody({
         owner={detail?.owner?.name}
         matchedBy={item.payload?.matchedBy}
         disputed={disputed}
+      />
+
+      <FromTheWeb item={item} vesselId={item.payload?.vesselId} />
+
+      <LinkSender
+        item={item}
+        ownerId={vessel?.ownerId}
+        ownerName={vessel?.ownerName}
+        onOpenCompany={onOpenCompany}
       />
 
       {renamed && (
@@ -477,6 +532,8 @@ function NewVesselBody({
         message={`Nothing on file matched ${item.payload?.searchedBy ?? 'this vessel'}.`}
         description="Create her from what the email said, or point this position at a ship already on file — which is also the answer when she has simply been renamed."
       />
+
+      <FromTheWeb item={item} />
 
       <Descriptions size="small" column={2} bordered style={{ marginBottom: 16 }}>
         <Descriptions.Item label="Name">{show('name')}</Descriptions.Item>

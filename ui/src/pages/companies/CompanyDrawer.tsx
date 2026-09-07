@@ -55,7 +55,12 @@ interface Props {
   /** Tab to land on. Re-applied whenever the drawer switches company. */
   initialTab?: TabKey;
   onClose: () => void;
-  onEdit: (c: CompanyResponse) => void;
+  /**
+   * Opens the edit form. Optional: a caller that cannot service it — the Intake tab opens
+   * this drawer over its own to answer "who are these people", not to edit them — omits it
+   * and the button is not shown at all. A button that does nothing is worse than no button.
+   */
+  onEdit?: (c: CompanyResponse) => void;
 }
 
 export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClose, onEdit }: Props) {
@@ -114,7 +119,7 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
       onClose={onClose}
       // Just Edit. Ban and Delete moved inside it, where confirm went too — the header of
       // a drawer you opened to read something is no place for a one-click delete.
-      extra={c && <Button onClick={() => onEdit(c)}>Edit</Button>}
+      extra={c && onEdit && <Button onClick={() => onEdit(c)}>Edit</Button>}
     >
       {isLoading || !c ? (
         <Spin />

@@ -153,6 +153,19 @@ services:
       PARSER_MODEL: ${PARSER_MODEL:-}
       PARSER_READ_TIMEOUT_MS: ${PARSER_READ_TIMEOUT_MS:-180000}
       PARSER_MAX_ATTEMPTS: ${PARSER_MAX_ATTEMPTS:-3}
+      # Finding a hull on an outside source when the IMO is missing on both sides - which a
+      # position list creates constantly, since a circular names a ship and almost never her
+      # number. Reads a public ship-database search page.
+      #
+      # OFF BY DEFAULT even here, and worth a deliberate decision rather than a default: that
+      # page's terms do not invite automated reading, the parse depends on somebody else's
+      # class names, and the traffic lands on a server this desk does not pay for. Turn it on
+      # knowing that. Nothing it finds can write to a vessel on its own - every value is a
+      # proposal accepted field by field, in a change set that names where it came from.
+      LOOKUP_ENABLED: ${LOOKUP_ENABLED:-false}
+      LOOKUP_MIN_INTERVAL_MS: ${LOOKUP_MIN_INTERVAL_MS:-3000}
+      LOOKUP_MAX_PER_PASS: ${LOOKUP_MAX_PER_PASS:-10}
+      LOOKUP_MIN_CONFIDENCE: ${LOOKUP_MIN_CONFIDENCE:-55}
       # The other circular flow: Brevo's transactional API. Which of the two is used is a
       # runtime setting ("Use Brevo for circs" on the Settings tab), so only the key and
       # Brevo's own pacing baseline come from the environment. An empty key just means the

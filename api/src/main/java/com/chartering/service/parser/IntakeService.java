@@ -4,6 +4,8 @@ import com.chartering.audit.ChangeContext;
 import com.chartering.model.*;
 import com.chartering.repository.*;
 import com.chartering.service.CargoService;
+import com.chartering.service.VesselService;
+import com.chartering.service.lookup.VesselLookupService;
 import com.chartering.service.QuantityTolerance;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -56,6 +58,8 @@ public class IntakeService {
     private final VesselExNameRepository exNames;
     private final VesselPositionRepository positions;
     private final IntakeResolver resolver;
+    private final VesselLookupService lookups;
+    private final VesselService vesselService;
     private final ObjectMapper json;
 
     /** What one email produced, for the parse row and the sweep's log line. */
@@ -428,6 +432,72 @@ public class IntakeService {
         return merged.filled().isEmpty()
                 ? "Merged; the cargo already held everything this email said."
                 : "Merged, filling " + merged.filled().size() + " empty field(s).";
+    }
+
+    // ------------------------------------------------------------------ the outside source
+
+    /**
+     * Write the ticked figures from a lookup onto the hull this item is about.
+     *
+     * <p>Its own call rather than part of {@link #resolve}, and that is the provenance: this
+     * runs in its own transaction with its own change-set name, so the vessel's History tab
+     * can say which values came off the web and which came out of the mail. One combined
+     * accept would save a click and lose the distinction the whole feature exists to make.
+     *
+     * @param vesselId needed only on a {@code NEW_VESSEL} item, where no record exists until
+     *                 the item has been accepted; ignored when the item already names a hull
+     */
+    @Transactional
+    public List<String> applyLookup(Long itemId, List<String> fields, Long vesselId) {
+        IntakeItem item = items.findWithEmailById(itemId).orElseThrow(() ->
+                new com.chartering.exception.ResourceNotFoundException("Intake item", itemId));
+
+        Long target = item.getVesselId() != null ? item.getVesselId() : vesselId;
+        if (target == null) {
+            throw new IllegalArgumentException(
+                    "There is no vessel to write to yet — create her or link her to one on "
+                            + "file first, then take the figures from the lookup.");
+        }
+        VesselLookup row = lookups.forItem(itemId).orElseThrow(() ->
+                new IllegalArgumentException("Nothing has been looked up for this item."));
+
+        List<String> written = lookups.applyToVessel(target, row, fields);
+        if (item.getVesselId() == null) item.setVesselId(target);
+        return written;
+    }
+
+    /**
+     * Attach the company that sent the email to the hull it was about.
+     *
+     * <p>The ordinary case is a position list from a broker who is not the owner on file, and
+     * that the broker works this hull is worth keeping — it is who to ring about her. The
+     * capacity is the caller's to choose rather than assumed: {@code owner} displaces the
+     * owner on the record, the two broker roles sit alongside it, and getting that wrong
+     * would quietly reassign a ship.
+     *
+     * <p>Delegates to the vessel's own rule so a company appears once per hull, and so the
+     * Intake tab and the vessel screen cannot drift into two different notions of what a link
+     * is.
+     */
+    @Transactional
+    public void linkSenderCompany(Long itemId, String role, String notes) {
+        IntakeItem item = items.findWithEmailById(itemId).orElseThrow(() ->
+                new com.chartering.exception.ResourceNotFoundException("Intake item", itemId));
+        if (item.getVesselId() == null) {
+            throw new IllegalArgumentException(
+                    "There is no vessel to attach a company to yet — create her or link her to "
+                            + "one on file first.");
+        }
+        MailMessage message = item.getParsedEmail().getMailMessage();
+        Company sender = message == null ? null : message.getCompany();
+        if (sender == null) {
+            throw new IllegalArgumentException(
+                    "The sender of that email is not linked to a company. Link it on the "
+                            + "Mailbox tab first, and the address will be recognised from then on.");
+        }
+        ChangeContext.describe("Intake: linked %s to the vessel as %s"
+                .formatted(sender.getName(), role));
+        vesselService.setLink(item.getVesselId(), sender.getId(), role, notes);
     }
 
     // ------------------------------------------------------------------ writing rows

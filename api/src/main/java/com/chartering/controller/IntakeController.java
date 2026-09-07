@@ -1,6 +1,8 @@
 package com.chartering.controller;
 
+import com.chartering.dto.ApplyLookupRequest;
 import com.chartering.dto.CargoSourceResponse;
+import com.chartering.dto.LinkSenderRequest;
 import com.chartering.dto.IntakeItemResponse;
 import com.chartering.dto.IntakeResolveRequest;
 import com.chartering.dto.IntakeStatusResponse;
@@ -17,6 +19,7 @@ import com.chartering.service.parser.EmailParseRunner;
 import com.chartering.service.parser.IntakeQueryService;
 import com.chartering.service.parser.IntakeService;
 import com.chartering.service.parser.ParserSweepService;
+import com.chartering.service.lookup.VesselLookupService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -62,6 +65,7 @@ public class IntakeController {
     private final ParserSweepService sweeps;
     private final EmailParseRunner runner;
     private final ParserSettings settings;
+    private final VesselLookupService lookupService;
 
     // ------------------------------------------------------------------ status
 
@@ -149,6 +153,61 @@ public class IntakeController {
         // it is about, and the screen should show what is now on file rather than what the
         // service was holding half way through.
         return ResponseEntity.ok(queries.get(id));
+    }
+
+    // ------------------------------------------------------------- the outside source
+
+    @PostMapping("/items/{id}/lookup")
+    @Operation(summary = "Look this hull up on the configured outside source, now",
+            description = "Runs one search and replaces whatever was found before. Lookups "
+                    + "also run unattended for items as they land in the queue; this is the "
+                    + "button for the one you are looking at.\n\n"
+                    + "Everything it returns is a proposal — nothing is written to a vessel "
+                    + "until POST /items/{id}/apply-lookup names the fields to believe.")
+    public ResponseEntity<IntakeItemResponse> lookup(@PathVariable Long id) {
+        lookupService.lookUpNow(id);
+        return ResponseEntity.ok(queries.get(id));
+    }
+
+    @PostMapping("/items/{id}/apply-lookup")
+    @Operation(summary = "Write the ticked figures from the lookup onto the vessel",
+            description = "A separate action from accepting the email's figures, and "
+                    + "deliberately: each write is one change set naming its origin, so the "
+                    + "vessel's History tab can say which values came off the web, from which "
+                    + "source, on which day. Folded into the email accept it would save a "
+                    + "click and lose exactly that.\n\n"
+                    + "`vesselId` is needed only on a NEW_VESSEL item, where no record exists "
+                    + "until the item has been accepted.")
+    public ResponseEntity<IntakeItemResponse> applyLookup(
+            @PathVariable Long id, @Valid @RequestBody ApplyLookupRequest req) {
+        intake.applyLookup(id, req.getFields(), req.getVesselId());
+        return ResponseEntity.ok(queries.get(id));
+    }
+
+    // ------------------------------------------------------------- the sender's company
+
+    @PostMapping("/items/{id}/link-sender")
+    @Operation(summary = "Attach the company that sent the email to this vessel",
+            description = "A position list from a broker who is not the owner on file is the "
+                    + "ordinary case, and that the broker works this hull is worth keeping — "
+                    + "it is who to ring about her. The capacity is chosen rather than "
+                    + "assumed: owner displaces the owner on the record, the two broker roles "
+                    + "sit alongside it. Uses the same rule as the vessel's own screen, so a "
+                    + "company appears once per hull.")
+    public ResponseEntity<IntakeItemResponse> linkSender(
+            @PathVariable Long id, @Valid @RequestBody LinkSenderRequest req) {
+        intake.linkSenderCompany(id, req.getRole(), req.getNotes());
+        return ResponseEntity.ok(queries.get(id));
+    }
+
+    @GetMapping("/lookup-fields")
+    @Operation(summary = "The particulars an outside source may supply, and what to call them",
+            description = "Deliberately short: an IMO, a deadweight, a build year, a flag and "
+                    + "a type. Draft, capacities, gear and fittings are absent because the "
+                    + "sources do not carry them in a form worth trusting — a tracking page's "
+                    + "draught is the AIS-reported loaded figure, not a design maximum.")
+    public ResponseEntity<Map<String, String>> lookupFields() {
+        return ResponseEntity.ok(com.chartering.service.lookup.LookupFields.fields());
     }
 
     @GetMapping("/vessel-fields")

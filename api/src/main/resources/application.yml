@@ -270,6 +270,40 @@ chartering:
     max-tokens: ${PARSER_MAX_TOKENS:6144}
     max-attempts: ${PARSER_MAX_ATTEMPTS:3}
 
+  # Finding a hull on an outside source when the IMO is missing on both sides - the case a
+  # position list creates constantly, since a circular names a ship and almost never her
+  # number. The only implementation reads a public ship-database search page.
+  #
+  # OFF BY DEFAULT, and the reasons are worth reading before turning it on. That page's terms
+  # do not invite automated reading; the parse depends on somebody else's class names and can
+  # break on any day; and the traffic lands on a server this desk does not pay for. It was
+  # chosen over the paid APIs (roughly GBP 100-700 a month) knowingly, and the settings below
+  # exist to keep it a good citizen: one request at a time, a gap between them, a small cap
+  # per pass, and nothing requested unless somebody is waiting on a review item.
+  #
+  # Nothing it produces can write to a vessel. Every value is a proposal a person accepts
+  # field by field, in its own change set, so the History tab says which figures came off the
+  # web and from where.
+  lookup:
+    enabled: ${LOOKUP_ENABLED:false}
+    provider: ${LOOKUP_PROVIDER:vesselfinder}
+    search-url: ${LOOKUP_SEARCH_URL:https://www.vesselfinder.com/vessels?name={name}}
+    detail-url-prefix: ${LOOKUP_DETAIL_URL:https://www.vesselfinder.com/vessels/details/}
+    # A browser string, and it is worth being straight about why: an agent naming this
+    # application is the honest thing to send and is refused.
+    user-agent: ${LOOKUP_USER_AGENT:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36}
+    connect-timeout-ms: ${LOOKUP_CONNECT_TIMEOUT_MS:8000}
+    read-timeout-ms: ${LOOKUP_READ_TIMEOUT_MS:20000}
+    # Politeness and self-interest: a burst is what gets an address blocked, and a blocked
+    # address ends the feature here entirely.
+    min-request-interval-ms: ${LOOKUP_MIN_INTERVAL_MS:3000}
+    max-per-pass: ${LOOKUP_MAX_PER_PASS:10}
+    max-candidates: ${LOOKUP_MAX_CANDIDATES:8}
+    # Out of 100, scored on name, build year, deadweight and flag. Below it the lookup is
+    # recorded as NO_MATCH rather than putting a plausible wrong ship in front of somebody -
+    # a wrong IMO is not a wrong number, it is a different vessel wearing this one's history.
+    min-confidence: ${LOOKUP_MIN_CONFIDENCE:55}
+
   # The second circular flow: Brevo's transactional API instead of the mailbox over SMTP.
   # Which of the two is used is a runtime setting ("Use Brevo for circs" on the Settings tab),
   # not an environment variable — only the key lives here, because it is a credential.

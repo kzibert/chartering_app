@@ -126,6 +126,22 @@
 			<artifactId>commons-csv</artifactId>
 			<version>1.12.0</version>
 		</dependency>
+		<!--
+			HTML parsing, for the vessel lookup that reads a public ship-database search page
+			when an email and this database between them cannot supply an IMO. A dependency
+			for one off-by-default feature is worth it here: the alternative is regular
+			expressions over markup, which break silently and on somebody else's schedule.
+			jsoup lets that parser be written in the page's own terms - a.ship-link, td.v5 -
+			so when the page does change, the diff says what moved.
+
+			Pinned: the Spring Boot parent does not manage jsoup.
+		-->
+		<dependency>
+			<groupId>org.jsoup</groupId>
+			<artifactId>jsoup</artifactId>
+			<version>1.18.3</version>
+		</dependency>
+
 		<dependency>
 			<groupId>org.postgresql</groupId>
 			<artifactId>postgresql</artifactId>

@@ -1004,6 +1004,51 @@ that reporter's previous one.
 report; a cargo is one record several brokers describe, so its provenance lives in a table of
 its own and the cargo's drawer lists everyone who has sent it.
 
+### The sender's company, and the ship
+
+A position list usually comes from a broker who is not the owner on file. That the broker
+works that hull is worth keeping — it is who to ring about her — so the review item offers to
+attach the sending company to the vessel in a capacity you choose: **broker**, **exclusive
+broker** or **owner**. Owner displaces whoever is on the record, so it warns before doing it;
+sending a list is not evidence of ownership.
+
+It is offered here because this is the moment the fact exists. On the vessel's own screen
+later, the email is gone and so is the reason to add the link.
+
+### Looking a hull up on the web
+
+A circular names a ship and almost never her IMO. When this database has no hull of that name
+either, the desk's own answer is to type the name into a ship database and read the number
+off — and that is what this automates.
+
+**Off by default (`LOOKUP_ENABLED=false`), and worth a deliberate decision.** The only
+implementation reads a public search page: that site's terms do not invite automated reading,
+the parse depends on somebody else's class names and can break any day, and the traffic lands
+on a server you do not pay for. It was chosen over the paid APIs (£100–£700 a month)
+knowingly. If you later buy a key, the provider sits behind an interface — one class and one
+setting.
+
+- **Only hulls waiting in the review queue are searched for**, never every ship an email
+  mentions. A circular naming eighty produces a handful of questions and a handful of
+  requests. A pass runs on a timer and immediately after any sweep that raised something, so
+  the answer is usually on screen before you open the item; the drawer also has a **Look her
+  up** button.
+- **Five fields only**: IMO, DWT, year built, flag, type. Draft, capacities, gear and
+  fittings are deliberately not taken — a tracking page's draught is the AIS-reported *loaded*
+  figure, not a design maximum, and that substitution would be invisible and would lose
+  cargoes.
+- **The name proves nothing** — it is what was searched for. The score comes from the build
+  year, the deadweight and the flag, and the screen says separately whether anything beyond
+  the name agreed. A name-only match reads "100% on the name alone" in orange; with more than
+  one candidate answering to it, nothing is offered at all.
+- **The most useful thing it finds is a rename.** The search returns an IMO that is already on
+  a hull here under an old name — so she is not new, and entering her again would double the
+  fleet. Writing an IMO another vessel holds is refused with that vessel named.
+- **Everything is marked as coming from off the premises.** Values are tagged on the card,
+  accepting them is a separate button from accepting the email's figures, and the write is its
+  own change set: the vessel's History tab reads `DWT 0 → 6,977 · Web lookup (vesselfinder)
+  IMO 9014561` with the source URL, months later.
+
 ### Running it
 
 Three knobs, all on the **Settings tab** rather than in `.env`, because they are turned while
