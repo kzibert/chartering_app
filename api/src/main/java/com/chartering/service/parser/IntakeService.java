@@ -639,13 +639,19 @@ public class IntakeService {
         return true;
     }
 
+    /**
+     * How she was identified, as a code rather than a sentence.
+     *
+     * <p>The screen ranks these — an IMO match is near-certain, a former-name match is the
+     * one worth a second look — and it cannot rank prose. It was prose first, which meant the
+     * browser would have had to match on English to colour a tag.
+     *
+     * <p>Items raised before this change carry the sentence instead. The UI prints an
+     * unrecognised value as it stands rather than dropping it, which is the whole reason the
+     * payload is read leniently.
+     */
     private static String matchNote(IntakeResolver.VesselMatch how) {
-        return switch (how) {
-            case IMO -> "Matched by IMO number";
-            case NAME -> "Matched by name";
-            case EX_NAME -> "Matched by a former name";
-            case NONE -> null;
-        };
+        return how == IntakeResolver.VesselMatch.NONE ? null : how.name();
     }
 
     private static String describe(Cargo c) {
