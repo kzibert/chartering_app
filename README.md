@@ -927,6 +927,111 @@ a message you half remember), `GET|PATCH|DELETE /analysis/samples/{id}`,
 Tuning: `ANALYSIS_MAX_BODY_CHARS` (default 20000 — a cap, not a target; past it an email is a
 quoted chain and a disclaimer) and `ANALYSIS_MAX_CAPTURE` (default 500 per run).
 
+## Intake (mail read into cargoes and positions) — local only
+
+The other half of the Analysis tab, and what the corpus was collected for. A model reads
+incoming mail and the app files what it found: **open positions onto the Open fleet tab,
+cargoes onto the Cargoes tab**, so Match has both sides to work with without anybody typing a
+circular in by hand.
+
+**The model is not in this project.** It is an HTTP endpoint served by the sibling
+`chartering-ml` repository — llama.cpp running a finetuned Qwen3-4B behind a JSON schema, on
+a machine with a GPU:
+
+```bash
+cd ../chartering-ml && make serve-docker     # llama.cpp on :8090
+curl localhost:8090/health
+```
+
+Then `PARSER_ENABLED=true` (and `PARSER_URL`, which defaults to the host from inside the api
+container). On Render it is pinned **false**: no GPU, and no route to one on a home network.
+Off, the tab is gone from the navigation and every endpoint answers 404 — except
+`GET /intake/status`, which is what the UI asks before deciding the tab exists.
+
+### What lands on its own, and what waits for you
+
+This is the whole design, and the line is drawn at **what a wrong reading costs** rather than
+at how confident the model is. A parse may write anything that only *adds*; it may not change
+what a person put on file.
+
+| Written straight away | Waits on the Intake tab |
+|---|---|
+| A position for a hull already on file | A position naming a hull with no match |
+| A cargo nothing else looks like | A cargo that looks like one already in hand |
+| A particular filling a column that was empty | A particular that disagrees with the record |
+
+An invented position is superseded by tomorrow's list and deleted in a click. An invented
+deadweight sits in the vessel record looking like something a broker checked, and every match
+run afterwards is quietly wrong.
+
+### Matching a position to a hull
+
+Three tiers, and only the first two decide:
+
+1. **IMO** — the only identifier that survives a rename, and exactly what a broker's circular
+   leaves out.
+2. **Name, exactly** — current or former, which is what `vessel_ex_names` is for. Exact and
+   not a substring: "ATLANTIC" matching "ATLANTIC BREEZE" would file one owner's position
+   against another owner's ship, and the row would look correct forever after.
+3. **Particulars** — runs only when the first two find nothing, and **suggests rather than
+   decides**. Hulls within 5% on deadweight or sharing the start of the name, ranked, each
+   printing its own figures ("DWT 8,200 against 8,181, built 2004"), so linking one is a
+   click instead of a search. Two 28,000-tonners built in 2003 are two ships; nothing this
+   tier finds is written without you.
+
+### The three questions it asks
+
+- **New vessel** — create her from what the email said, or point the position at a ship
+  already on file. Linking also files the name the email used as a former name, so the next
+  circular does not ask again.
+- **Particulars differ** — the screen the feature exists for: what is on file beside what the
+  email said, one row per field, with a tick against each. Accept all, or the ones you
+  believe. Empty columns are filled without asking (a stored `0` counts as empty — that is how
+  the older rows say "not on file"), and a broker's rounding does not count as a disagreement.
+- **Duplicate cargo** — merge and keep both senders, or keep it separate. Never merged
+  silently: two cargoes cannot be un-merged. A merge fills the gaps and leaves every
+  disagreement alone, because neither broker is the charterer.
+
+### Two things worth knowing about the data
+
+**A repeated position is a re-confirmation.** A broker's list arrives every morning and most
+of it is yesterday's. An identical reading from the same reporter moves that row's
+`reported_at` forward instead of twinning it — only forward, so sweeping a backlog cannot make
+a fresh reading look stale. Anything differing by so much as a date is a new row and supersedes
+that reporter's previous one.
+
+**`cargo_sources` keeps every sender through a merge.** A position is already one row per
+report; a cargo is one record several brokers describe, so its provenance lives in a table of
+its own and the cargo's drawer lists everyone who has sent it.
+
+### Running it
+
+Three knobs, all on the **Settings tab** rather than in `.env`, because they are turned while
+watching the queue:
+
+- **How often** — minutes between sweeps. **0 stops the timer**, leaving "Parse now" as the
+  only way in, which is a perfectly good way to run it. Both the tab and the settings card
+  carry that button and it works whatever the interval says.
+- **How many** — messages per sweep. A ceiling, not a target; the next sweep carries on where
+  this one stopped.
+- **How far back** — only mail received within this many days is read, 30 by default. This is
+  what stops the first run reading years of backlog: a position list from last year is not
+  information, the ship sailed, and parsing it fills Open fleet with rows that are wrong by
+  construction and look right until somebody offers the ship. **0 removes the limit**, for
+  deliberately working through an old folder. When the counter reads zero but there is older
+  unread mail, the tab says so — widening the window is the fix.
+
+Endpoints: `GET /api/v1/intake/status`, `GET|POST /intake/sweep`, `GET /intake/items`,
+`GET /intake/items/{id}`, `POST /intake/items/{id}/resolve`, `GET /intake/parsed`,
+`GET /intake/parsed/{id}` (the model's answer verbatim — what settles whether it misread the
+email or we mis-filed the answer), `POST /intake/parsed/{mailMessageId}/reopen`,
+`GET /intake/cargoes/{id}/sources`, `GET|PUT|DELETE /intake/settings`.
+
+Tuning in `.env`: `PARSER_URL`, `PARSER_MODEL` (blank for llama.cpp; Ollama needs a name and
+scores markedly worse — see the chartering-ml README), `PARSER_READ_TIMEOUT_MS` (default
+180000, generous because a long position list on a CPU fallback takes minutes),
+`PARSER_MAX_BODY_CHARS`, `PARSER_MAX_TOKENS`, `PARSER_MAX_ATTEMPTS`.
+
 ## Local dev (without Docker)
 
 - **API:** needs JDK 21 + Maven and a Postgres on `localhost:5433`, which is exactly what the `dev` profile defaults to and exactly what `../chartering-db` publishes. Start that, then `cd api && mvn spring-boot:run` — the database will be empty and the app you are about to start is what migrates it. To work against the hosted database instead, set `DB_URL` / `DB_USER` / `DB_PASSWORD` in the environment.

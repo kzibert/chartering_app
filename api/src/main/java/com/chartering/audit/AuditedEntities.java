@@ -48,6 +48,13 @@ import java.util.function.Function;
  *       nothing overwrites one, so the earlier readings are already there to compare.
  *   <li>{@code CargoVesselMatch} — one row per pairing holding the last decision, which
  *       is what the Match tab shows anyway.
+ *   <li>{@code ParsedEmail}, {@code IntakeItem}, {@code CargoSource} — written by the email
+ *       parser, not authored. Each is already a record of its own event, so logging them
+ *       would be logging the log, and at the worst scale in this application: one circular
+ *       is eighty positions and a parse row, and a sweep is twenty circulars. What a person
+ *       <em>decides</em> on the Intake tab is logged, because accepting an item writes to
+ *       {@code Vessel} or {@code Cargo} and both are on this list — with the change set
+ *       named, so a merge reads as one event rather than nine unexplained field edits.
  *   <li>{@code Port}, {@code Region}, {@code TonnageCategory}, {@code TradeArea} and its
  *       aliases and distances — reference tables with no screen that writes to them.
  * </ul>

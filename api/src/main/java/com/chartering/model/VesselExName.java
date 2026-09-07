@@ -18,7 +18,14 @@ import java.time.OffsetDateTime;
  * <p>299 of these were extracted by V11 out of vessel names people had typed the history
  * into ("LOIRE RIVER/ EX AMIKO"). Those carry {@code source = "backfill"}: a machine's
  * reading of a free-text field, and the first thing to suspect if a vessel ever looks
- * wrong. Anything added since is {@code "manual"}.
+ * wrong. A name typed by a person is {@code "manual"}; one learned from a circular the email
+ * parser read is {@code "mail"}.
+ *
+ * <p>The three are kept apart for the reason the backfill ones were marked in the first
+ * place: they are worth different amounts. A person typed the manual ones knowing the ship.
+ * The mail ones are a name an email used for a hull somebody then confirmed was this hull —
+ * good evidence, but evidence, and the place to look first when a position turns up on a
+ * ship that cannot be where it says she is.
  */
 @Getter
 @Setter
@@ -28,6 +35,13 @@ public class VesselExName {
 
     public static final String SOURCE_MANUAL = "manual";
     public static final String SOURCE_BACKFILL = "backfill";
+
+    /**
+     * Learned from a circular: the name an email used for a hull the reviewer then confirmed
+     * was this one, on the Intake tab. Filing it is what stops the next list raising the
+     * identical question.
+     */
+    public static final String SOURCE_MAIL = "mail";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

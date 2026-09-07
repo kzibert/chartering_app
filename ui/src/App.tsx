@@ -13,6 +13,7 @@ import CirculationListsPage from './pages/circulationLists/CirculationListsPage'
 import CircularsPage from './pages/circulars/CircularsPage';
 import MailboxPage from './pages/mailbox/MailboxPage';
 import AnalysisPage from './pages/analysis/AnalysisPage';
+import IntakePage from './pages/intake/IntakePage';
 import HistoryPage from './pages/history/HistoryPage';
 import SettingsPage from './pages/settings/SettingsPage';
 import LoginPage from './pages/login/LoginPage';
@@ -81,6 +82,7 @@ function AuthenticatedApp() {
             when it is off, but a bookmarked URL still has to land somewhere that
             explains itself rather than bouncing to the dashboard. */}
         <Route path="/analysis" element={<AnalysisPage />} />
+        <Route path="/intake" element={<IntakePage />} />
         <Route path="/history" element={<HistoryPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

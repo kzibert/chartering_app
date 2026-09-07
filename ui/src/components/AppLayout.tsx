@@ -18,12 +18,14 @@ import {
   EllipsisOutlined,
   HistoryOutlined,
   ExperimentOutlined,
+  RobotOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCurrentList } from '../circulations/store';
 import { useMailboxStatus } from '../mailbox/store';
 import { useAnalysisStatus } from '../analysis/store';
+import { useIntakeStatus } from '../intake/store';
 import { clearToken } from '../auth/store';
 import { useIsMobile } from '../responsive/useIsMobile';
 
@@ -61,6 +63,7 @@ export default function AppLayout({
   // answer cannot change without the api restarting — and it is what decides whether the
   // tab is in the navigation rather than whether it works when clicked.
   const analysis = useAnalysisStatus();
+  const intake = useIntakeStatus();
   const isMobile = useIsMobile();
   const [navOpen, setNavOpen] = useState(false);
   const selected = KEYS.includes(location.pathname) ? location.pathname : '/';
@@ -109,9 +112,34 @@ export default function AppLayout({
         </span>
       ),
     },
-    // Local deployments only: ANALYSIS_ENABLED is false on the hosted instance, and an
-    // entry that led to a page explaining why it does nothing is worse than no entry. The
-    // route still exists, so a bookmarked URL lands on that explanation.
+    // Local deployments only, both of them: ANALYSIS_ENABLED and PARSER_ENABLED are false
+    // on the hosted instance, and an entry that led to a page explaining why it does
+    // nothing is worse than no entry. The routes still exist, so a bookmarked URL lands on
+    // that explanation.
+    //
+    // Intake carries a badge and Analysis does not, because the two ask different things of
+    // the user. A corpus is worked through when there is time; a review queue is somebody
+    // waiting for an answer before a position can be trusted — the same reason the mailbox
+    // carries its unread count. The query is the status endpoint the tab already polls, so
+    // the badge costs no extra request.
+    ...(intake.data?.enabled
+      ? [{
+          key: '/intake',
+          icon: <RobotOutlined />,
+          label: (
+            <span>
+              Intake
+              {(intake.data.pendingItems ?? 0) > 0 && (
+                <Badge
+                  count={intake.data.pendingItems}
+                  size="small"
+                  style={{ marginInlineStart: 8 }}
+                />
+              )}
+            </span>
+          ),
+        }]
+      : []),
     ...(analysis.data?.enabled
       ? [{ key: '/analysis', icon: <ExperimentOutlined />, label: 'Analysis' }]
       : []),
