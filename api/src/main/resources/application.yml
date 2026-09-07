@@ -237,6 +237,39 @@ chartering:
     max-body-chars: ${ANALYSIS_MAX_BODY_CHARS:20000}
     max-capture-per-run: ${ANALYSIS_MAX_CAPTURE:500}
 
+  # Reading incoming mail with a model: the Intake tab. The model is NOT in this
+  # application - it is an HTTP endpoint served by the sibling chartering-ml project
+  # (llama.cpp with a finetuned Qwen3-4B behind a JSON schema, on :8090). Everything here
+  # is the address of that endpoint and what to do when it does not answer.
+  #
+  # OFF BY DEFAULT AND OFF ON RENDER, for a harder reason than the analysis workbench: the
+  # hosted instance has no GPU and cannot reach a workstation on a home network, so a
+  # deployment with this on would spend a request every sweep proving it. Off, the tab is
+  # absent from the UI and every endpoint behind it answers 404.
+  #
+  # How often the sweep runs and how many messages it takes are NOT here. They live in
+  # app_settings and on the Settings tab, because they are knobs turned while watching the
+  # queue and an environment variable is a redeploy - the same argument that put the
+  # circular provider there. See ParserSettings.
+  parser:
+    enabled: ${PARSER_ENABLED:false}
+    url: ${PARSER_URL:http://host.docker.internal:8090/v1/chat/completions}
+    # llama-server serves one model and ignores this; Ollama refuses the request without
+    # it. Pointing at an Ollama is this and the url, and nothing else - though it scores
+    # markedly worse on the same weights (0.747 vessel F1 against 0.955; see the
+    # chartering-ml README for the measurement and the reason).
+    model: ${PARSER_MODEL:}
+    connect-timeout-ms: ${PARSER_CONNECT_TIMEOUT_MS:5000}
+    # Generous, and it has to be. A long position list is 7,600 tokens of prompt and can be
+    # 1,500 of answer; comfortable at the 81 tok/s the CUDA build measures, minutes on a
+    # machine that has fallen back to the CPU at 12.
+    read-timeout-ms: ${PARSER_READ_TIMEOUT_MS:180000}
+    max-body-chars: ${PARSER_MAX_BODY_CHARS:20000}
+    # Against a longest observed gold answer of 4,958 tokens. A request-level cap overrides
+    # the server's own num_predict, so this is the number that governs.
+    max-tokens: ${PARSER_MAX_TOKENS:6144}
+    max-attempts: ${PARSER_MAX_ATTEMPTS:3}
+
   # The second circular flow: Brevo's transactional API instead of the mailbox over SMTP.
   # Which of the two is used is a runtime setting ("Use Brevo for circs" on the Settings tab),
   # not an environment variable — only the key lives here, because it is a credential.

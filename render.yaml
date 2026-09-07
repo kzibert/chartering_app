@@ -188,6 +188,25 @@ services:
       - key: ANALYSIS_ENABLED
         value: true
 
+      # Reading incoming mail with the local model - the Intake tab. Pinned false, and this
+      # is not the borderline call ANALYSIS_ENABLED was. The model is llama.cpp on a GPU in
+      # the office (the sibling chartering-ml project, on :8090); this instance has no GPU
+      # and no route to a home network, so with this on every sweep would spend a request
+      # proving it and every status call would wait out a connect timeout to say so.
+      #
+      # A value pinned here is re-asserted over the dashboard on every blueprint sync, which
+      # is right for this one: it is a fact about what this deployment can reach, not a
+      # preference somebody might reasonably flip in the UI. The pieces it would need are
+      # deliberately absent rather than merely off - there is no PARSER_URL here, because
+      # there is no address that would work.
+      #
+      # The tables (parsed_emails, intake_items, cargo_sources) exist here regardless:
+      # Flyway builds one schema, not one per environment. cargo_sources is read on the
+      # Cargoes tab whatever this says, so a cargo merged in the office still shows its
+      # senders here.
+      - key: PARSER_ENABLED
+        value: false
+
   # ---------------------------------------------------------------------------
   # ui - the built SPA on Render's CDN. No container, no instance, no sleep.
   # ---------------------------------------------------------------------------

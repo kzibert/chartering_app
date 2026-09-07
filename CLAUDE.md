@@ -92,7 +92,8 @@ Three things bite here:
   `V6__add_contact_from_file.sql`, `V7__add_mail_replies.sql`,
   `V8__add_analysis_samples.sql`, `V9__add_trade_areas.sql`, `V10__seed_trade_areas.sql`,
   `V11__add_vessel_ex_names.sql`, `V12__add_vessel_specs.sql`, `V13__add_cargoes.sql` and
-  `V14__add_vessel_positions.sql` exist; the next one is V15.
+  `V14__add_vessel_positions.sql`, `V15__add_trade_area_aliases_from_corpus.sql` and
+  `V16__add_email_parsing.sql` exist; the next one is V17.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
@@ -464,6 +465,90 @@ The vessel record also gained `geared`, `gear_description`, `holds`, `hatches`,
 `grain_fitted`, `timber_fitted`, `imo_fitted` and `ice_class` — every one of them read off
 the position lists this mailbox already receives, and every one nullable, because null is
 "not on file" and false would be a claim about four thousand rows nobody has checked.
+
+### Intake: mail read into cargoes and positions
+
+The other half of the Analysis tab, and what the corpus was collected for. A model reads an
+incoming email and the app files what it found — positions onto Open Fleet, cargoes onto
+Cargoes — so Match has both sides to work with without anybody typing a circular in.
+
+**The model is not in this application and not in this repository.** It is an HTTP endpoint:
+the sibling `chartering-ml` project serving a finetuned Qwen3-4B through llama.cpp behind a
+JSON schema (`make serve-docker`, port 8090). `PARSER_ENABLED` is the switch, true in compose
+and pinned **false** in `render.yaml` — that instance has no GPU and no route to one, which is
+a harder fact than the one behind `ANALYSIS_ENABLED`. Off, the tab is absent and every
+endpoint answers 404 except `GET /intake/status`, which the UI asks first.
+
+`EmailParserClient` sends `AnalysisAnnotationTemplates.SYSTEM_PROMPT` — the constant, not a
+copy — the same Date/Subject/blank/body user turn `AnalysisExportService` builds, and
+`parser/extraction-schema.json` on the request. All four are what the model was measured
+under; a prompt or a layout that drifts from the corpus loses accuracy while every test still
+passes. The schema is a copy of chartering-ml's `serve/schema.json`; regenerate it there
+(`make schema`) and copy it back if the templates grow a field.
+
+**What lands unwatched and what waits is the whole design.** A parse may write anything that
+only *adds*: a position for a hull already on file, a cargo nothing else looks like, a
+particular filling a column that was empty. It may not write anything that *changes* what a
+person put there. The line is drawn at what a wrong reading costs, not at how confident the
+model is — an invented position is superseded by tomorrow's list, while an invented deadweight
+sits in the record looking checked and every match run afterwards is quietly wrong.
+
+So three things stop and become `intake_items`:
+
+- **`NEW_VESSEL`** — a hull with no match. Matching is **IMO, then name (current or former),
+  then nothing**, each exact: "ATLANTIC" matching "ATLANTIC BREEZE" would file one owner's
+  position against another owner's ship and nothing downstream would question it. A third,
+  inexact tier runs only after the first two fail and only *suggests* — hulls whose deadweight
+  is within 5% or whose name starts the same, each carrying its figures, so linking is a click
+  rather than a search. Accepting creates her; linking to an existing hull also files the name
+  the email used as an ex-name, which is what stops the next circular asking again.
+- **`VESSEL_FIELDS`** — she is on file and the email disagrees. One item per vessel per email,
+  accepted whole or per field. Gap fills are *not* queued: an empty column is written straight
+  away, on the importer's rule that a matched record is never overwritten, only gap-filled.
+  **A stored `0` counts as empty** — the older rows say "not on file" that way, and reading it
+  as a figure made "DWCC 0 t against 6,750 t" a question for a human, thousands of times over.
+  Numbers compare with half a percent of slack and text loosely ("2x30T CRANES" is "2 x 30 t
+  cranes"), because a queue that fires on a broker's rounding is a queue nobody reads.
+  A pending item suppresses an identical one, or every morning's list re-asks it.
+- **`CARGO_MERGE`** — a cargo that looks like one in hand. Never merged silently: two cargoes
+  cannot be un-merged. The key is same commodity + the load point actually agreeing +
+  quantity within 20% + laycans overlapping, where **an absent field abstains rather than
+  agreeing or objecting** — a cargo email is mostly silent. A merge gap-fills and leaves every
+  disagreement alone: neither broker is the charterer, so there is no reason to believe the
+  second over the first.
+
+**A position that repeats is a re-confirmation, not a new row.** An identical reading from the
+same reporter against a row still LIVE moves that row's `reported_at` forward — and only
+forward, so a swept backlog cannot make a fresh reading look stale. Anything differing by so
+much as a date is a new row superseding that reporter's previous one, which is the existing
+rule. Twinning every repeat would make a hull's history a record of Mondays rather than of
+openings.
+
+**`cargo_sources` is why a merge is safe.** A position is already one row per report carrying
+its reporter, and Open Fleet collapses them per hull — the sources are the rows. A cargo is
+one record several brokers describe, so the provenance moves to its own table: one row per
+arrival, kept through the merge, which is what answers "who else is working this".
+
+The sweep is on a timer whose interval, batch size and **lookback window** live in
+`app_settings` and on the Settings tab, not in the environment — they are knobs turned while
+watching the queue. **0 turns the timer off and leaves "Parse now" as the only way in, which
+is a supported way to run it.** The lookback (30 days by default, matching
+`IMAP_INITIAL_DAYS`) is what stops the first run reading a mailbox's whole history: a
+year-old position list is not information — the ship sailed and the cargo fixed — so parsing
+it spends GPU to put rows on Open Fleet that are wrong by construction and look right until
+somebody offers the ship. 0 removes the limit. The header count and the sweep's own queue are
+computed from one resolved snapshot of these, or the screen would say "0 waiting" above a run
+that then read twenty. A ticker checks
+the clock every minute rather than Spring binding `fixedDelay` at startup. `EmailParseRunner`
+is a bean of its own so its per-message transaction is not a self-invocation, the same split
+`MailIngestService` makes; one transaction per message, never one per sweep. A sweep stops at
+the first unreachable-server error rather than spending forty timeouts discovering the same
+thing.
+
+Nothing in `parsed_emails`, `intake_items` or `cargo_sources` is audited — they are machine
+writes and each is already a record of its own event. What a person *decides* is, because
+accepting writes to `Vessel` or `Cargo`, with the change set named so a merge reads as one
+event.
 
 ### Auth
 

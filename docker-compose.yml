@@ -137,6 +137,22 @@ services:
       ANALYSIS_ENABLED: ${ANALYSIS_ENABLED:-true}
       ANALYSIS_MAX_BODY_CHARS: ${ANALYSIS_MAX_BODY_CHARS:-20000}
       ANALYSIS_MAX_CAPTURE: ${ANALYSIS_MAX_CAPTURE:-500}
+      # Reading incoming mail with the local model - the Intake tab. The model is not in
+      # this project: it is llama.cpp serving a finetuned Qwen3-4B on the workstation, from
+      # the sibling chartering-ml project (docker compose -f serve/docker-compose.llamacpp.yml
+      # up -d). ON here and off on Render, which has no GPU and cannot reach a home network.
+      #
+      # host.docker.internal is the machine running docker, which the extra_hosts line above
+      # makes resolvable on Linux as well - the same route this container already takes to a
+      # Postgres published on a host port.
+      #
+      # How often it sweeps and how many messages it takes are NOT here: they are runtime
+      # settings on the Settings tab, because they are knobs turned while watching the queue.
+      PARSER_ENABLED: ${PARSER_ENABLED:-true}
+      PARSER_URL: ${PARSER_URL:-http://host.docker.internal:8090/v1/chat/completions}
+      PARSER_MODEL: ${PARSER_MODEL:-}
+      PARSER_READ_TIMEOUT_MS: ${PARSER_READ_TIMEOUT_MS:-180000}
+      PARSER_MAX_ATTEMPTS: ${PARSER_MAX_ATTEMPTS:-3}
       # The other circular flow: Brevo's transactional API. Which of the two is used is a
       # runtime setting ("Use Brevo for circs" on the Settings tab), so only the key and
       # Brevo's own pacing baseline come from the environment. An empty key just means the

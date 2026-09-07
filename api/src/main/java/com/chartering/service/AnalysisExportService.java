@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
@@ -26,10 +27,19 @@ import java.util.List;
  * from this cargo offer") would train a model that only works when somebody has already done
  * the classifying — which is the job.
  *
- * <p><b>The user turn is the email as it arrived</b>, subject line included and headers
+ * <p><b>The user turn is the email as it arrived</b>, subject and date included and headers
  * otherwise left out. The subject carries real signal in this domain (a broker's whole offer
  * is often in it) and the rest — Received chains, MIME boundaries, DKIM — is machinery that
  * would teach the model to read plumbing.
+ *
+ * <p><b>The date is there because the annotations carry years and the emails do not.</b> A
+ * circular says "OPEN 07/10 SEPTEMBER" and never the year; the annotation has to say
+ * 2026-09-07, because a date with no year cannot be compared to a laycan and every timing
+ * check against it comes back UNKNOWN. Train that pairing without showing the model the
+ * message date and the year is learnable from nothing on the page — it would be copying
+ * whichever years happened to be in the training set. A real caller always has the date of
+ * the message it is passing in, so putting it in the user turn costs a line and is the
+ * difference between a resolvable laycan and a guess.
  *
  * <p>Only {@code READY} samples are written, and they are written in id order so that
  * regenerating an export produces the same file byte for byte. Diffing two exports is how a
@@ -114,9 +124,20 @@ public class AnalysisExportService {
 
     private static String userTurn(AnalysisSample s) {
         StringBuilder sb = new StringBuilder();
-        if (s.getSubject() != null && !s.getSubject().isBlank()) {
-            sb.append("Subject: ").append(s.getSubject().strip()).append("\n\n");
+        // Sent before received: the sender's own clock is the one the "07/10 SEPTEMBER" in
+        // the body was written against, and a message that sat in a queue overnight would
+        // otherwise be dated a day after the laycan it announces. Received is the fallback,
+        // for the mail that arrived carrying no Date header at all.
+        LocalDateTime when = s.getSentAt() != null ? s.getSentAt() : s.getReceivedAt();
+        if (when != null) {
+            // The day, not the timestamp. Nothing in a circular resolves to an hour, and a
+            // time of day on every line is noise the model would learn to reproduce.
+            sb.append("Date: ").append(when.toLocalDate()).append('\n');
         }
+        if (s.getSubject() != null && !s.getSubject().isBlank()) {
+            sb.append("Subject: ").append(s.getSubject().strip()).append('\n');
+        }
+        if (!sb.isEmpty()) sb.append('\n');
         sb.append(s.getBodyText());
         return sb.toString();
     }
