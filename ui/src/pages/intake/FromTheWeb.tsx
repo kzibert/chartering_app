@@ -38,15 +38,31 @@ import type { IntakeItemResponse, LookupProposal } from '../../api/intake';
 export default function FromTheWeb({
   item,
   vesselId,
+  chosen: chosenProp,
+  onChange,
 }: {
   item: IntakeItemResponse;
   /** The hull to write to. Absent on a new vessel until she has been created. */
   vesselId?: number;
+  /**
+   * The ticked fields, when the drawer around this card is holding them.
+   *
+   * <b>Lifted so one button can answer the whole screen.</b> The email's figures and the
+   * web's are two writes with two change sets and that separation is deliberate — it is the
+   * only thing that later says which column came from where. What was not deliberate was
+   * making a person click twice to say one thing. The footer fires both, in order, each
+   * keeping its own change set; this card keeps its own button for taking the web's figures
+   * without answering the item at all.
+   */
+  chosen?: string[];
+  onChange?: (fields: string[]) => void;
 }) {
   const lookup = item.lookup;
   const { lookup: runLookup, applyLookup } = useIntakeMutations();
   const proposals = lookup?.proposals ?? [];
-  const [chosen, setChosen] = useState<string[]>([]);
+  const [own, setOwn] = useState<string[]>([]);
+  const chosen = chosenProp ?? own;
+  const setChosen = onChange ?? setOwn;
 
   // Empty columns ticked, disagreements not. Filling a blank from a public database is
   // ordinary; overwriting a figure somebody here checked is a decision, and it should be

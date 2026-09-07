@@ -141,8 +141,10 @@ public class IntakeController {
     @Operation(summary = "Answer one item",
             description = "ACCEPT does the proposed thing: create the vessel, write the "
                     + "ticked fields, merge the cargo. ALTERNATIVE does the other one — link "
-                    + "the position to a vessel already on file, or keep the cargo as a row "
-                    + "of its own — and it writes too, which is why it is not called a "
+                    + "the position to a vessel already on file, keep the cargo as a row "
+                    + "of its own, or - on a VESSEL_FIELDS item - say that the matched hull "
+                    + "is not this ship at all, which creates the vessel the email describes "
+                    + "and withdraws the reading this email put on the other one — and it writes too, which is why it is not called a "
                     + "rejection. DISCARD writes nothing.\n\n"
                     + "On a VESSEL_FIELDS item, `fields` names which differences to accept; "
                     + "leaving it out accepts all of them.")

@@ -21,6 +21,7 @@ import VesselSelect from '../../components/VesselSelect';
 import { useVessel } from '../../api/hooks';
 import { useIntakeItem, useIntakeMutations } from '../../intake/store';
 import CompanyDrawer from '../companies/CompanyDrawer';
+import VesselDrawer from '../vessels/VesselDrawer';
 import FromTheWeb from './FromTheWeb';
 import OriginalEmail from './OriginalEmail';
 import LinkSender from './LinkSender';
@@ -49,7 +50,7 @@ interface Props {
  */
 export default function IntakeItemDrawer({ itemId, onClose }: Props) {
   const query = useIntakeItem(itemId);
-  const { resolve } = useIntakeMutations();
+  const { resolve, applyLookup } = useIntakeMutations();
   const item = query.data;
 
   const diffs = useMemo<FieldDiff[]>(() => {
@@ -63,6 +64,13 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
   // The company the sender resolved to, opened over this drawer rather than navigated to:
   // leaving the review to look a firm up would lose the half-made decision on this screen.
   const [companyId, setCompanyId] = useState<number>();
+  // And her own record, for the same reason. The block above the table shows the particulars
+  // that are in dispute; deciding whether this is even the right ship often needs the rest of
+  // them - her positions, her former names, who is on her - and that is a whole screen.
+  const [vesselOpen, setVesselOpen] = useState(false);
+  // The web card's ticks, held here so one button can answer both halves of the screen.
+  // Still two writes with two change sets - see FromTheWeb for why that must not change.
+  const [webChosen, setWebChosen] = useState<string[]>([]);
 
   // Everything ticked when the drawer opens: the common answer is "the list is right", and a
   // screen that starts with nothing selected makes the common answer the most clicking.
@@ -72,11 +80,18 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
 
   useEffect(() => {
     setLinkTo(undefined);
+    setVesselOpen(false);
   }, [itemId]);
 
   if (!itemId) return null;
 
   const pending = item?.status === 'PENDING';
+
+  /** Web figures the card is offering and this vessel could take, if any are ticked. */
+  const webPending =
+    item?.kind === 'VESSEL_FIELDS' && item.lookup?.status === 'OK' && item.payload?.vesselId
+      ? webChosen.filter((f) => (item.lookup?.proposals ?? []).some((p) => p.field === f))
+      : [];
 
   const answer = (action: IntakeAction) => {
     if (!item) return;
@@ -84,26 +99,53 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
       message.warning('Choose the vessel this position belongs to.');
       return;
     }
-    if (item.kind === 'VESSEL_FIELDS' && action === 'ACCEPT' && chosen.length === 0) {
+    if (
+      item.kind === 'VESSEL_FIELDS' &&
+      action === 'ACCEPT' &&
+      chosen.length === 0 &&
+      webPending.length === 0
+    ) {
       message.warning('Tick at least one field, or use Keep what we have.');
       return;
     }
-    resolve.mutate(
-      {
-        id: item.id,
-        body: {
-          action,
-          fields: item.kind === 'VESSEL_FIELDS' ? chosen : undefined,
-          vesselId: item.kind === 'NEW_VESSEL' ? linkTo : undefined,
+
+    const answerItem = () =>
+      resolve.mutate(
+        {
+          id: item.id,
+          body: {
+            action,
+            fields: item.kind === 'VESSEL_FIELDS' ? chosen : undefined,
+            vesselId: item.kind === 'NEW_VESSEL' ? linkTo : undefined,
+          },
         },
-      },
-      {
-        onSuccess: (updated) => {
-          message.success(updated.resolutionNote || 'Done.');
-          onClose();
+        {
+          onSuccess: (updated) => {
+            message.success(updated.resolutionNote || 'Done.');
+            onClose();
+          },
         },
-      },
-    );
+      );
+
+    // The web's figures first, then the email's, each as its own write with its own change
+    // set - so the History tab still says which column came off a public page and which came
+    // out of a broker's mail. Where both name a field the email wins, being the later write
+    // and the more specific decision. Only on ACCEPT: the other two answers are not a
+    // statement about the web's figures at all, and applying them would be inventing one.
+    if (action === 'ACCEPT' && webPending.length > 0) {
+      applyLookup.mutate(
+        { id: item.id, body: { fields: webPending, vesselId: item.payload?.vesselId } },
+        {
+          onSuccess: answerItem,
+          onError: () =>
+            message.error(
+              'The web figures could not be written, so nothing else was either. Untick them to answer the email on its own.',
+            ),
+        },
+      );
+      return;
+    }
+    answerItem();
   };
 
   return (
@@ -132,7 +174,12 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
       }
       footer={
         item && pending ? (
-          <Footer item={item} busy={resolve.isPending} onAnswer={answer} />
+          <Footer
+            item={item}
+            busy={resolve.isPending || applyLookup.isPending}
+            fromWeb={webPending.length}
+            onAnswer={answer}
+          />
         ) : undefined
       }
       loading={query.isLoading}
@@ -179,6 +226,9 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
               onChange={setChosen}
               editable={pending}
               onOpenCompany={setCompanyId}
+              onOpenVessel={() => setVesselOpen(true)}
+              webChosen={webChosen}
+              onWebChange={setWebChosen}
             />
           ) : item.kind === 'NEW_VESSEL' ? (
             <NewVesselBody item={item} linkTo={linkTo} onLink={setLinkTo} editable={pending} />
@@ -195,6 +245,15 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
               and editing a company underneath it would be two half-finished jobs at once.
               Omitting onEdit hides the Edit button rather than leaving a dead one. */}
           <CompanyDrawer companyId={companyId} onClose={() => setCompanyId(undefined)} />
+          {/* Read-only, like the company drawer above it and for the same reason: this
+              drawer is open to answer a question about a ship, and editing her underneath
+              the answer would be two half-finished jobs at once. Omitting onEdit hides the
+              Edit button rather than leaving a dead one. */}
+          <VesselDrawer
+            vesselId={vesselOpen ? item.payload?.vesselId : undefined}
+            onClose={() => setVesselOpen(false)}
+            onEdit={() => undefined}
+          />
         </>
       )}
     </Drawer>
@@ -247,6 +306,9 @@ function VesselFieldsBody({
   onChange,
   editable,
   onOpenCompany,
+  onOpenVessel,
+  webChosen,
+  onWebChange,
 }: {
   item: IntakeItemResponse;
   diffs: FieldDiff[];
@@ -254,6 +316,9 @@ function VesselFieldsBody({
   onChange: (fields: string[]) => void;
   editable: boolean;
   onOpenCompany: (id: number) => void;
+  onOpenVessel: () => void;
+  webChosen: string[];
+  onWebChange: (fields: string[]) => void;
 }) {
   const filled = item.payload?.filled ?? [];
   const renamed = diffs.some((d) => d.field === 'name');
@@ -270,15 +335,23 @@ function VesselFieldsBody({
         owner={detail?.owner?.name}
         matchedBy={item.payload?.matchedBy}
         disputed={disputed}
+        onOpenVessel={onOpenVessel}
       />
 
-      <FromTheWeb item={item} vesselId={item.payload?.vesselId} />
+      <FromTheWeb
+        item={item}
+        vesselId={item.payload?.vesselId}
+        chosen={webChosen}
+        onChange={onWebChange}
+      />
 
       <LinkSender
         item={item}
         ownerId={vessel?.ownerId}
         ownerName={vessel?.ownerName}
+        links={detail?.links}
         onOpenCompany={onOpenCompany}
+        onOpenVessel={onOpenVessel}
       />
 
       {renamed && (
@@ -388,11 +461,14 @@ function OnFile({
   owner,
   matchedBy,
   disputed,
+  onOpenVessel,
 }: {
   vessel?: VesselResponse;
   owner?: string;
   matchedBy?: string;
   disputed: Set<string>;
+  /** Her whole record, over this drawer. */
+  onOpenVessel: () => void;
 }) {
   const match = matchedBy ? MATCH_META[matchedBy] : undefined;
 
@@ -431,9 +507,19 @@ function OnFile({
     <Card size="small" style={{ marginBottom: 16 }}>
       <Space direction="vertical" size={8} style={{ width: '100%' }}>
         <Space wrap size={8} align="center">
-          <Typography.Text strong style={{ fontSize: 16 }}>
-            {vessel?.name ?? '—'}
-          </Typography.Text>
+          {/* Her name is the way into her record. The rows below are the particulars in
+              dispute, which is the decision but not always enough to make it: whether this
+              is even the right ship is usually settled by her positions, her former names
+              and who is on her, and those are a screen rather than three numbers. */}
+          {vessel ? (
+            <Typography.Link strong style={{ fontSize: 16 }} onClick={onOpenVessel}>
+              {vessel.name}
+            </Typography.Link>
+          ) : (
+            <Typography.Text strong style={{ fontSize: 16 }}>
+              —
+            </Typography.Text>
+          )}
           {vessel?.imoNumber ? (
             <Tag>IMO {vessel.imoNumber}</Tag>
           ) : (
@@ -662,10 +748,13 @@ function CargoMergeBody({ item }: { item: IntakeItemResponse }) {
 function Footer({
   item,
   busy,
+  fromWeb,
   onAnswer,
 }: {
   item: IntakeItemResponse;
   busy: boolean;
+  /** How many web figures are ticked, so the button can say what it is about to do. */
+  fromWeb: number;
   onAnswer: (action: IntakeAction) => void;
 }) {
   const words: Record<string, { accept: string; alternative: string; discard: string }> = {
@@ -676,7 +765,12 @@ function Footer({
     },
     VESSEL_FIELDS: {
       accept: 'Update the ticked fields',
-      alternative: '',
+      // Exact matching is not the same as right: a name is re-used when an owner scraps a
+      // ship and gives it to the next one, and a former-name hit comes back called something
+      // else entirely. Until this button existed, noticing that the two sets of particulars
+      // describe two different vessels left only two answers - write the figures onto the
+      // wrong hull, or discard the reading - and both lose the ship the email was about.
+      alternative: 'Not this ship — create her',
       discard: 'Keep what we have',
     },
     CARGO_MERGE: {
@@ -689,14 +783,40 @@ function Footer({
 
   return (
     <Space wrap>
-      <Button type="primary" loading={busy} onClick={() => onAnswer('ACCEPT')}>
-        {w.accept}
-      </Button>
-      {w.alternative && (
-        <Button loading={busy} onClick={() => onAnswer('ALTERNATIVE')}>
-          {w.alternative}
+      <Tooltip
+        title={
+          fromWeb > 0
+            ? `Writes the ${fromWeb} ticked web figure(s) and then the ticked email fields — two changes, each recorded against where it came from.`
+            : undefined
+        }
+      >
+        <Button type="primary" loading={busy} onClick={() => onAnswer('ACCEPT')}>
+          {w.accept}
+          {fromWeb > 0 ? ` + ${fromWeb} from the web` : ''}
         </Button>
-      )}
+      </Tooltip>
+      {w.alternative &&
+        (item.kind === 'VESSEL_FIELDS' ? (
+          <Popconfirm
+            title="She is a different ship"
+            description={
+              <div style={{ maxWidth: 340 }}>
+                Creates the vessel the email describes, as her own record, and files the
+                position on her. The reading this email put on the matched hull is withdrawn —
+                marked, not deleted, so her history still says what was reported and when.
+              </div>
+            }
+            okText="Create her"
+            cancelText="Cancel"
+            onConfirm={() => onAnswer('ALTERNATIVE')}
+          >
+            <Button loading={busy}>{w.alternative}</Button>
+          </Popconfirm>
+        ) : (
+          <Button loading={busy} onClick={() => onAnswer('ALTERNATIVE')}>
+            {w.alternative}
+          </Button>
+        ))}
       <Popconfirm
         title={w.discard}
         description="Nothing will be written. The email stays in the log."
