@@ -39,7 +39,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  * <p>Only where it could help: a hull with no IMO on either side, or one nothing on file
  * answers to at all. A vessel whose record and whose email agree on an IMO has nothing to
- * gain from a search and does not get one.
+ * gain from a search and does not get one on the pass's own initiative — the drawer's button
+ * searches for her anyway, because a person asking is not unprompted traffic.
+ *
+ * <p><b>An item the pass will not search for still gets a row.</b> The queue is "pending
+ * items with no lookup row", so an item that produced none stayed at the head of it and was
+ * reconsidered by every pass for ever, spending the allowance on hulls that were never going
+ * to be searched for while the ones with no IMO queued behind them went unreached. See
+ * {@link #skip}.
  *
  * <h2>Nothing here writes to a vessel</h2>
  * <p>Everything this produces is a proposal. A person accepts it field by field through
@@ -60,6 +67,15 @@ public class VesselLookupService {
 
     /** How often the pass looks for work. Cheap: it is one indexed query when idle. */
     private static final long TICK_MS = 120_000;
+
+    /**
+     * How many items deep a pass will look to find {@code maxPerPass} worth searching for.
+     *
+     * <p>Multiplier rather than a number, so a deployment that raises the cap gets a window
+     * that grows with it. It exists because the queue holds two kinds of item and only one
+     * of them is a question a search can answer.
+     */
+    private static final int SKIP_WINDOW = 5;
 
     private final VesselLookupProperties props;
     private final VesselLookupProvider provider;
@@ -98,10 +114,24 @@ public class VesselLookupService {
     private void runPass() {
         if (!running.compareAndSet(false, true)) return;
         try {
-            List<Long> queue = lookups.pendingWithoutLookup(PageRequest.of(0, props.getMaxPerPass()));
+            // Deliberately more items than the cap allows lookups. Most of what waits in
+            // this queue cannot be helped by a search at all - a hull both the email and the
+            // record name by IMO is the ordinary case - and asking for exactly `maxPerPass`
+            // rows meant a pass could spend its whole allowance recognising items it was
+            // going to skip, over and over. Those cost a payload read each and are answered
+            // below with a row, so they leave the queue; the window is what stops the first
+            // pass after a sweep from being the one that only clears them.
+            List<Long> queue = lookups.pendingWithoutLookup(
+                    PageRequest.of(0, props.getMaxPerPass() * SKIP_WINDOW));
+            int searched = 0;
             for (Long itemId : queue) {
+                if (searched >= props.getMaxPerPass()) break;
                 try {
-                    lookUp(itemId);
+                    VesselLookup row = lookUp(itemId, false);
+                    // A skip made no outside request, so it does not spend the allowance.
+                    if (row != null && !VesselLookup.STATUS_SKIPPED.equals(row.getStatus())) {
+                        searched++;
+                    }
                 } catch (Exception e) {
                     // One bad item must not end the pass; the row records what happened.
                     log.warn("Lookup for intake item {} failed: {}", itemId, e.toString());
@@ -121,11 +151,17 @@ public class VesselLookupService {
      *
      * <p>Synchronous, unlike the parser's sweep: this is one HTTP request against one page
      * and the person pressing it is looking at the drawer waiting for the answer.
+     *
+     * <p><b>It searches for hulls the unattended pass would not.</b> That pass leaves an
+     * already-identified ship alone because it is spending somebody else's bandwidth on its
+     * own initiative; a person pressing this button has decided the request is worth making,
+     * and a second opinion on a deadweight is a real reason to want one. The whole cost
+     * argument is about unprompted traffic, and this is not that.
      */
     public VesselLookup lookUpNow(Long itemId) {
         requireEnabled();
         lookups.findByIntakeItemId(itemId).ifPresent(lookups::delete);
-        return lookUp(itemId);
+        return lookUp(itemId, true);
     }
 
     // ------------------------------------------------------------------ the lookup
@@ -138,29 +174,59 @@ public class VesselLookupService {
      * reads and the single write on either side are each atomic on their own, which is all
      * this needs.
      */
-    public VesselLookup lookUp(Long itemId) {
+    public VesselLookup lookUp(Long itemId, boolean force) {
         IntakeItem item = items.findById(itemId)
                 .orElseThrow(() -> new ResourceNotFoundException("Intake item", itemId));
 
         Known known = knownFacts(item);
-        if (known == null) return null;
+        // Nothing to search for at all, or nothing to be gained by searching. Recorded either
+        // way; see skip() for why an unrecorded non-answer was starving the pass.
+        if (known == null || (known.alreadyIdentified() && !force)) return skip(item);
 
         VesselLookup row = new VesselLookup();
         row.setIntakeItem(items.getReferenceById(itemId));
         row.setProvider(provider.name());
-        row.setQuery(known.searchName());
         row.setFetchedAt(OffsetDateTime.now());
 
-        List<VesselParticulars> candidates;
+        // At most two, and the second only because the first found nothing. The source
+        // matches the name as a literal substring, so "HACI HILMI II" misses a hull held as
+        // "HACI HILMI-II" while "HACI HILMI" finds her - a punctuation mark between the way
+        // two databases write one name, and the whole difference between an answer and
+        // "nothing came back". See VesselNameQuery for why the loosening stops where it does.
+        //
+        // Each form goes through the throttle separately: a fallback is a second request
+        // against somebody else's server and must be paced like the first, not smuggled
+        // inside one turn of the gate.
+        List<String> forms = VesselNameQuery.forms(known.searchName());
+        row.setQuery(forms.isEmpty() ? known.searchName() : forms.get(0));
+
+        List<VesselParticulars> candidates = List.of();
         try {
-            candidates = throttled(() -> provider.searchByName(known.searchName()));
+            for (String form : forms) {
+                candidates = throttled(() -> provider.searchByName(form));
+                if (!candidates.isEmpty()) {
+                    // What was actually sent, not what was meant - the drawer prints it.
+                    row.setQuery(form);
+                    break;
+                }
+            }
         } catch (VesselLookupProvider.LookupException e) {
             row.setStatus(VesselLookup.STATUS_FAILED);
             row.setError(e.getMessage());
             return lookups.save(row);
         }
 
-        row.setCandidatesJson(write(candidates));
+        // Ranked before it is trimmed. The page comes back in the source's own order, which
+        // knows only the name it was asked for; keeping the first few would drop the hull
+        // whose deadweight and build year agree because she was twelfth on a page of twenty.
+        // The whole list is what the matcher judges - the "more than one ship answers to this
+        // name" test is only as honest as the list it counts.
+        List<LookupMatcher.Scored> ranked = LookupMatcher.score(known.facts(), candidates);
+        row.setCandidatesJson(write(ranked.stream()
+                .limit(props.getMaxCandidates())
+                .map(LookupMatcher.Scored::candidate)
+                .toList()));
+
         Optional<LookupMatcher.Scored> best =
                 LookupMatcher.best(known.facts(), candidates, props.getMinConfidence());
 
@@ -180,12 +246,46 @@ public class VesselLookupService {
     }
 
     /**
+     * An item a search cannot help, recorded as that.
+     *
+     * <p><b>Written rather than left blank, for the same reason {@code NO_MATCH} is.</b> The
+     * queue is "pending items with no lookup row", so an item that produced no row stayed in
+     * it - and was picked up again by every pass, for ever. Most of what waits here is of
+     * exactly that kind: a hull the email and the record both name by IMO has nothing to gain
+     * from a search, and there are usually several of them at the head of the queue. They
+     * filled the pass's allowance every two minutes and the hulls behind them - the ones with
+     * no IMO, which are the only reason this feature exists - were never reached at all.
+     *
+     * <p>It costs no outside request and the drawer says which of the two kinds of silence
+     * this is: "a search could only agree" is a different answer from "nothing came back".
+     */
+    private VesselLookup skip(IntakeItem item) {
+        VesselLookup row = new VesselLookup();
+        row.setIntakeItem(item);
+        row.setProvider(provider.name());
+        // The column is NOT NULL and nothing was searched for; the hull's own label is the
+        // honest thing to put there, since it is what a search would have asked about.
+        String label = item.getSubjectLabel();
+        row.setQuery(label == null || label.isBlank() ? "—" : label);
+        row.setStatus(VesselLookup.STATUS_SKIPPED);
+        row.setFetchedAt(OffsetDateTime.now());
+        return lookups.save(row);
+    }
+
+    /**
      * What is known about the hull an item is asking about, and what to search for.
      *
-     * <p>Null when a search could not help — which is most items. The record's own figures
-     * are preferred over the email's where both exist: the email is a broker's typing and the
+     * <p>Null when a search could not help — which is most items, and the caller records that
+     * as a skip rather than as nothing at all; see {@link #skip}. The record's own figures are
+     * preferred over the email's where both exist: the email is a broker's typing and the
      * record is what this desk has already checked, so the record is the better thing to
      * match a third source against.
+     *
+     * <p><b>The name is cleaned here and nowhere else</b>, so the string that is searched for
+     * and the string a candidate is scored against are the same one. {@link LookupMatcher}
+     * squashes punctuation but knows nothing of {@code MV}: score {@code MV HACI HILMI-II}
+     * against the {@code HACI HILMI-II} the search returned and the name reads as a
+     * disagreement — a search that worked, reported as the wrong ship.
      *
      * <p><b>Public because the screen has to score against exactly these facts.</b> The
      * confidence stored on the row was earned against them; if the drawer re-scored against a
@@ -199,10 +299,11 @@ public class VesselLookupService {
             IntakePayloads.NewVessel payload = read(item, IntakePayloads.NewVessel.class);
             if (payload == null || payload.vessel() == null) return null;
             Extraction.ExtractedVessel v = payload.vessel();
-            String name = Extraction.text(v.name());
+            String name = VesselNameQuery.clean(Extraction.text(v.name()));
             if (name == null) return null;
+            // Nothing on file answers to her at all, so there is always something to gain.
             return new Known(name, new LookupMatcher.Known(
-                    name, v.built(), v.dwt(), Extraction.text(v.flag())));
+                    name, v.built(), v.dwt(), Extraction.text(v.flag())), false);
         }
 
         if (item.getKind() != IntakeItemKind.VESSEL_FIELDS) return null;
@@ -212,14 +313,11 @@ public class VesselLookupService {
         Vessel vessel = vessels.findById(payload.vesselId()).orElse(null);
         if (vessel == null) return null;
 
-        // Both sides know who she is. A search could only agree, and it would cost somebody
-        // else a request to do it.
         Extraction.ExtractedVessel parsed = payload.vessel();
         boolean emailHasImo = parsed != null && Extraction.text(parsed.imo()) != null;
         boolean recordHasImo = vessel.getImoNumber() != null && !vessel.getImoNumber().isBlank();
-        if (emailHasImo && recordHasImo) return null;
 
-        String name = vessel.getName();
+        String name = VesselNameQuery.clean(vessel.getName());
         if (name == null || name.isBlank()) return null;
         return new Known(name, new LookupMatcher.Known(
                 name,
@@ -228,11 +326,24 @@ public class VesselLookupService {
                 nonZero(vessel.getDeadweightTonnage()) != null ? vessel.getDeadweightTonnage()
                         : parsed != null ? parsed.dwt() : null,
                 vessel.getFlag() != null ? vessel.getFlag()
-                        : parsed != null ? Extraction.text(parsed.flag()) : null));
+                        : parsed != null ? Extraction.text(parsed.flag()) : null),
+                emailHasImo && recordHasImo);
     }
 
-    /** The name to search for, and the facts a candidate is scored against. */
-    public record Known(String searchName, LookupMatcher.Known facts) {
+    /**
+     * The name to search for, the facts a candidate is scored against, and whether a search
+     * would be telling us anything.
+     *
+     * @param alreadyIdentified both the email and the record name her by IMO. <b>A reason not
+     *                          to search on the pass's own initiative, not an absence of
+     *                          facts</b> — which is why it is a flag here rather than a null.
+     *                          The drawer scores the candidate against exactly these facts
+     *                          whatever prompted the lookup, and a forced search that fell
+     *                          back to a thinner set would print weaker evidence than the
+     *                          stored confidence was earned on
+     */
+    public record Known(String searchName, LookupMatcher.Known facts,
+                        boolean alreadyIdentified) {
     }
 
     /**

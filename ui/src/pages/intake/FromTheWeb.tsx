@@ -67,7 +67,9 @@ export default function FromTheWeb({
             message.info(
               updated.lookup?.status === 'OK'
                 ? `Found ${updated.lookup.matched?.name ?? 'a match'}.`
-                : 'Nothing matched confidently enough to offer.',
+                : updated.lookup?.status === 'SKIPPED'
+                  ? 'She is already identified here and in the email — a search could only agree.'
+                  : 'Nothing matched confidently enough to offer.',
             ),
         })
       }
@@ -141,6 +143,14 @@ export default function FromTheWeb({
             </>
           }
         />
+      )}
+
+      {lookup.status === 'SKIPPED' && (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          Not searched for. The email and the record both name her by IMO, so a search could
+          only have agreed with them — and this reads a public page at somebody else&rsquo;s
+          expense. Search anyway if you want a second opinion on her particulars.
+        </Typography.Text>
       )}
 
       {lookup.status === 'NO_MATCH' && (

@@ -57,6 +57,24 @@ public class VesselFinderScraper implements VesselLookupProvider {
     private static final Pattern LENGTH_BEAM =
             Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*/\\s*(\\d+(?:\\.\\d+)?)");
 
+    /**
+     * Every row on the page, not the handful that are kept.
+     *
+     * <p><b>Ranking has to happen after reading, not during it.</b> The page is ordered by
+     * the source's own idea of relevance, which knows only the name it was asked for — a
+     * search for a common name returns twenty hulls and the one whose deadweight and build
+     * year actually agree can be the twelfth. Cutting the list here at
+     * {@code max-candidates} threw her away before anything had looked at her, and the
+     * lookup then recorded NO_MATCH for a ship whose row was on the page it read. The cap
+     * still applies: {@link VesselLookupService} keeps the best few once they are scored.
+     *
+     * <p>What remains here is a guard against a page that is not what it should be. One
+     * search page carries a few dozen rows at most; a document offering thousands is a
+     * redirect, a rebuild or a listing, and reading all of it would be a waste rather than
+     * an answer.
+     */
+    private static final int PAGE_LIMIT = 50;
+
     private final VesselLookupProperties props;
 
     @Override
@@ -111,7 +129,7 @@ public class VesselFinderScraper implements VesselLookupProvider {
         // One row per hull. Selected by the link class rather than by table position, so a
         // banner or an advertising row inserted above the table does not shift everything.
         for (Element link : doc.select("a.ship-link")) {
-            if (out.size() >= props.getMaxCandidates()) break;
+            if (out.size() >= PAGE_LIMIT) break;
             VesselParticulars p = readRow(link);
             if (p != null) out.add(p);
         }

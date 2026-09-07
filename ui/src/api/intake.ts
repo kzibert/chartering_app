@@ -136,8 +136,13 @@ export interface VesselLookupResponse {
   id: number;
   provider: string;
   query: string;
-  /** OK, NO_MATCH or FAILED. NO_MATCH is a result, not an error. */
-  status: 'OK' | 'NO_MATCH' | 'FAILED';
+  /**
+   * OK, NO_MATCH, FAILED or SKIPPED. NO_MATCH is a result, not an error, and SKIPPED is not
+   * a failure either: nothing was asked, because a search could only have agreed with what
+   * both the email and the record already say. It is recorded so the pass stops asking the
+   * same question every two minutes.
+   */
+  status: 'OK' | 'NO_MATCH' | 'FAILED' | 'SKIPPED';
   confidence?: number;
   /**
    * Whether anything beyond the name agreed. The name is what was searched for, so a match

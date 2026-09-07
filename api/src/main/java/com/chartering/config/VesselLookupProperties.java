@@ -49,6 +49,12 @@ public class VesselLookupProperties {
     private String userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             + "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
+    /**
+     * Unused by the scraper: Jsoup has one timeout covering both halves of a request, and
+     * {@link #readTimeoutMs} is what is passed to it. Kept because it is the setting a paid
+     * API client would want, and this is the port's configuration rather than one
+     * implementation's.
+     */
     private int connectTimeoutMs = 8_000;
 
     private int readTimeoutMs = 20_000;
@@ -72,7 +78,17 @@ public class VesselLookupProperties {
      */
     private int maxPerPass = 10;
 
-    /** Candidates kept from one search. Beyond a handful nobody reads them. */
+    /**
+     * Candidates kept from one search, <b>after they are ranked</b>. Beyond a handful nobody
+     * reads them.
+     *
+     * <p>The order matters and used to be the other way round. The page arrives in the
+     * source's own order, which knows only the name it was asked for; cutting it here meant a
+     * search for a common name kept the first eight of twenty and threw away the hull whose
+     * deadweight and build year agreed, because she was twelfth. The scraper now reads the
+     * page and {@code VesselLookupService} keeps the best few once the matcher has scored
+     * them.
+     */
     private int maxCandidates = 8;
 
     /**

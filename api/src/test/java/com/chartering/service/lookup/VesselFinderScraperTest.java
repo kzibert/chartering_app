@@ -95,18 +95,40 @@ class VesselFinderScraperTest {
     }
 
     @Test
-    void stopsAtTheConfiguredNumberOfCandidates() {
+    void readsEveryRowOnThePageAndLeavesTheTrimmingToTheMatcher() {
+        // It used to stop at max-candidates here, which is the wrong end to cut at: the page
+        // is in the source's own order and that order knows only the name it was asked for.
+        // A search for a common name returned twenty hulls, the first eight were kept, and
+        // the one whose deadweight and build year agreed was twelfth - so the lookup recorded
+        // NO_MATCH for a ship whose row it had already read. VesselLookupService keeps the
+        // best few once they are scored.
         VesselLookupProperties capped = new VesselLookupProperties();
         capped.setMaxCandidates(1);
 
         StringBuilder many = new StringBuilder("<html><body><table><tbody>");
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < 20; i++) {
             many.append("<tr><td><a class=\"ship-link\" href=\"/vessels/details/900000")
                     .append(i).append("\"><div class=\"slna\">SHIP ").append(i)
                     .append("</div></a></td><td class=\"v5\">5000</td></tr>");
         }
         many.append("</tbody></table></body></html>");
 
-        assertThat(new VesselFinderScraper(capped).parse(Jsoup.parse(many.toString()))).hasSize(1);
+        assertThat(new VesselFinderScraper(capped).parse(Jsoup.parse(many.toString()))).hasSize(20);
+    }
+
+    @Test
+    void stopsAtAPageThatIsNotASearchResult() {
+        // The only cut left in the parser, and it is a guard rather than a policy: a document
+        // offering thousands of rows is a redirect, a rebuild or a listing, and reading all
+        // of it would be a waste rather than an answer.
+        StringBuilder huge = new StringBuilder("<html><body><table><tbody>");
+        for (int i = 0; i < 200; i++) {
+            huge.append("<tr><td><a class=\"ship-link\" href=\"/vessels/details/91")
+                    .append(String.format("%05d", i)).append("\"><div class=\"slna\">SHIP ")
+                    .append(i).append("</div></a></td></tr>");
+        }
+        huge.append("</tbody></table></body></html>");
+
+        assertThat(scraper.parse(Jsoup.parse(huge.toString()))).hasSize(50);
     }
 }
