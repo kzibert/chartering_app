@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { intakeApi } from '../api/intake';
 import type {
+  ApplyLookupRequest,
   IntakeItemFilter,
   IntakeResolveRequest,
+  LinkSenderRequest,
   ParseStatus,
   ParserSettingsRequest,
 } from '../api/intake';
@@ -159,6 +161,36 @@ export function useIntakeMutations() {
     onSuccess: invalidate,
   });
 
+  /**
+   * Search an outside source for this hull, now.
+   *
+   * Invalidates only this feature: a lookup writes nothing to a vessel, it stores a proposal.
+   * The wholesale clear below is for the calls that do write.
+   */
+  const lookup = useMutation({
+    mutationFn: (id: number) => intakeApi.lookup(id),
+    onSuccess: invalidate,
+  });
+
+  /**
+   * Take the ticked figures from a lookup onto the vessel.
+   *
+   * Clears everything, like resolving: this writes to a vessel, so the Vessels, Open fleet
+   * and Match tabs are all stale the moment it returns.
+   */
+  const applyLookup = useMutation({
+    mutationFn: (v: { id: number; body: ApplyLookupRequest }) =>
+      intakeApi.applyLookup(v.id, v.body),
+    onSuccess: () => qc.invalidateQueries(),
+  });
+
+  /** Attach the sender's company to the vessel. Also a write, also clears everything. */
+  const linkSender = useMutation({
+    mutationFn: (v: { id: number; body: LinkSenderRequest }) =>
+      intakeApi.linkSender(v.id, v.body),
+    onSuccess: () => qc.invalidateQueries(),
+  });
+
   const reopen = useMutation({
     mutationFn: (mailMessageId: number) => intakeApi.reopen(mailMessageId),
     onSuccess: invalidate,
@@ -174,5 +206,5 @@ export function useIntakeMutations() {
     onSuccess: invalidate,
   });
 
-  return { resolve, startSweep, reopen, updateSettings, resetSettings };
+  return { resolve, startSweep, reopen, updateSettings, resetSettings, lookup, applyLookup, linkSender };
 }

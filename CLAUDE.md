@@ -92,8 +92,8 @@ Three things bite here:
   `V6__add_contact_from_file.sql`, `V7__add_mail_replies.sql`,
   `V8__add_analysis_samples.sql`, `V9__add_trade_areas.sql`, `V10__seed_trade_areas.sql`,
   `V11__add_vessel_ex_names.sql`, `V12__add_vessel_specs.sql`, `V13__add_cargoes.sql` and
-  `V14__add_vessel_positions.sql`, `V15__add_trade_area_aliases_from_corpus.sql` and
-  `V16__add_email_parsing.sql` exist; the next one is V17.
+  `V14__add_vessel_positions.sql`, `V15__add_trade_area_aliases_from_corpus.sql`,
+  `V16__add_email_parsing.sql` and `V17__add_vessel_lookups.sql` exist; the next one is V18.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
@@ -544,6 +544,52 @@ is a bean of its own so its per-message transaction is not a self-invocation, th
 `MailIngestService` makes; one transaction per message, never one per sweep. A sweep stops at
 the first unreachable-server error rather than spending forty timeouts discovering the same
 thing.
+
+**The sender's company can be attached to the hull from the review item**, in a chosen
+capacity (`owner`, `exclusive_broker`, `broker`). The ordinary case is a position list from a
+broker who is not the owner on file, and that the broker works her is worth keeping — it is
+who to ring about her. Its own endpoint, delegating to `VesselService.setLink` so the Intake
+tab and the vessel screen cannot drift into two notions of what a link is, and the capacity is
+chosen rather than assumed because `owner` displaces whoever is on the record.
+
+### Looking a hull up on the open web
+
+`V17`/`vessel_lookups`. When a circular names a ship and no IMO — which is nearly always — and
+this database has no hull of that name either, the desk's own answer is to type the name into
+a ship database and read the number off. `VesselLookupService` automates that: one search per
+question, the candidates it returns, and a person deciding which if any is her.
+
+**Off by default (`LOOKUP_ENABLED`), and the reasons to leave it off are real.** The only
+implementation reads a public search page: the site's terms do not invite it, the parse depends
+on somebody else's class names, and the traffic lands on a server this desk does not pay for.
+That was chosen over the paid APIs (£100–£700 a month) deliberately. What follows from it is
+the care taken elsewhere — one request at a time process-wide, a configured gap between them,
+a cap per pass, and `VesselLookupProvider` as a port so the trade stays reversible: an API key
+arrives, one class is written, one setting changes.
+
+- **A hull is looked up because somebody has to answer a question about her**, never because
+  an email mentioned her. That is the cost control: a circular naming eighty ships produces a
+  handful of review items and only those are searched for. A pass runs on a timer, and after
+  every sweep that raised anything, so the answer is on the screen before the item is opened;
+  the drawer also has a button.
+- **Only five fields can be written**: IMO, DWT, year built, flag, type. Draft, capacities,
+  gear and fittings are deliberately absent — a tracking page's draught is the AIS-reported
+  *loaded* figure and the column it would land in is a design maximum, which is invisible and
+  wrong in the direction that loses cargoes.
+- **The name is not evidence.** It is what was searched for, so a candidate agreeing on it is
+  the query coming back. `LookupMatcher` scores name (2), build year (3), deadweight (3) and
+  flag (1), and separately reports whether anything *beyond the name* agreed. A name-only
+  match scores 100% and is flagged uncorroborated; with more than one candidate it is refused
+  outright, as are ties.
+- **The best thing it does is find a rename.** The search returns an IMO; that IMO is already
+  on a hull here under the name she carried three owners ago. Without it she is entered twice.
+  `ux_vessels_imo` is a *partial unique index*, so writing a number another vessel holds fails
+  — caught and reported as what it is ("IMO 9195470 is already on GEISE — that is the same
+  hull under another name"), not as a constraint violation.
+- **Applying is its own action with its own change set**, separate from accepting the email's
+  figures. Two origins, two writes, so the History tab reads
+  `DWT 0 → 6,977 · Web lookup (vesselfinder) IMO 9014561 — <url>`. Folding them together would
+  save a click and lose the only answer to "where did this figure come from".
 
 Nothing in `parsed_emails`, `intake_items` or `cargo_sources` is audited — they are machine
 writes and each is already a record of its own event. What a person *decides* is, because

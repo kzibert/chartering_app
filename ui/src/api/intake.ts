@@ -87,13 +87,86 @@ export interface IntakeItemResponse {
   mailMessageId?: number;
   fromAddress?: string;
   fromName?: string;
+  /** The company the mail sync resolved the sender to — what a link is offered against. */
+  senderCompanyId?: number;
+  senderCompanyName?: string;
   mailSubject?: string;
   receivedAt?: string;
   payload?: IntakePayload;
+  /** What an outside source found. Detail call only — the list never carries it. */
+  lookup?: VesselLookupResponse;
   createdAt?: string;
   resolvedAt?: string;
   resolvedBy?: string;
   resolutionNote?: string;
+}
+
+/** One hull as an outside source describes her. */
+export interface VesselParticulars {
+  imo?: string;
+  name?: string;
+  vesselType?: string;
+  flag?: string;
+  yearBuilt?: number;
+  grossTonnage?: number;
+  deadweightTonnage?: number;
+  lengthM?: number;
+  beamM?: number;
+  /** The page to open and check. Nothing is stored without one. */
+  sourceUrl?: string;
+}
+
+/** One field the source could supply, beside what the record holds. */
+export interface LookupProposal {
+  field: string;
+  label: string;
+  current?: string;
+  incoming?: string;
+  /** True when the record already holds something else — the ones worth a second look. */
+  differs: boolean;
+}
+
+/**
+ * What an outside source said about a hull, and what it would change if believed.
+ *
+ * Everything here is a proposal. Accepting it is a separate action from accepting the
+ * email's figures, precisely so the two origins stay apart in the change log.
+ */
+export interface VesselLookupResponse {
+  id: number;
+  provider: string;
+  query: string;
+  /** OK, NO_MATCH or FAILED. NO_MATCH is a result, not an error. */
+  status: 'OK' | 'NO_MATCH' | 'FAILED';
+  confidence?: number;
+  /**
+   * Whether anything beyond the name agreed. The name is what was searched for, so a match
+   * on it alone scores 100% and is entirely unverified.
+   */
+  corroborated?: boolean;
+  sourceUrl?: string;
+  error?: string;
+  fetchedAt?: string;
+  matched?: VesselParticulars;
+  reasons?: string[];
+  disagreements?: string[];
+  /** A hull already on file carrying this IMO — she is not new, she has been renamed. */
+  onFileVesselId?: number;
+  onFileVesselName?: string;
+  proposals?: LookupProposal[];
+  candidates?: VesselParticulars[];
+}
+
+export interface ApplyLookupRequest {
+  fields: string[];
+  /** Only needed on a NEW_VESSEL item, where no record exists until it has been accepted. */
+  vesselId?: number;
+}
+
+export interface LinkSenderRequest {
+  /** owner, exclusive_broker or broker. */
+  role: string;
+  notes?: string;
 }
 
 export interface IntakeResolveRequest {
@@ -222,6 +295,18 @@ export const intakeApi = {
   /** Field name -> the label the vessel's own edit form uses, so the two screens agree. */
   vesselFields: () =>
     client.get<Record<string, string>>('/intake/vessel-fields').then((r) => r.data),
+
+  /** Run one search now, replacing whatever was found before. */
+  lookup: (id: number) =>
+    client.post<IntakeItemResponse>(`/intake/items/${id}/lookup`).then((r) => r.data),
+
+  /** Write the ticked figures from the lookup onto the vessel, in their own change set. */
+  applyLookup: (id: number, body: ApplyLookupRequest) =>
+    client.post<IntakeItemResponse>(`/intake/items/${id}/apply-lookup`, body).then((r) => r.data),
+
+  /** Attach the company that sent the email to the vessel, in a chosen capacity. */
+  linkSender: (id: number, body: LinkSenderRequest) =>
+    client.post<IntakeItemResponse>(`/intake/items/${id}/link-sender`, body).then((r) => r.data),
 
   /** Starts a sweep and returns at once — a sweep is minutes of GPU. Poll `sweep`. */
   startSweep: () => client.post<SweepResponse>('/intake/sweep').then((r) => r.data),

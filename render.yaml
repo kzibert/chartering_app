@@ -207,6 +207,14 @@ services:
       - key: PARSER_ENABLED
         value: false
 
+      # Reading a public ship database for a hull's IMO. Pinned false for the reason above
+      # and one of its own: this instance has no Intake tab, so there would be no review
+      # queue to look anything up for - and an unattended process on a hosted box reading
+      # somebody else's site on terms they did not offer is not a thing to leave to a
+      # default. The office instance decides for itself.
+      - key: LOOKUP_ENABLED
+        value: false
+
   # ---------------------------------------------------------------------------
   # ui - the built SPA on Render's CDN. No container, no instance, no sleep.
   # ---------------------------------------------------------------------------

@@ -61,7 +61,8 @@ class IntakeServiceTest {
         positions = mock(VesselPositionRepository.class);
         resolver = mock(IntakeResolver.class);
         service = new IntakeService(items, cargoSources, cargoes, vessels, exNames, positions,
-                resolver, new ObjectMapper());
+                resolver, mock(com.chartering.service.lookup.VesselLookupService.class),
+                mock(com.chartering.service.VesselService.class), new ObjectMapper());
 
         pacificDawn = new Vessel();
         pacificDawn.setId(42L);

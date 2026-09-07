@@ -62,6 +62,7 @@ public class ParserSweepService {
     private final ParserSettings settings;
     private final ParsedEmailRepository parsedEmails;
     private final EmailParseRunner runner;
+    private final com.chartering.service.lookup.VesselLookupService lookups;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
 
@@ -163,6 +164,14 @@ public class ParserSweepService {
         } finally {
             lastSweep = OffsetDateTime.now();
             running.set(false);
+        }
+
+        // Whatever questions this sweep raised, look their hulls up now rather than waiting
+        // for the lookup's own tick: the point of doing it at all is that the answer is
+        // already on the screen when somebody opens the item. Returns immediately - it runs
+        // on its own worker - and does nothing when the feature is off or the queue is empty.
+        if (lastReport != null && lastReport.items() > 0) {
+            lookups.enrichPending();
         }
     }
 
