@@ -14,6 +14,8 @@ import java.time.LocalDate;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import org.mockito.ArgumentCaptor;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -170,4 +172,24 @@ class IntakeResolverTest {
         assertThat(IntakeResolver.date("end Sept")).isNull();
         assertThat(IntakeResolver.date("")).isNull();
     }
+    @Test
+    void switchesTheNameArmOffWithSomethingTheDatabaseWillAccept() {
+        // TBN is what a circular calls a ship it has not nominated yet, and it is on position
+        // lists constantly. Three characters, so the name arm is switched off - and the
+        // pattern that switched it off used to be a NUL character. Postgres does not read
+        // that as "matches no row", it refuses the statement outright with
+        // "invalid byte sequence for encoding UTF8: 0x00", and the failing statement took the
+        // whole parse of the email down with it. It reads as a blank in every editor, which
+        // is how it survived being looked at.
+        ArgumentCaptor<String> prefix = ArgumentCaptor.forClass(String.class);
+        when(vessels.findSimilar(any(), any(), prefix.capture(), any())).thenReturn(List.of());
+
+        resolver.suggest(reading("TBN", null, "28000", 2005));
+
+        assertThat(prefix.getValue()).doesNotContain(String.valueOf((char) 0));
+        // And it still matches nothing: no wildcard in it, so LIKE is an equality test
+        // against a name no owner has ever given a ship.
+        assertThat(prefix.getValue()).doesNotContain("%");
+    }
+
 }

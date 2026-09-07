@@ -127,6 +127,11 @@ export default function IntakePage() {
         warnings={status.data?.warnings ?? []}
         running={running}
         onSweep={() => startSweep.mutate()}
+        onShowFailed={() => {
+          setView('log');
+          setParseStatus('FAILED');
+          logTc.resetPage();
+        }}
       />
 
       <Card size="small" style={{ marginBottom: 16 }}>
@@ -232,6 +237,7 @@ function IntakeHeader({
   warnings,
   running,
   onSweep,
+  onShowFailed,
 }: {
   pending: number;
   unparsed: number;
@@ -247,6 +253,8 @@ function IntakeHeader({
   warnings: string[];
   running: boolean;
   onSweep: () => void;
+  /** The way from the count to the emails it counts. */
+  onShowFailed: () => void;
 }) {
   const schedule =
     intervalMinutes === 0
@@ -301,7 +309,20 @@ function IntakeHeader({
               </Tag>
             </Tooltip>
               {parsedTotal > 0 && <Tag color="blue">{parsedTotal} read</Tag>}
-              {failedTotal > 0 && <Tag color="red">{failedTotal} failed</Tag>}
+              {/* A count with no way to reach what it counts is a count nobody can act on.
+                  This tab opens on the review queue, where a failure leaves no trace at all -
+                  so "3 failed" was the only sign, and it went nowhere. */}
+              {failedTotal > 0 && (
+                <Tooltip title="Open them. Each says why it could not be read, and can be read again or ignored.">
+                  <Tag
+                    color="red"
+                    style={{ cursor: 'pointer' }}
+                    onClick={onShowFailed}
+                  >
+                    {failedTotal} failed
+                  </Tag>
+                </Tooltip>
+              )}
             </Space>
             <Space wrap>
               <Button
