@@ -3,6 +3,7 @@ package com.chartering.controller;
 import com.chartering.dto.ApplyLookupRequest;
 import com.chartering.dto.CargoSourceResponse;
 import com.chartering.dto.LinkSenderRequest;
+import com.chartering.dto.IgnoreRequest;
 import com.chartering.dto.IntakeItemResponse;
 import com.chartering.dto.IntakeResolveRequest;
 import com.chartering.dto.IntakeStatusResponse;
@@ -249,6 +250,21 @@ public class IntakeController {
                     + "database by hand.")
     public ResponseEntity<Void> reopen(@PathVariable Long mailMessageId) {
         runner.reopen(mailMessageId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/parsed/{mailMessageId}/ignore")
+    @Operation(summary = "Take a message out of the parser's hands for good",
+            description = "The answer to a failure a person has looked at and does not want "
+                    + "retried: the email that defeats the model every time, the forwarded "
+                    + "thread with no position in it, the newsletter. Recorded rather than "
+                    + "deleted - a row is what stops tomorrow's sweep finding the message "
+                    + "again and spending another model call on it. Reversible: reopen puts "
+                    + "it back in the queue.")
+    public ResponseEntity<Void> ignoreParsed(@PathVariable Long mailMessageId,
+                                             @org.springframework.web.bind.annotation.RequestBody(required = false)
+                                             @Valid IgnoreRequest req) {
+        runner.ignore(mailMessageId, req == null ? null : req.getNote());
         return ResponseEntity.noContent().build();
     }
 

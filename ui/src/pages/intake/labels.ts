@@ -68,6 +68,12 @@ export const PARSE_STATUSES: {
     colour: 'default',
     hint: 'No text body — an attachment-only list, or a calendar invite. Recorded so the sweep does not pick it up forever.',
   },
+  {
+    value: 'IGNORED',
+    label: 'Ignored',
+    colour: 'default',
+    hint: 'Set by hand on a message nobody wants read: the email that defeats the model every time, the thread with no position in it. Never retried; "Read again" puts it back.',
+  },
 ];
 
 export const parseStatusMeta = (status: ParseStatus) =>

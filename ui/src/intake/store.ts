@@ -196,6 +196,12 @@ export function useIntakeMutations() {
     onSuccess: invalidate,
   });
 
+  const ignoreParsed = useMutation({
+    mutationFn: (v: { mailMessageId: number; note?: string }) =>
+      intakeApi.ignoreParsed(v.mailMessageId, v.note),
+    onSuccess: invalidate,
+  });
+
   const updateSettings = useMutation({
     mutationFn: (body: ParserSettingsRequest) => intakeApi.updateSettings(body),
     onSuccess: invalidate,
@@ -206,5 +212,15 @@ export function useIntakeMutations() {
     onSuccess: invalidate,
   });
 
-  return { resolve, startSweep, reopen, updateSettings, resetSettings, lookup, applyLookup, linkSender };
+  return {
+    resolve,
+    startSweep,
+    reopen,
+    ignoreParsed,
+    updateSettings,
+    resetSettings,
+    lookup,
+    applyLookup,
+    linkSender,
+  };
 }

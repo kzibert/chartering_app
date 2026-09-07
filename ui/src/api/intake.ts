@@ -19,7 +19,7 @@ export type IntakeItemKind = 'NEW_VESSEL' | 'VESSEL_FIELDS' | 'CARGO_MERGE';
 
 export type IntakeItemStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED';
 
-export type ParseStatus = 'PARSED' | 'FAILED' | 'SKIPPED';
+export type ParseStatus = 'PARSED' | 'FAILED' | 'SKIPPED' | 'IGNORED';
 
 /**
  * ACCEPT does the proposed thing; ALTERNATIVE does the other one and also writes — keeping
@@ -328,6 +328,11 @@ export const intakeApi = {
 
   reopen: (mailMessageId: number) =>
     client.post<void>(`/intake/parsed/${mailMessageId}/reopen`).then((r) => r.data),
+
+  ignoreParsed: (mailMessageId: number, note?: string) =>
+    client
+      .post<void>(`/intake/parsed/${mailMessageId}/ignore`, { note })
+      .then((r) => r.data),
 
   cargoSources: (cargoId: number) =>
     client.get<CargoSourceResponse[]>(`/intake/cargoes/${cargoId}/sources`).then((r) => r.data),
