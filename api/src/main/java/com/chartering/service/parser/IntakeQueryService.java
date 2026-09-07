@@ -234,7 +234,12 @@ public class IntakeQueryService {
                 int diffs = payload.path("diffs").size();
                 int filled = payload.path("filled").size();
                 String head = diffs + (diffs == 1 ? " field differs" : " fields differ");
-                yield filled == 0 ? head : head + "; " + filled + " empty field(s) already filled";
+                if (filled > 0) head += "; " + filled + " empty field(s) already filled";
+                // How she was identified belongs on the row, not only in the drawer: a
+                // former-name match is the one worth opening first, and a queue that reads
+                // the same for all three gives no reason to open any particular one.
+                String matched = matchLabel(payload.path("matchedBy").asText(null));
+                yield matched == null ? head : matched + " · " + head;
             }
             case CARGO_MERGE -> {
                 JsonNode reasons = payload.path("reasons");
@@ -243,6 +248,23 @@ public class IntakeQueryService {
                 yield parts.isEmpty() ? "Looks like a cargo already in hand."
                         : String.join("; ", parts);
             }
+        };
+    }
+
+    /**
+     * The match code as a phrase, or null when there is nothing to say.
+     *
+     * <p>Anything unrecognised comes back as it stands rather than as null: items raised
+     * before the payload carried a code hold an English sentence, and printing it is better
+     * than dropping the one fact the row most needs.
+     */
+    private static String matchLabel(String code) {
+        if (code == null || code.isBlank()) return null;
+        return switch (code) {
+            case "IMO" -> "Matched by IMO";
+            case "NAME" -> "Matched by name";
+            case "EX_NAME" -> "Matched by a former name";
+            default -> code;
         };
     }
 

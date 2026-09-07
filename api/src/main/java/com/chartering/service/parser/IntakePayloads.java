@@ -49,9 +49,14 @@ public final class IntakePayloads {
     /**
      * She is on file and the email disagrees about her.
      *
-     * @param filled fields that were empty and have already been written — shown so the
-     *               screen can account for everything the email said, rather than listing
-     *               three conflicts and silently having changed five other columns
+     * @param matchedBy how she was identified — {@code IMO}, {@code NAME} or {@code EX_NAME}.
+     *                  A code rather than a sentence, because the screen ranks it: an IMO
+     *                  match is near-certain and a former-name match is the one worth a second
+     *                  look, and a browser cannot rank English. Items raised before this was a
+     *                  code carry the sentence, which the UI prints as it stands
+     * @param filled    fields that were empty and have already been written — shown so the
+     *                  screen can account for everything the email said, rather than listing
+     *                  three conflicts and silently having changed five other columns
      */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     @JsonIgnoreProperties(ignoreUnknown = true)
