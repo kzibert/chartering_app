@@ -207,6 +207,7 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
           <Tooltip title="What the model actually read. The only thing that settles whether a figure on this screen is right.">
             <Button size="small" icon={<MailOutlined />} onClick={() => setEmailOpen(true)}>
               Original email
+              {(item.sources?.length ?? 0) > 1 ? `s (${item.sources!.length})` : ''}
             </Button>
           </Tooltip>
         ) : undefined
@@ -276,8 +277,12 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
             <CargoMergeBody item={item} />
           )}
 
+          {/* Every arrival behind the item, not just the one that raised it first: the same
+              hull reaching the queue twice is one question, and settling a disagreement
+              between two brokers is reading what each of them actually wrote. */}
           <OriginalEmail
             mailMessageId={item.mailMessageId}
+            sources={item.sources}
             open={emailOpen}
             onClose={() => setEmailOpen(false)}
           />

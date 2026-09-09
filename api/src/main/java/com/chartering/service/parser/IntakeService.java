@@ -17,7 +17,9 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -56,6 +58,7 @@ public class IntakeService {
     private final CargoRepository cargoes;
     private final VesselRepository vessels;
     private final VesselExNameRepository exNames;
+    private final IntakeItemSourceRepository itemSources;
     private final VesselPositionRepository positions;
     private final IntakeResolver resolver;
     private final VesselLookupService lookups;
@@ -253,10 +256,36 @@ public class IntakeService {
                 : "the name \"" + name + "\"";
         IntakePayloads.NewVessel payload =
                 new IntakePayloads.NewVessel(v, searchedBy, resolver.suggest(v));
-        save(parsed, IntakeItemKind.NEW_VESSEL, null, null, name, payload);
+        addSource(save(parsed, IntakeItemKind.NEW_VESSEL, null, null, name, payload), parsed);
         return true;
     }
 
+    /**
+     * Raise the question about this hull — or add this email to the one already asking it.
+     *
+     * <p><b>One pending question per vessel, however many emails raise it.</b> The question is
+     * about a ship rather than about an email: a broker re-sends his list on Monday and again
+     * on Wednesday, two brokers carry the same hull, and every arrival used to produce its own
+     * row. The queue then showed one vessel three times and answering one left the others
+     * sitting there, still asking.
+     *
+     * <p>Exact suppression was the old answer and it was too brittle to be one. It compared the
+     * two sets of disagreements literally, so FOX came back twice over a single reworded word —
+     * "GENERAL-DRY CARGO VESSEL / DOUBLE SKIN/BOX" against "GENERAL-DRY CARGO VESSEL", every
+     * other figure identical. Loosening the comparison would not have helped: those two strings
+     * genuinely differ, and so will the next pair. The fix is not a better test for "the same
+     * question" but recognising that it was always one question.
+     *
+     * <p><b>The newest reading wins the figures, and every arrival is kept.</b> Merging takes
+     * the union by field with this email's value where both speak, because the later list is
+     * the later statement and that is what a desk would act on. Nothing is lost by it: each
+     * source stays readable in full from the item, which is where a reviewer settles a
+     * disagreement between two brokers — by reading what each of them actually wrote, rather
+     * than by trusting a column that picked one.
+     *
+     * <p>Only pending items merge. An answered question is history, and an email disagreeing
+     * again afterwards is a new question about a record that has since been decided.
+     */
     private boolean raiseVesselFields(ParsedEmail parsed, Vessel vessel,
                                       IntakeResolver.VesselMatch how,
                                       Extraction.ExtractedVessel v,
@@ -264,13 +293,64 @@ public class IntakeService {
         for (IntakeItem pending : items.pendingForVessel(IntakeItemKind.VESSEL_FIELDS, vessel.getId())) {
             IntakePayloads.VesselFields existing =
                     read(pending, IntakePayloads.VesselFields.class);
-            if (existing != null && sameQuestion(existing.diffs(), diff.conflicts())) return false;
+            if (existing == null) continue;
+            mergeInto(pending, existing, how, v, diff);
+            addSource(pending, parsed);
+            // Not a new question, so the sweep's "raised" count does not grow. The email is on
+            // the item and the reviewer will see it; the queue is no longer than it was.
+            return false;
         }
         IntakePayloads.VesselFields payload = new IntakePayloads.VesselFields(
                 vessel.getId(), vessel.getName(), matchNote(how), v,
                 diff.conflicts(), diff.filled());
-        save(parsed, IntakeItemKind.VESSEL_FIELDS, vessel.getId(), null, vessel.getName(), payload);
+        IntakeItem item = save(parsed, IntakeItemKind.VESSEL_FIELDS, vessel.getId(), null,
+                vessel.getName(), payload);
+        addSource(item, parsed);
         return true;
+    }
+
+    /**
+     * Fold a fresh reading into the question already waiting.
+     *
+     * <p>Union by field with the newer email's value where the two speak about the same one.
+     * The vessel paragraph is replaced wholesale for the same reason — accepting the item
+     * writes from it, and a half-old half-new paragraph would write figures no single email
+     * ever stated.
+     */
+    private void mergeInto(IntakeItem pending, IntakePayloads.VesselFields existing,
+                           IntakeResolver.VesselMatch how, Extraction.ExtractedVessel v,
+                           VesselFieldDiff.Result diff) {
+        Map<String, FieldDiff> byField = new LinkedHashMap<>();
+        for (FieldDiff d : existing.diffs()) byField.put(d.field(), d);
+        for (FieldDiff d : diff.conflicts()) byField.put(d.field(), d);
+
+        List<String> filled = new ArrayList<>(existing.filled() == null
+                ? List.of() : existing.filled());
+        for (String f : diff.filled()) if (!filled.contains(f)) filled.add(f);
+
+        pending.setPayload(write(new IntakePayloads.VesselFields(
+                existing.vesselId(), existing.vesselName(), matchNote(how), v,
+                List.copyOf(byField.values()), List.copyOf(filled))));
+        items.save(pending);
+    }
+
+    /**
+     * Record that this email raised the item too.
+     *
+     * <p>Guarded because re-parsing a message must not double up its sources — the same rule
+     * the unique index states, checked here so it reads as "already counted" rather than as a
+     * constraint violation and a 500.
+     */
+    private void addSource(IntakeItem item, ParsedEmail parsed) {
+        if (itemSources.existsByIntakeItemIdAndParsedEmailId(item.getId(), parsed.getId())) return;
+        MailMessage message = parsed.getMailMessage();
+        IntakeItemSource source = new IntakeItemSource();
+        source.setIntakeItem(item);
+        source.setParsedEmail(parsed);
+        source.setMailMessage(message);
+        source.setReportedByCompany(message == null ? null : message.getCompany());
+        source.setReportedAt(reportedAt(message));
+        itemSources.save(source);
     }
 
     private boolean raiseCargoMerge(ParsedEmail parsed, ResolvedCargo resolved,
@@ -280,13 +360,13 @@ public class IntakeService {
         IntakePayloads.CargoMerge payload = new IntakePayloads.CargoMerge(
                 resolved.parsed(), existing.getId(), describe(existing),
                 candidate.reasons(), preview.filled(), preview.differing());
-        save(parsed, IntakeItemKind.CARGO_MERGE, null, existing.getId(),
-                Extraction.text(resolved.parsed().commodity()), payload);
+        addSource(save(parsed, IntakeItemKind.CARGO_MERGE, null, existing.getId(),
+                Extraction.text(resolved.parsed().commodity()), payload), parsed);
         return true;
     }
 
-    private void save(ParsedEmail parsed, IntakeItemKind kind, Long vesselId, Long cargoId,
-                      String label, Object payload) {
+    private IntakeItem save(ParsedEmail parsed, IntakeItemKind kind, Long vesselId, Long cargoId,
+                            String label, Object payload) {
         IntakeItem item = new IntakeItem();
         item.setParsedEmail(parsed);
         item.setKind(kind);
@@ -294,7 +374,7 @@ public class IntakeService {
         item.setCargoId(cargoId);
         item.setSubjectLabel(truncate(label));
         item.setPayload(write(payload));
-        items.save(item);
+        return items.save(item);
     }
 
     // ------------------------------------------------------------------ resolving items
@@ -530,7 +610,7 @@ public class IntakeService {
      * is.
      */
     @Transactional
-    public void linkSenderCompany(Long itemId, String role, String notes) {
+    public void linkSenderCompany(Long itemId, String role, Long companyId, String notes) {
         IntakeItem item = items.findWithEmailById(itemId).orElseThrow(() ->
                 new com.chartering.exception.ResourceNotFoundException("Intake item", itemId));
         if (item.getVesselId() == null) {
@@ -538,8 +618,7 @@ public class IntakeService {
                     "There is no vessel to attach a company to yet — create her or link her to "
                             + "one on file first.");
         }
-        MailMessage message = item.getParsedEmail().getMailMessage();
-        Company sender = message == null ? null : message.getCompany();
+        Company sender = chooseSender(item, itemId, companyId);
         if (sender == null) {
             throw new IllegalArgumentException(
                     "The sender of that email is not linked to a company. Link it on the "
@@ -548,6 +627,29 @@ public class IntakeService {
         ChangeContext.describe("Intake: linked %s to the vessel as %s"
                 .formatted(sender.getName(), role));
         vesselService.setLink(item.getVesselId(), sender.getId(), role, notes);
+    }
+
+    /**
+     * Which of the item's senders to attach.
+     *
+     * <p>Checked against the item's own arrivals rather than taken on trust. This endpoint
+     * records what an email is evidence of — that this firm was writing about this hull — and
+     * a company id that appears on none of them is not that. Attaching an unrelated firm is a
+     * decision about the ship and belongs on her own record, where every link is in view.
+     */
+    private Company chooseSender(IntakeItem item, Long itemId, Long companyId) {
+        if (companyId == null) {
+            MailMessage message = item.getParsedEmail().getMailMessage();
+            return message == null ? null : message.getCompany();
+        }
+        return itemSources.forItem(itemId).stream()
+                .map(IntakeItemSource::getReportedByCompany)
+                .filter(Objects::nonNull)
+                .filter(c -> c.getId().equals(companyId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "That company did not send any of the emails behind this item. Attach it "
+                                + "on the vessel's own record instead."));
     }
 
     // ------------------------------------------------------------------ writing rows
@@ -747,17 +849,6 @@ public class IntakeService {
     }
 
     /** The same fields disagreeing about the same values — the question already asked. */
-    private static boolean sameQuestion(List<FieldDiff> a, List<FieldDiff> b) {
-        if (a == null || a.size() != b.size()) return false;
-        for (int i = 0; i < a.size(); i++) {
-            FieldDiff x = a.get(i);
-            FieldDiff y = b.get(i);
-            if (!x.field().equals(y.field()) || !Objects.equals(x.incoming(), y.incoming())) {
-                return false;
-            }
-        }
-        return true;
-    }
 
     /**
      * How she was identified, as a code rather than a sentence.

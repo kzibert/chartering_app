@@ -17,6 +17,7 @@ import com.chartering.model.ParseStatus;
 import com.chartering.model.ParsedEmail;
 import com.chartering.repository.CargoSourceRepository;
 import com.chartering.repository.IntakeItemRepository;
+import com.chartering.repository.IntakeItemSourceRepository;
 import com.chartering.repository.ParsedEmailRepository;
 import com.chartering.dto.VesselLookupResponse;
 import com.chartering.model.Vessel;
@@ -64,6 +65,7 @@ public class IntakeQueryService {
     private final IntakeService intake;
     private final VesselLookupService lookups;
     private final VesselRepository vessels;
+    private final IntakeItemSourceRepository itemSources;
     private final DtoMapper mapper;
     private final ObjectMapper json;
 
@@ -164,7 +166,10 @@ public class IntakeQueryService {
     public IntakeItemResponse get(Long id) {
         requireEnabled();
         IntakeItem item = load(id);
-        return toResponse(item, lookupFor(item));
+        // Sources on the detail call only: the list row prints one line, and a join per row
+        // would buy it nothing. Same rule the lookup follows.
+        return mapper.toIntakeItemResponse(item, payloadOf(item), summarise(item, payloadOf(item)),
+                lookupFor(item), itemSources.forItem(id));
     }
 
     /** What the source said about this item's hull, assembled for the drawer. */
@@ -234,6 +239,16 @@ public class IntakeQueryService {
     IntakeItem load(Long id) {
         return items.findWithEmailById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Intake item", id));
+    }
+
+    /** The payload as a tree, or null when this version cannot read it. */
+    private JsonNode payloadOf(IntakeItem item) {
+        try {
+            return json.readTree(item.getPayload());
+        } catch (Exception e) {
+            log.warn("Intake item {} has an unreadable payload: {}", item.getId(), e.getMessage());
+            return null;
+        }
     }
 
     private IntakeItemResponse toResponse(IntakeItem item, VesselLookupResponse lookup) {

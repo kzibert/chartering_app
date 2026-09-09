@@ -16,6 +16,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -43,6 +44,7 @@ class IntakeServiceTest {
     private VesselExNameRepository exNames;
     private VesselPositionRepository positions;
     private IntakeResolver resolver;
+    private com.chartering.repository.IntakeItemSourceRepository itemSources;
     private IntakeService service;
 
     private Vessel pacificDawn;
@@ -60,9 +62,13 @@ class IntakeServiceTest {
         exNames = mock(VesselExNameRepository.class);
         positions = mock(VesselPositionRepository.class);
         resolver = mock(IntakeResolver.class);
-        service = new IntakeService(items, cargoSources, cargoes, vessels, exNames, positions,
-                resolver, mock(com.chartering.service.lookup.VesselLookupService.class),
+        itemSources = mock(com.chartering.repository.IntakeItemSourceRepository.class);
+        service = new IntakeService(items, cargoSources, cargoes, vessels, exNames, itemSources,
+                positions, resolver, mock(com.chartering.service.lookup.VesselLookupService.class),
                 mock(com.chartering.service.VesselService.class), new ObjectMapper());
+        // The item is saved and then a source row is attached to it, so the mock has to hand
+        // the entity back rather than null.
+        when(items.save(any(IntakeItem.class))).thenAnswer(i -> i.getArgument(0));
 
         pacificDawn = new Vessel();
         pacificDawn.setId(42L);
@@ -261,7 +267,7 @@ class IntakeServiceTest {
     }
 
     @Test
-    void doesNotAskTheSameQuestionTwiceWhileItIsStillWaiting() {
+    void mergesASecondEmailIntoTheQuestionAlreadyWaiting() {
         pacificDawn.setDeadweightTonnage(new BigDecimal("28500"));
         when(resolver.resolveVessel(any()))
                 .thenReturn(new IntakeResolver.ResolvedVessel(pacificDawn, IntakeResolver.VesselMatch.NAME));
@@ -286,9 +292,51 @@ class IntakeServiceTest {
         // The list arrives every morning saying the same thing. Thirty copies of one
         // unanswered question is a queue that stops being opened.
         assertThat(outcome.itemsRaised()).isZero();
-        verify(items, never()).save(any());
+        // The waiting item is updated rather than a second one created, and this email is
+        // recorded against it - which is what makes both originals readable from the one row.
+        verify(items).save(alreadyAsked);
+        verify(itemSources).save(any());
+        assertThat(alreadyAsked.getPayload()).contains("deadweightTonnage");
         // The position still lands, because that is a different fact.
         assertThat(outcome.positionsApplied()).isEqualTo(1);
+    }
+
+    /**
+     * The case that made this necessary. FOX arrived twice from one broker, every figure
+     * identical except a reworded type - "GENERAL-DRY CARGO VESSEL / DOUBLE SKIN/BOX" against
+     * "GENERAL-DRY CARGO VESSEL" - and the exact suppression that used to guard this let the
+     * second one through as a separate question about the same hull.
+     */
+    @Test
+    void mergesEvenWhenTheSecondEmailWordsAFigureDifferently() {
+        pacificDawn.setVesselType("SEA TYPE BOX SHAPE");
+        when(resolver.resolveVessel(any()))
+                .thenReturn(new IntakeResolver.ResolvedVessel(pacificDawn, IntakeResolver.VesselMatch.NAME));
+
+        IntakeItem alreadyAsked = new IntakeItem();
+        alreadyAsked.setId(1L);
+        alreadyAsked.setKind(IntakeItemKind.VESSEL_FIELDS);
+        alreadyAsked.setPayload("""
+                {"vesselId":42,"vesselName":"PACIFIC DAWN","diffs":[
+                  {"field":"vesselType","label":"Type","current":"SEA TYPE BOX SHAPE",
+                   "incoming":"GENERAL-DRY CARGO VESSEL / DOUBLE SKIN/BOX"}],
+                 "filled":[]}""");
+        when(items.pendingForVessel(IntakeItemKind.VESSEL_FIELDS, 42L))
+                .thenReturn(List.of(alreadyAsked));
+
+        Extraction.ExtractedVessel v = new Extraction.ExtractedVessel(
+                "PACIFIC DAWN", "", "GENERAL-DRY CARGO VESSEL", null, null, null, null, "",
+                null, null, "", null, "", null, null, null, null, null, "",
+                "MARMARA", "", "2026-09-01", "2026-09-03", "1/3 SEPT", "", "", "");
+
+        IntakeService.ApplyOutcome outcome = service.apply(parsed, positionEmail(v));
+
+        assertThat(outcome.itemsRaised()).isZero();
+        verify(items, never()).save(argThat(i -> i.getId() == null));
+        // The newer wording wins the figure: the later list is the later statement, and both
+        // emails stay readable from the item for anybody who wants to compare them.
+        assertThat(alreadyAsked.getPayload()).contains("GENERAL-DRY CARGO VESSEL");
+        assertThat(alreadyAsked.getPayload()).doesNotContain("DOUBLE SKIN");
     }
 
     @Test

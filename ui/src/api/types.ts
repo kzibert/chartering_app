@@ -1460,6 +1460,29 @@ export interface VesselParticulars {
   sourceUrl?: string;
 }
 
+/**
+ * One email that raised a review item, of possibly several.
+ *
+ * A question about a hull is asked by however many emails mention her, and they merge into one
+ * item rather than one row each. This list is what lets the drawer offer each original to read
+ * and each sending firm to attach to the ship.
+ */
+export interface IntakeItemSourceResponse {
+  id: number;
+  parsedEmailId?: number;
+  /** Null where the mailbox no longer holds it — the sync mirrors a server that gets cleaned. */
+  mailMessageId?: number;
+  mailSubject?: string;
+  fromAddress?: string;
+  fromName?: string;
+  senderCompanyId?: number;
+  senderCompanyName?: string;
+  receivedAt?: string;
+  reportedAt?: string;
+  /** Whether the item's figures came from this arrival. The newest wins on a merge. */
+  current: boolean;
+}
+
 /** One field the source could supply, beside what the record holds. */
 export interface LookupProposal {
   field: string;

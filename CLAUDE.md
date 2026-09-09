@@ -95,7 +95,8 @@ Three things bite here:
   `V14__add_vessel_positions.sql`, `V15__add_trade_area_aliases_from_corpus.sql`,
   `V16__add_email_parsing.sql`, `V17__add_vessel_lookups.sql`,
   `V18__add_port_geography_and_sea_routes.sql` and
-  `V19__seed_sea_routes_and_port_geography.sql` exist; the next one is V20.
+  `V19__seed_sea_routes_and_port_geography.sql`, `V20__add_intake_item_sources.sql` and
+  `V21__collapse_duplicate_pending_vessel_items.sql` exist; the next one is V22.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
@@ -526,6 +527,15 @@ wrong. The vessel search matches current and former names alike, which is the en
 having them, and the list prints the former names under the current one so a row nobody
 searched for by that name explains itself.
 
+**A save that changes her name files the old one.** Same rule the Intake tab already
+followed when accepting a name out of a circular, now on the edit form too, because a
+position list arriving next week under the previous name otherwise matches nothing and she
+is entered a second time. Case and surrounding space are folded, so correcting the spelling
+of a name records nothing; the row carries `source = 'rename'` rather than `manual` to say
+nobody entered it, a save produced it — which is where to look when a former name turns out
+to have been a typo. This does not contradict the paragraph below: that is about a stale
+form *deleting* history, and this only ever adds.
+
 They write on their **own endpoints, never as part of the vessel's PUT**: they are rows in
 another table, one gets added whenever a circular reveals one, and folding them into the
 whole-record save would let a form opened five minutes ago delete a ship's history while
@@ -579,7 +589,21 @@ So three things stop and become `intake_items`:
   as a figure made "DWCC 0 t against 6,750 t" a question for a human, thousands of times over.
   Numbers compare with half a percent of slack and text loosely ("2x30T CRANES" is "2 x 30 t
   cranes"), because a queue that fires on a broker's rounding is a queue nobody reads.
-  A pending item suppresses an identical one, or every morning's list re-asks it.
+  **One pending item per vessel, however many emails raise it.** The question is about a
+  hull rather than about an email: a broker re-sends his list on Monday and again on
+  Wednesday, two brokers carry the same ship, and every arrival used to produce its own
+  row — so the queue showed one vessel three times and answering one left the others still
+  asking. A second email merges into the waiting item instead, union by field with the
+  newer reading winning where both speak, and every arrival kept in `intake_item_sources`.
+  That table is `cargo_sources` again and for the same reason — one record several brokers
+  describe — and it is what lets the drawer offer each original email to read and each
+  sending firm to attach to the hull, in its own chosen capacity. Exact suppression was the
+  old answer and was too brittle to be one: FOX came back twice over a single reworded
+  word, "GENERAL-DRY CARGO VESSEL / DOUBLE SKIN/BOX" against "GENERAL-DRY CARGO VESSEL",
+  every other figure identical. Loosening the comparison would not have helped — those two
+  strings genuinely differ — because the mistake was treating it as two questions.
+  Only *pending* items merge: an answered question is history, and an email disagreeing
+  afterwards is a new question about a record that has since been decided.
 - **`CARGO_MERGE`** — a cargo that looks like one in hand. Never merged silently: two cargoes
   cannot be un-merged. The key is same commodity + the load point actually agreeing +
   quantity within 20% + laycans overlapping, where **an absent field abstains rather than
@@ -616,7 +640,16 @@ the first unreachable-server error rather than spending forty timeouts discoveri
 thing.
 
 **The sender's company can be attached to the hull from the review item**, in a chosen
-capacity (`owner`, `exclusive_broker`, `broker`). The ordinary case is a position list from a
+capacity (`owner`, `exclusive_broker`, `broker`). **"Not this ship — create her" asks the
+capacity while creating her**, because the hull it creates has nobody on her at all and the
+firm that sent the list is usually the answer to who works her — the card that would have
+recorded it sits below a drawer that closes the moment she exists. Asked rather than
+assumed, with "create her without linking" as a first-class answer beside it: sending a
+position list is not evidence of ownership, so there is no capacity safe enough to default
+to. Still two writes with two change sets, the same split the web figures keep. Where
+several emails raised the item, `companyId` picks which sender — it must be one of the
+item's own, since attaching an unrelated firm is a decision about the ship and belongs on
+her record. The ordinary case is a position list from a
 broker who is not the owner on file, and that the broker works her is worth keeping — it is
 who to ring about her. Its own endpoint, delegating to `VesselService.setLink` so the Intake
 tab and the vessel screen cannot drift into two notions of what a link is, and the capacity is
@@ -637,6 +670,19 @@ the care taken elsewhere — one request at a time process-wide, a configured ga
 a cap per pass, and `VesselLookupProvider` as a port so the trade stays reversible: an API key
 arrives, one class is written, one setting changes.
 
+- **Her own record can ask too, and only on request.** The queue searches because an email
+  raised a question; most hulls here were never the subject of one, and a ship opened to be
+  worked on is exactly where somebody notices her IMO is blank. Same search, same scoring,
+  same card — one implementation, or the same confidence figure would mean two things
+  depending on which screen printed it. `vessel_lookups` needed no migration for it: the
+  unique index on `intake_item_id` is partial, so a row belonging to a vessel rather than to
+  an item was already a supported shape. The vessel's card reads only lookups with no intake
+  item behind them, because a search a circular prompted three weeks ago is not something
+  somebody just ran. The timed pass still works the review queue and nothing else — a sweep
+  over four thousand hulls is precisely the traffic this feature is careful not to send.
+  `GET /vessels/lookup-status` answers whatever `LOOKUP_ENABLED` says, like the intake and
+  analysis status endpoints, because a screen has to know whether a card exists before it can
+  decide not to draw it.
 - **A hull is looked up because somebody has to answer a question about her**, never because
   an email mentioned her. That is the cost control: a circular naming eighty ships produces a
   handful of review items and only those are searched for. A pass runs on a timer, and after

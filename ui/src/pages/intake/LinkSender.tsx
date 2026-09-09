@@ -56,7 +56,30 @@ export default function LinkSender({
   const { linkSender } = useIntakeMutations();
   const [role, setRole] = useState<string>(DEFAULT_CAPACITY);
 
-  const sender = item.senderCompanyId;
+  // Every distinct firm behind this item. One question about a hull is raised by however many
+  // emails mention her, so two brokers can be sitting on the same one - and both are worth
+  // keeping, because who works her is exactly what the record is for. Deduped by company: a
+  // broker who sent the same list twice is one firm, not two offers to attach him.
+  const senders = (() => {
+    const seen = new Map<number, { id: number; name?: string }>();
+    for (const src of item.sources ?? []) {
+      if (src.senderCompanyId != null && !seen.has(src.senderCompanyId)) {
+        seen.set(src.senderCompanyId, { id: src.senderCompanyId, name: src.senderCompanyName });
+      }
+    }
+    // The item's own sender, for rows raised before sources existed and for the list view.
+    if (seen.size === 0 && item.senderCompanyId != null) {
+      seen.set(item.senderCompanyId, {
+        id: item.senderCompanyId,
+        name: item.senderCompanyName,
+      });
+    }
+    return [...seen.values()];
+  })();
+
+  const [pickedSender, setPickedSender] = useState<number | undefined>(senders[0]?.id);
+  const sender = pickedSender ?? senders[0]?.id;
+  const senderName = senders.find((x) => x.id === sender)?.name ?? item.senderCompanyName;
   const onHer = links ?? [];
   // Owner lives on the vessel rather than in the link table, so it has to be folded in or
   // the list would show a ship's brokers and not her owner.
@@ -87,12 +110,31 @@ export default function LinkSender({
         {sender && (
           <Space wrap size={8}>
             <Typography.Link strong onClick={() => onOpenCompany(sender)}>
-              {item.senderCompanyName}
+              {senderName}
             </Typography.Link>
-            <Tag color="blue">sent the email</Tag>
+            <Tag color="blue">
+              sent {senders.length > 1 ? 'one of these emails' : 'the email'}
+            </Tag>
             {existing && (
               <Tag color="green">already on her as {ROLE_WORDS[existing.role] ?? existing.role}</Tag>
             )}
+          </Space>
+        )}
+
+        {/* More than one firm wrote about her before anybody reviewed the question. Each is
+            attachable on its own terms - they may well work her in different capacities. */}
+        {senders.length > 1 && (
+          <Space wrap size={4}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {senders.length} firms sent these emails:
+            </Typography.Text>
+            <Select
+              size="small"
+              value={sender}
+              onChange={setPickedSender}
+              style={{ minWidth: 210 }}
+              options={senders.map((x) => ({ value: x.id, label: x.name ?? `#${x.id}` }))}
+            />
           </Space>
         )}
 
@@ -143,7 +185,7 @@ export default function LinkSender({
              record where every link is in view - not on a card that happens to be open
              because a circular arrived. */
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            Nothing to add — {item.senderCompanyName} is already on her as{' '}
+            Nothing to add — {senderName} is already on her as{' '}
             {ROLE_WORDS[existing.role] ?? existing.role}. Change the capacity on her own record
             if it is wrong.
           </Typography.Text>
@@ -169,11 +211,11 @@ export default function LinkSender({
                 loading={linkSender.isPending}
                 onClick={() =>
                   linkSender.mutate(
-                    { id: item.id, body: { role } },
+                    { id: item.id, body: { role, companyId: sender } },
                     {
                       onSuccess: () =>
                         message.success(
-                          `${item.senderCompanyName} attached as ${chosen?.label.toLowerCase()}.`,
+                          `${senderName} attached as ${chosen?.label.toLowerCase()}.`,
                         ),
                     },
                   )

@@ -1,10 +1,15 @@
 import { client, cleanParams } from './client';
-import type { PageResponse, VesselLookupResponse } from './types';
+import type { IntakeItemSourceResponse, PageResponse, VesselLookupResponse } from './types';
 
 // The lookup shapes live in types.ts, because the vessel's own record shows the same card.
 // Re-exported here so the Intake screens keep importing them from the module they read as
 // belonging to.
-export type { LookupProposal, VesselLookupResponse, VesselParticulars } from './types';
+export type {
+  IntakeItemSourceResponse,
+  LookupProposal,
+  VesselLookupResponse,
+  VesselParticulars,
+} from './types';
 
 /**
  * Intake: incoming mail read by the local model into cargoes and open positions.
@@ -100,6 +105,13 @@ export interface IntakeItemResponse {
   payload?: IntakePayload;
   /** What an outside source found. Detail call only — the list never carries it. */
   lookup?: VesselLookupResponse;
+  /**
+   * Every email that raised this item, newest first. Detail call only.
+   *
+   * Always at least one: the arrival that first raised it is a source like any other. More
+   * than one means the same hull arrived again before anybody reviewed her.
+   */
+  sources?: IntakeItemSourceResponse[];
   createdAt?: string;
   resolvedAt?: string;
   resolvedBy?: string;
@@ -115,6 +127,12 @@ export interface ApplyLookupRequest {
 export interface LinkSenderRequest {
   /** owner, exclusive_broker or broker. */
   role: string;
+  /**
+   * Which sender to attach, for an item several emails raised. Must be one of the item's own
+   * senders — attaching an unrelated firm is a decision about the ship, not about this email,
+   * and belongs on her record. Absent means the arrival that first raised the item.
+   */
+  companyId?: number;
   notes?: string;
 }
 
