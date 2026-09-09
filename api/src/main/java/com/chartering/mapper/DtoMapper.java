@@ -332,6 +332,7 @@ public class DtoMapper {
                 c.getLaycanFrom(), c.getLaycanTo(), c.getLaycanText(),
                 c.getMaxDraft(), c.getMinDwt(), c.getMaxDwt(), c.getMaxAgeYears(),
                 c.getRequiresGeared(), c.getRequiresGrainFitted(), c.getRequiresImoFitted(),
+                c.getMaxBallastDays(),
                 c.getFreightIdea(), c.getCommission(), c.getTerms(),
                 c.getLoadRate(), c.getDischargeRate(),
                 charterer != null ? charterer.getId() : null,

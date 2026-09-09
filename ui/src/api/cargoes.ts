@@ -41,6 +41,7 @@ export const toCargoRequest = (c: CargoResponse): CargoRequest => ({
   requiresGeared: c.requiresGeared,
   requiresGrainFitted: c.requiresGrainFitted,
   requiresImoFitted: c.requiresImoFitted,
+  maxBallastDays: c.maxBallastDays,
   freightIdea: c.freightIdea,
   commission: c.commission,
   terms: c.terms,

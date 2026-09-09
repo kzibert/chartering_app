@@ -136,6 +136,19 @@ public class Cargo {
     @Column(name = "requires_imo_fitted")
     private Boolean requiresImoFitted;
 
+    /**
+     * How far this desk will ballast a ship for this cargo, in days.
+     *
+     * <p>Null is "use the desk-wide figure" rather than "no limit", which is the one place
+     * this column departs from the rule above it. Almost every cargo says nothing here and
+     * takes {@code match.maxBallastDays}; the override exists because a full cargo worth
+     * crossing an ocean for and a part cargo nobody would cross the Med for are both an
+     * ordinary week, and no single number is right for both. A cargo that really would take
+     * any ballast says so with a large number.
+     */
+    @Column(name = "max_ballast_days")
+    private Short maxBallastDays;
+
     // ---- commercials, all free text ----
     // "USD 25 pmt", "abt 24.50 fio", "lumpsum 120k" and "market related" turn up in the same
     // week; a numeric column would keep the first and lose the rest.

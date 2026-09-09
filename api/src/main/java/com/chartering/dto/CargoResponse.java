@@ -55,6 +55,15 @@ public record CargoResponse(
         Boolean requiresGrainFitted,
         Boolean requiresImoFitted,
 
+        /**
+         * Days of ballast this cargo is worth, when it overrides the desk-wide setting.
+         *
+         * <p>Absent means it does not, which is almost every cargo - the form shows the
+         * setting's own figure as the placeholder rather than copying it down, so a change
+         * to the setting still moves every cargo that never disagreed with it.
+         */
+        Short maxBallastDays,
+
         String freightIdea,
         String commission,
         String terms,
