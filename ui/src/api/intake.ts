@@ -1,5 +1,10 @@
 import { client, cleanParams } from './client';
-import type { PageResponse } from './types';
+import type { PageResponse, VesselLookupResponse } from './types';
+
+// The lookup shapes live in types.ts, because the vessel's own record shows the same card.
+// Re-exported here so the Intake screens keep importing them from the module they read as
+// belonging to.
+export type { LookupProposal, VesselLookupResponse, VesselParticulars } from './types';
 
 /**
  * Intake: incoming mail read by the local model into cargoes and open positions.
@@ -99,67 +104,6 @@ export interface IntakeItemResponse {
   resolvedAt?: string;
   resolvedBy?: string;
   resolutionNote?: string;
-}
-
-/** One hull as an outside source describes her. */
-export interface VesselParticulars {
-  imo?: string;
-  name?: string;
-  vesselType?: string;
-  flag?: string;
-  yearBuilt?: number;
-  grossTonnage?: number;
-  deadweightTonnage?: number;
-  lengthM?: number;
-  beamM?: number;
-  /** The page to open and check. Nothing is stored without one. */
-  sourceUrl?: string;
-}
-
-/** One field the source could supply, beside what the record holds. */
-export interface LookupProposal {
-  field: string;
-  label: string;
-  current?: string;
-  incoming?: string;
-  /** True when the record already holds something else — the ones worth a second look. */
-  differs: boolean;
-}
-
-/**
- * What an outside source said about a hull, and what it would change if believed.
- *
- * Everything here is a proposal. Accepting it is a separate action from accepting the
- * email's figures, precisely so the two origins stay apart in the change log.
- */
-export interface VesselLookupResponse {
-  id: number;
-  provider: string;
-  query: string;
-  /**
-   * OK, NO_MATCH, FAILED or SKIPPED. NO_MATCH is a result, not an error, and SKIPPED is not
-   * a failure either: nothing was asked, because a search could only have agreed with what
-   * both the email and the record already say. It is recorded so the pass stops asking the
-   * same question every two minutes.
-   */
-  status: 'OK' | 'NO_MATCH' | 'FAILED' | 'SKIPPED';
-  confidence?: number;
-  /**
-   * Whether anything beyond the name agreed. The name is what was searched for, so a match
-   * on it alone scores 100% and is entirely unverified.
-   */
-  corroborated?: boolean;
-  sourceUrl?: string;
-  error?: string;
-  fetchedAt?: string;
-  matched?: VesselParticulars;
-  reasons?: string[];
-  disagreements?: string[];
-  /** A hull already on file carrying this IMO — she is not new, she has been renamed. */
-  onFileVesselId?: number;
-  onFileVesselName?: string;
-  proposals?: LookupProposal[];
-  candidates?: VesselParticulars[];
 }
 
 export interface ApplyLookupRequest {

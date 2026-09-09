@@ -23,10 +23,8 @@ import com.chartering.model.Vessel;
 import com.chartering.model.VesselLookup;
 import com.chartering.repository.VesselRepository;
 import com.chartering.service.ParserSettings;
-import com.chartering.service.lookup.LookupFields;
 import com.chartering.service.lookup.LookupMatcher;
 import com.chartering.service.lookup.VesselLookupService;
-import com.chartering.service.lookup.VesselParticulars;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.criteria.Predicate;
@@ -175,44 +173,18 @@ public class IntakeQueryService {
         VesselLookup row = lookups.forItem(item.getId()).orElse(null);
         if (row == null) return null;
 
-        VesselParticulars matched = lookups.matched(row).orElse(null);
-        List<VesselParticulars> candidates = lookups.candidates(row);
-
-        List<String> reasons = List.of();
-        List<String> disagreements = List.of();
-        Boolean corroborated = null;
-        List<LookupFields.Proposal> proposals = List.of();
-        Long onFileId = null;
-        String onFileName = null;
-
-        if (matched != null) {
-            // Scored against exactly the facts the lookup itself used - asking the service
-            // rather than rebuilding them here. A second, thinner set would print weaker
-            // evidence than the stored confidence was earned on, which is precisely the
-            // contradiction this once shipped with: "name only, uncorroborated" beside 63%.
-            Vessel vessel = item.getVesselId() == null ? null
-                    : vessels.findById(item.getVesselId()).orElse(null);
-            VesselLookupService.Known known = lookups.knownFacts(item);
-            LookupMatcher.Known facts = known != null ? known.facts()
-                    : new LookupMatcher.Known(item.getSubjectLabel(), null, null, null);
-            LookupMatcher.Scored scored = LookupMatcher.score(facts, List.of(matched)).get(0);
-            reasons = scored.reasons();
-            disagreements = scored.disagreements();
-            corroborated = scored.corroborated();
-            proposals = LookupFields.proposals(vessel, matched);
-
-            Vessel onFile = lookups.alreadyOnFile(row).orElse(null);
-            if (onFile != null && !onFile.getId().equals(item.getVesselId())) {
-                onFileId = onFile.getId();
-                onFileName = onFile.getName();
-            }
-        }
-
-        return new VesselLookupResponse(
-                row.getId(), row.getProvider(), row.getQuery(), row.getStatus(),
-                row.getConfidence(), corroborated, row.getSourceUrl(), row.getError(),
-                row.getFetchedAt(),
-                matched, reasons, disagreements, onFileId, onFileName, proposals, candidates);
+        // Scored against exactly the facts the lookup itself used - asking the service rather
+        // than rebuilding them here. A second, thinner set would print weaker evidence than
+        // the stored confidence was earned on, which is precisely the contradiction this once
+        // shipped with: "name only, uncorroborated" beside 63%.
+        Vessel vessel = item.getVesselId() == null ? null
+                : vessels.findById(item.getVesselId()).orElse(null);
+        VesselLookupService.Known known = lookups.knownFacts(item);
+        LookupMatcher.Known facts = known != null ? known.facts()
+                : new LookupMatcher.Known(item.getSubjectLabel(), null, null, null);
+        // Assembled by the lookup service, which the vessel's own screen also calls - the two
+        // must not drift into different ideas of what the confidence figure rests on.
+        return lookups.describe(row, vessel, facts);
     }
 
     /** Which fields a {@code VESSEL_FIELDS} accept may name, for the UI to render and check. */

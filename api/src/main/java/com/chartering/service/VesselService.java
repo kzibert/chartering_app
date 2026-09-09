@@ -14,6 +14,7 @@ import com.chartering.repository.VesselCompanyLinkRepository;
 import com.chartering.repository.VesselExNameRepository;
 import com.chartering.repository.VesselPositionRepository;
 import com.chartering.repository.VesselRepository;
+import com.chartering.service.lookup.VesselLookupService;
 import com.chartering.specification.VesselSpecification;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -49,6 +50,12 @@ public class VesselService {
     private final VesselExNameRepository exNameRepository;
     private final VesselPositionRepository positionRepository;
     private final RecipientSelectionService recipientSelection;
+    /**
+     * Read-only here: the web lookup rides on the detail view the way lastPosition does, and
+     * nothing in this class runs a search or applies one. The lookup service depends on the
+     * vessel repository rather than on this class, so there is no cycle.
+     */
+    private final VesselLookupService vesselLookups;
     private final DtoMapper mapper;
 
     @Transactional(readOnly = true)
@@ -216,7 +223,7 @@ public class VesselService {
                 .orElse(null);
         return new VesselDetailResponse(
                 mapper.toVesselResponse(v, exNames(id)), ownerDto, ownerContacts, links(id),
-                lastPosition);
+                lastPosition, vesselLookups.describeForVessel(id));
     }
 
     @Transactional

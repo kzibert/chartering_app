@@ -102,6 +102,16 @@ export interface VesselDetailResponse {
    * where she was last reported free is still the useful answer and `status` says which.
    */
   lastPosition?: VesselLastPositionResponse;
+  /**
+   * The last web search run from her own record — the candidate, the evidence, and what it
+   * would change. Absent when nothing has been searched for her, and always absent where
+   * LOOKUP_ENABLED is off, which is how the card knows not to appear.
+   *
+   * Searches raised by the review queue are deliberately not here: those belong to the email
+   * that caused them, and showing one here would present a question asked about a circular
+   * three weeks ago as something somebody just ran.
+   */
+  lookup?: VesselLookupResponse;
 }
 
 /**
@@ -1431,4 +1441,79 @@ export interface MailLinkRequest {
   personId?: number;
   /** Also record the sender's address as a contact, so later mail links itself. */
   createContact?: boolean;
+}
+
+// ----------------------------------------------------------------- the outside source
+
+/** One hull as an outside source describes her. */
+export interface VesselParticulars {
+  imo?: string;
+  name?: string;
+  vesselType?: string;
+  flag?: string;
+  yearBuilt?: number;
+  grossTonnage?: number;
+  deadweightTonnage?: number;
+  lengthM?: number;
+  beamM?: number;
+  /** The page to open and check. Nothing is stored without one. */
+  sourceUrl?: string;
+}
+
+/** One field the source could supply, beside what the record holds. */
+export interface LookupProposal {
+  field: string;
+  label: string;
+  current?: string;
+  incoming?: string;
+  /** True when the record already holds something else — the ones worth a second look. */
+  differs: boolean;
+}
+
+/**
+ * What an outside source said about a hull, and what it would change if believed.
+ *
+ * Everything here is a proposal. Accepting it is a separate action from accepting the
+ * email's figures, precisely so the two origins stay apart in the change log.
+ */
+export interface VesselLookupResponse {
+  id: number;
+  provider: string;
+  query: string;
+  /**
+   * OK, NO_MATCH, FAILED or SKIPPED. NO_MATCH is a result, not an error, and SKIPPED is not
+   * a failure either: nothing was asked, because a search could only have agreed with what
+   * both the email and the record already say. It is recorded so the pass stops asking the
+   * same question every two minutes.
+   */
+  status: 'OK' | 'NO_MATCH' | 'FAILED' | 'SKIPPED';
+  confidence?: number;
+  /**
+   * Whether anything beyond the name agreed. The name is what was searched for, so a match
+   * on it alone scores 100% and is entirely unverified.
+   */
+  corroborated?: boolean;
+  sourceUrl?: string;
+  error?: string;
+  fetchedAt?: string;
+  matched?: VesselParticulars;
+  reasons?: string[];
+  disagreements?: string[];
+  /** A hull already on file carrying this IMO — she is not new, she has been renamed. */
+  onFileVesselId?: number;
+  onFileVesselName?: string;
+  proposals?: LookupProposal[];
+  candidates?: VesselParticulars[];
+}
+
+/**
+ * Whether looking a hull up on the open web is part of this deployment.
+ *
+ * Answers whatever LOOKUP_ENABLED says, unlike the other lookup endpoints, which 404 when it
+ * is off — a screen has to know whether a card exists before it can decide not to draw it.
+ */
+export interface VesselLookupStatusResponse {
+  enabled: boolean;
+  /** Which source is configured, for saying so on the card. */
+  provider?: string;
 }

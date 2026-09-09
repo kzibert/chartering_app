@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Descriptions, Drawer, List, Popconfirm, Select, Space, Spin, Tag, Tooltip, Typography } from 'antd';
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
-import { useContactMutations, useVessel, useVesselMutations } from '../../api/hooks';
+import {
+  useContactMutations,
+  useVessel,
+  useVesselLookupStatus,
+  useVesselMutations,
+} from '../../api/hooks';
 import { recordRecent } from '../../recent/store';
 import ConfirmTag from '../../components/ConfirmTag';
 import ContactLine from '../../components/ContactLine';
@@ -9,6 +14,7 @@ import EditToolbar, { useEditMode } from '../../components/EditToolbar';
 import VesselRoleTag, { ROLE_OPTIONS } from '../../components/VesselRoleTag';
 import AttachCompanyModal from './AttachCompanyModal';
 import VesselLastOpen from './VesselLastOpen';
+import VesselFromTheWeb from './VesselFromTheWeb';
 import CompanyDrawer from '../companies/CompanyDrawer';
 import CompanyForm from '../companies/CompanyForm';
 import ContactForm from '../contacts/ContactForm';
@@ -23,6 +29,9 @@ interface Props {
 export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
   const { data, isLoading } = useVessel(vesselId);
   const v = data?.vessel;
+  // A deployment fact, fetched once: where LOOKUP_ENABLED is off the feature is not part of
+  // this instance and the card does not exist rather than failing when pressed.
+  const lookupEnabled = useVesselLookupStatus().data?.enabled ?? false;
 
   const [companyId, setCompanyId] = useState<number>();
   const [companyFormOpen, setCompanyFormOpen] = useState(false);
@@ -98,6 +107,12 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
           {/* Where she is free, on the record you opened to ask about her. It reads from
               the same positions the Open fleet tab lists, so the two cannot disagree. */}
           <VesselLastOpen vesselId={v.id} vesselName={v.name} lastPosition={data?.lastPosition} />
+
+          {/* What a public ship database says about her, beside what the record holds.
+              Absent entirely where LOOKUP_ENABLED is off - the detail call carries no lookup
+              there and there is nothing to search with, so the card would be a button that
+              404s. See VesselFromTheWeb for why it is never run unasked. */}
+          {lookupEnabled && <VesselFromTheWeb vessel={v} lookup={data?.lookup} />}
 
           <Typography.Title level={5} style={{ marginTop: 20 }}>
             Companies ({links.length})

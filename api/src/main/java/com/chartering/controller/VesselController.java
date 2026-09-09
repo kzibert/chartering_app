@@ -2,6 +2,7 @@ package com.chartering.controller;
 
 import com.chartering.dto.*;
 import com.chartering.service.VesselService;
+import com.chartering.service.lookup.VesselLookupService;
 import com.chartering.service.VesselService.VesselFilter;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -24,6 +25,7 @@ import java.util.List;
 public class VesselController {
 
     private final VesselService vesselService;
+    private final VesselLookupService vesselLookups;
 
     @GetMapping
     @Operation(summary = "Search vessels",
@@ -170,11 +172,61 @@ public class VesselController {
         return ResponseEntity.ok(vesselService.setConfirmed(id, confirmed, req));
     }
 
+    // ------------------------------------------------------------- the outside source
+
+    @GetMapping("/lookup-status")
+    @Operation(summary = "Whether web lookup is part of this deployment",
+            description = "Always answers, whatever LOOKUP_ENABLED says — it is what a screen "
+                    + "asks before deciding whether to draw the card at all, and the other "
+                    + "lookup endpoints 404 when the feature is off.")
+    public ResponseEntity<VesselLookupStatusResponse> lookupStatus() {
+        return ResponseEntity.ok(new VesselLookupStatusResponse(
+                vesselLookups.isEnabled(),
+                vesselLookups.isEnabled() ? vesselLookups.providerName() : null));
+    }
+
+    @PostMapping("/{id}/lookup")
+    @Operation(summary = "Look this hull up on the configured outside source, now",
+            description = "The desk's own answer to a blank IMO has always been to type her "
+                    + "name into a ship database in another tab; this is that, beside the "
+                    + "record it is about. Replaces whatever the last search for her found.\n\n"
+                    + "Runs only when asked. The unattended pass works the review queue and "
+                    + "nothing else — a sweep over the whole fleet is exactly the traffic this "
+                    + "feature is careful not to send at somebody else's server.\n\n"
+                    + "Everything it returns is a proposal: nothing reaches her record until "
+                    + "POST /{id}/apply-lookup names the fields to believe. 404 where "
+                    + "LOOKUP_ENABLED is off.")
+    public ResponseEntity<VesselLookupResponse> lookup(@PathVariable Long id) {
+        vesselLookups.lookUpVesselNow(id);
+        // Re-read rather than describing what the search returned: the assembly adds the
+        // proposals against her current record and the rename check, and both are what the
+        // screen is for.
+        return ResponseEntity.ok(vesselLookups.describeForVessel(id));
+    }
+
+    @PostMapping("/{id}/apply-lookup")
+    @Operation(summary = "Write the ticked figures from her lookup onto her record",
+            description = "Its own action rather than part of any save, and deliberately: the "
+                    + "write is one change set naming the source and the page it came off, so "
+                    + "her History tab can say which figures came off the web months later. "
+                    + "Five fields at most — IMO, DWT, year built, flag, type.\n\n"
+                    + "Refused with an explanation when the IMO is already on another hull: "
+                    + "that is the same ship under another name, and it is the most valuable "
+                    + "thing this feature finds rather than a constraint to work around.\n\n"
+                    + "`vesselId` in the body is ignored here — the hull is the one in the path.")
+    public ResponseEntity<VesselLookupResponse> applyLookup(
+            @PathVariable Long id, @Valid @RequestBody ApplyLookupRequest req) {
+        vesselLookups.applyVesselLookup(id, req.getFields());
+        return ResponseEntity.ok(vesselLookups.describeForVessel(id));
+    }
+
     @GetMapping("/{id}/ex-names")
     @Operation(summary = "Names this vessel used to carry",
             description = "source=backfill means the name was extracted by a migration out "
                     + "of a name somebody had typed a rename history into; source=manual "
-                    + "means a person added it.")
+                    + "means a person added it; source=mail means a circular revealed it on "
+                    + "the Intake tab; source=rename means a save changed her name and this "
+                    + "is the one she carried until then.")
     public ResponseEntity<List<VesselExNameResponse>> exNames(@PathVariable Long id) {
         return ResponseEntity.ok(vesselService.exNames(id));
     }

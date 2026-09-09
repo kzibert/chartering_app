@@ -48,7 +48,8 @@ class VesselRenameExNameTest {
         service = new VesselService(vessels, mock(CompanyRepository.class),
                 mock(ContactRepository.class), mock(VesselCompanyLinkRepository.class),
                 exNames, mock(VesselPositionRepository.class),
-                mock(RecipientSelectionService.class), mapper);
+                mock(RecipientSelectionService.class),
+                mock(com.chartering.service.lookup.VesselLookupService.class), mapper);
 
         when(vessels.save(any(Vessel.class))).thenAnswer(i -> i.getArgument(0));
         when(exNames.findByVesselIdOrderByNameAsc(anyLong())).thenReturn(List.of());
