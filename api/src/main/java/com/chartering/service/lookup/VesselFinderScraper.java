@@ -50,12 +50,46 @@ import java.util.regex.Pattern;
 @Slf4j
 public class VesselFinderScraper implements VesselLookupProvider {
 
-    /** The IMO lives in the row's own link: {@code /vessels/details/9014561}. */
-    private static final Pattern DETAILS_IMO = Pattern.compile("/vessels/details/(\\d{7})");
+    /**
+     * The IMO lives in the row's own link: {@code /vessels/details/9014561}.
+     *
+     * <p><b>The trailing guard is load-bearing, and its absence produced invented IMO
+     * numbers.</b> Not every row on a search page is a ship with an IMO - pleasure craft,
+     * sailing yachts and small workboats are listed by MMSI, and the link is then
+     * {@code /vessels/details/224066450}, nine digits. Without the guard the pattern took
+     * the first seven of them and reported 2240664 as an IMO: a number belonging to no
+     * vessel anywhere, on a candidate somebody could have accepted onto a hull. A search
+     * for TARANTO returned six rows and three carried a fabricated number this way - and
+     * two of those three, being named TARANTO exactly, tied with the real ship and had the
+     * whole lookup refused as ambiguous.
+     *
+     * <p>Seven digits and then something that is not one. A row that cannot supply a real
+     * number is dropped, which is what {@code readRow} does with a null.
+     */
+    private static final Pattern DETAILS_IMO =
+            Pattern.compile("/vessels/details/(\\d{7})(?!\\d)");
 
     /** "112 / 15" — length and beam in metres, in one cell. */
     private static final Pattern LENGTH_BEAM =
             Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*/\\s*(\\d+(?:\\.\\d+)?)");
+
+    /**
+     * Every row on the page, not the handful that are kept.
+     *
+     * <p><b>Ranking has to happen after reading, not during it.</b> The page is ordered by
+     * the source's own idea of relevance, which knows only the name it was asked for — a
+     * search for a common name returns twenty hulls and the one whose deadweight and build
+     * year actually agree can be the twelfth. Cutting the list here at
+     * {@code max-candidates} threw her away before anything had looked at her, and the
+     * lookup then recorded NO_MATCH for a ship whose row was on the page it read. The cap
+     * still applies: {@link VesselLookupService} keeps the best few once they are scored.
+     *
+     * <p>What remains here is a guard against a page that is not what it should be. One
+     * search page carries a few dozen rows at most; a document offering thousands is a
+     * redirect, a rebuild or a listing, and reading all of it would be a waste rather than
+     * an answer.
+     */
+    private static final int PAGE_LIMIT = 50;
 
     private final VesselLookupProperties props;
 
@@ -64,10 +98,47 @@ public class VesselFinderScraper implements VesselLookupProvider {
         return "vesselfinder";
     }
 
+    /**
+     * The hull carrying a number, from the same search box.
+     *
+     * <p><b>The same parameter, because this source has no other.</b> Its search field takes
+     * a number as readily as a name and answers with the one hull: {@code ?name=9133513}
+     * returns TARANTO and nothing else. There is no {@code imo=} parameter — passing one is
+     * not refused, it is <em>ignored</em>, and the reply is an unfiltered page of twenty
+     * unrelated ships that arrives here looking exactly like a result.
+     *
+     * <p>Which is why what comes back is checked against what was asked for. That guard costs
+     * nothing on a source that understood the question and is the whole defence on a day one
+     * stops understanding it — and the thing being guarded is an identity: a wrong IMO is not
+     * a wrong number, it is another owner's vessel wearing this one's history.
+     */
+    @Override
+    public List<VesselParticulars> searchByImo(String imo) {
+        String number = imo == null ? "" : imo.trim();
+        if (number.isEmpty()) return List.of();
+        return carrying(number, search(number));
+    }
+
+    /**
+     * Only the hulls that actually carry the number.
+     *
+     * <p>Its own method so it can be tested without a network: it is the half that has to
+     * hold on the day the source stops understanding the question, and a test that made the
+     * request would be exercising the source rather than the guard.
+     */
+    static List<VesselParticulars> carrying(String imo, List<VesselParticulars> found) {
+        return found.stream().filter(c -> imo.equals(c.imo())).toList();
+    }
+
     @Override
     public List<VesselParticulars> searchByName(String name) {
+        return search(name.trim());
+    }
+
+    /** One request against the search page, whatever was typed into it. */
+    private List<VesselParticulars> search(String query) {
         String url = props.getSearchUrl()
-                .replace("{name}", URLEncoder.encode(name.trim(), StandardCharsets.UTF_8));
+                .replace("{name}", URLEncoder.encode(query, StandardCharsets.UTF_8));
 
         Document doc;
         try {
@@ -111,7 +182,7 @@ public class VesselFinderScraper implements VesselLookupProvider {
         // One row per hull. Selected by the link class rather than by table position, so a
         // banner or an advertising row inserted above the table does not shift everything.
         for (Element link : doc.select("a.ship-link")) {
-            if (out.size() >= props.getMaxCandidates()) break;
+            if (out.size() >= PAGE_LIMIT) break;
             VesselParticulars p = readRow(link);
             if (p != null) out.add(p);
         }

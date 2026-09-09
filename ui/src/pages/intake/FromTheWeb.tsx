@@ -38,15 +38,31 @@ import type { IntakeItemResponse, LookupProposal } from '../../api/intake';
 export default function FromTheWeb({
   item,
   vesselId,
+  chosen: chosenProp,
+  onChange,
 }: {
   item: IntakeItemResponse;
   /** The hull to write to. Absent on a new vessel until she has been created. */
   vesselId?: number;
+  /**
+   * The ticked fields, when the drawer around this card is holding them.
+   *
+   * <b>Lifted so one button can answer the whole screen.</b> The email's figures and the
+   * web's are two writes with two change sets and that separation is deliberate — it is the
+   * only thing that later says which column came from where. What was not deliberate was
+   * making a person click twice to say one thing. The footer fires both, in order, each
+   * keeping its own change set; this card keeps its own button for taking the web's figures
+   * without answering the item at all.
+   */
+  chosen?: string[];
+  onChange?: (fields: string[]) => void;
 }) {
   const lookup = item.lookup;
   const { lookup: runLookup, applyLookup } = useIntakeMutations();
   const proposals = lookup?.proposals ?? [];
-  const [chosen, setChosen] = useState<string[]>([]);
+  const [own, setOwn] = useState<string[]>([]);
+  const chosen = chosenProp ?? own;
+  const setChosen = onChange ?? setOwn;
 
   // Empty columns ticked, disagreements not. Filling a blank from a public database is
   // ordinary; overwriting a figure somebody here checked is a decision, and it should be
@@ -67,7 +83,9 @@ export default function FromTheWeb({
             message.info(
               updated.lookup?.status === 'OK'
                 ? `Found ${updated.lookup.matched?.name ?? 'a match'}.`
-                : 'Nothing matched confidently enough to offer.',
+                : updated.lookup?.status === 'SKIPPED'
+                  ? 'She is already identified here and in the email — a search could only agree.'
+                  : 'Nothing matched confidently enough to offer.',
             ),
         })
       }
@@ -141,6 +159,14 @@ export default function FromTheWeb({
             </>
           }
         />
+      )}
+
+      {lookup.status === 'SKIPPED' && (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          Not searched for. The email and the record both name her by IMO, so a search could
+          only have agreed with them — and this reads a public page at somebody else&rsquo;s
+          expense. Search anyway if you want a second opinion on her particulars.
+        </Typography.Text>
       )}
 
       {lookup.status === 'NO_MATCH' && (

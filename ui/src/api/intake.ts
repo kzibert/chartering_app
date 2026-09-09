@@ -19,7 +19,7 @@ export type IntakeItemKind = 'NEW_VESSEL' | 'VESSEL_FIELDS' | 'CARGO_MERGE';
 
 export type IntakeItemStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED';
 
-export type ParseStatus = 'PARSED' | 'FAILED' | 'SKIPPED';
+export type ParseStatus = 'PARSED' | 'FAILED' | 'SKIPPED' | 'IGNORED';
 
 /**
  * ACCEPT does the proposed thing; ALTERNATIVE does the other one and also writes — keeping
@@ -136,8 +136,13 @@ export interface VesselLookupResponse {
   id: number;
   provider: string;
   query: string;
-  /** OK, NO_MATCH or FAILED. NO_MATCH is a result, not an error. */
-  status: 'OK' | 'NO_MATCH' | 'FAILED';
+  /**
+   * OK, NO_MATCH, FAILED or SKIPPED. NO_MATCH is a result, not an error, and SKIPPED is not
+   * a failure either: nothing was asked, because a search could only have agreed with what
+   * both the email and the record already say. It is recorded so the pass stops asking the
+   * same question every two minutes.
+   */
+  status: 'OK' | 'NO_MATCH' | 'FAILED' | 'SKIPPED';
   confidence?: number;
   /**
    * Whether anything beyond the name agreed. The name is what was searched for, so a match
@@ -323,6 +328,11 @@ export const intakeApi = {
 
   reopen: (mailMessageId: number) =>
     client.post<void>(`/intake/parsed/${mailMessageId}/reopen`).then((r) => r.data),
+
+  ignoreParsed: (mailMessageId: number, note?: string) =>
+    client
+      .post<void>(`/intake/parsed/${mailMessageId}/ignore`, { note })
+      .then((r) => r.data),
 
   cargoSources: (cargoId: number) =>
     client.get<CargoSourceResponse[]>(`/intake/cargoes/${cargoId}/sources`).then((r) => r.data),

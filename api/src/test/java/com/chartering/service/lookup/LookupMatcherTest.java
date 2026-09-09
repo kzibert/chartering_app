@@ -134,6 +134,87 @@ class LookupMatcherTest {
     }
 
     @Test
+    void takesAnAgreeingImoAsTheAnswerAndNotAsMoreEvidence() {
+        // She has been renamed and one database rounds her deadweight. Neither is a reason
+        // for doubt: the number is unique and it survives a rename, which is the whole reason
+        // former names are kept at all.
+        LookupMatcher.Known known = new LookupMatcher.Known(
+                "9133513", "TARANTO OLD NAME", 1998, new BigDecimal("2800"), null);
+
+        Optional<LookupMatcher.Scored> best = LookupMatcher.best(
+                known, List.of(withImo("9133513", "TARANTO", 2001, "3005")), 55);
+
+        assertThat(best).isPresent();
+        assertThat(best.get().confidence()).isEqualTo(100);
+        assertThat(best.get().corroborated()).isTrue();
+        assertThat(best.get().reasons()).first().asString().contains("IMO 9133513 matches");
+        // The disagreements are still printed - "she is called TARANTO now" is exactly what
+        // somebody opening this needs to read. They just no longer move the figure.
+        assertThat(best.get().disagreements()).isNotEmpty();
+    }
+
+    @Test
+    void refusesACandidateWhoseImoContradictsTheOneWeHold() {
+        // The more important half. A name search brings back ships that answer to the name,
+        // and one of them can carry a hundred per cent of it while being another owner's
+        // vessel - which the number says outright.
+        LookupMatcher.Known known = new LookupMatcher.Known(
+                "9133513", "TARANTO", 2001, new BigDecimal("3005"), "Panama");
+
+        Optional<LookupMatcher.Scored> best = LookupMatcher.best(
+                known, List.of(withImo("9222222", "TARANTO", 2001, "3005")), 55);
+
+        assertThat(best).isEmpty();
+        assertThat(LookupMatcher.score(known, List.of(withImo("9222222", "TARANTO", 2001, "3005")))
+                .get(0).disagreements())
+                .anyMatch(d -> d.contains("IMO 9222222, not 9133513"));
+    }
+
+    @Test
+    void scoresOnTheOtherFactsWhenOnlyOneSideCarriesANumber() {
+        // Most of this mail: a circular names a ship and not her number. The IMO test abstains
+        // exactly as every other test does when either side is silent.
+        LookupMatcher.Known known = new LookupMatcher.Known(
+                null, "HACI HILMI II", 1992, new BigDecimal("6976"), null);
+
+        Optional<LookupMatcher.Scored> best = LookupMatcher.best(
+                known, List.of(candidate("HACI HILMI-II", 1992, "6977", null)), 55);
+
+        assertThat(best).isPresent();
+        assertThat(best.get().reasons()).noneMatch(r -> r.contains("IMO"));
+    }
+
+    @Test
+    void doesNotCountASubstringHitAsAnotherShipAnsweringToTheName() {
+        // The source matches a name as a substring, so a search for TARANTO brings back MSC
+        // TARANTO and SPIRIT OF TARANTO as well. They are two other ships, they score
+        // nothing, and counting them as competition had the real hull withheld as ambiguous
+        // on a name-only lookup - which is every lookup where the email gave only a name.
+        LookupMatcher.Known known = new LookupMatcher.Known("TARANTO", null, null, null);
+
+        Optional<LookupMatcher.Scored> best = LookupMatcher.best(known, List.of(
+                withImo("9133513", "TARANTO", null, null),
+                withImo("9475258", "MSC TARANTO", null, null),
+                withImo("9911111", "SPIRIT OF TARANTO", null, null)), 55);
+
+        assertThat(best).isPresent();
+        assertThat(best.get().candidate().imo()).isEqualTo("9133513");
+        // Offered, and said out loud to rest on nothing but the name.
+        assertThat(best.get().corroborated()).isFalse();
+    }
+
+    @Test
+    void stillRefusesWhenTwoHullsGenuinelyAnswerToTheName() {
+        // The rule the test above must not have broken. Two ships of one name, nothing else
+        // to tell them apart, is a question for a person and not a match.
+        LookupMatcher.Known known = new LookupMatcher.Known("TARANTO", null, null, null);
+
+        assertThat(LookupMatcher.best(known, List.of(
+                withImo("9133513", "TARANTO", null, null),
+                withImo("9222222", "TARANTO", null, null)), 55)).isEmpty();
+    }
+
+    @Test
     void scoresNothingWhenThereIsNothingToCheck() {
         LookupMatcher.Known blank = new LookupMatcher.Known(null, null, null, null);
         List<LookupMatcher.Scored> scored =

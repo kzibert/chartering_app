@@ -393,6 +393,8 @@ public class IntakeService {
         Vessel vessel = vessels.findById(payload.vesselId()).orElseThrow(() ->
                 new com.chartering.exception.ResourceNotFoundException("Vessel", payload.vesselId()));
 
+        if (action == Action.ALTERNATIVE) return separateVessel(item, payload, vessel);
+
         // An empty list means all of them, which is what the "Accept all" button sends. A
         // list that names nothing and meant nothing would be an accept that quietly did
         // nothing, so the UI never sends one.
@@ -409,6 +411,54 @@ public class IntakeService {
         if (written.isEmpty()) return "Nothing changed — the record already reads that way.";
         return "Updated " + String.join(", ", written.stream().map(VesselFieldDiff::labelOf).toList())
                 + " on " + vessel.getName() + ".";
+    }
+
+    /**
+     * She is not that ship: create the hull the email describes, and move the reading to her.
+     *
+     * <p><b>The answer this screen was missing.</b> Matching is exact - IMO, then current
+     * name, then a former name - and exact is not the same as right: a name is re-used when
+     * an owner scraps a ship and gives it to the next one, and a former-name hit is right for
+     * a reason nobody can see from the row. The screen already shows the particulars side by
+     * side precisely so a person can notice that they describe two different vessels, and
+     * until now the only answers to noticing were to accept figures onto the wrong hull or to
+     * discard the reading entirely. Both lose the ship the email was actually about.
+     *
+     * <p><b>What happens to the position already filed against the matched hull.</b> By the
+     * time this item exists the parse has recorded her position there, because where a ship
+     * is open is the perishable half and does not wait for a review. That reading was never
+     * about that vessel, so it comes off Open Fleet - as {@code WITHDRAWN}, not deleted.
+     * Positions are append-only and a hull's history is worth more than a tidy table; the
+     * status says the reading was pulled, the row still says who reported what and when, and
+     * "why did she show open Marmara last week" stays answerable.
+     *
+     * <p>Only what this email put there. A row an earlier circular created and this one
+     * merely re-confirmed belongs to that earlier reading, and taking it down would be
+     * correcting somebody else's record on the strength of this one.
+     */
+    private String separateVessel(IntakeItem item, IntakePayloads.VesselFields payload,
+                                  Vessel matched) {
+        MailMessage message = item.getParsedEmail().getMailMessage();
+
+        int withdrawn = 0;
+        for (VesselPosition p : positions.findByVesselIdOrderByReportedAtDesc(matched.getId())) {
+            if (p.getStatus() == PositionStatus.LIVE
+                    && p.getSourceMailMessage() != null
+                    && p.getSourceMailMessage().getId().equals(message.getId())) {
+                p.setStatus(PositionStatus.WITHDRAWN);
+                withdrawn++;
+            }
+        }
+
+        Vessel created = createVessel(payload.vessel());
+        recordPosition(created, payload.vessel(), message, item.getParsedEmail());
+        item.setVesselId(created.getId());
+
+        return "Created " + created.getName() + " as a separate vessel and filed the position "
+                + "on her" + (withdrawn > 0
+                ? "; the reading this email put on " + matched.getName() + " was withdrawn."
+                : ". Nothing was taken off " + matched.getName() + " - this email had added "
+                  + "no live position there.");
     }
 
     private String resolveCargoMerge(IntakeItem item, Action action) {
