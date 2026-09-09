@@ -2,9 +2,27 @@ import { useEffect, useState } from 'react';
 import { Alert, Descriptions, Modal, Segmented, Space, Spin, Tag, Typography } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import dayjs from 'dayjs';
-import { mailboxApi } from '../../api/mailbox';
-import MessageBody from '../mailbox/MessageBody';
-import type { IntakeItemSourceResponse } from '../../api/intake';
+import { mailboxApi } from '../api/mailbox';
+import MessageBody from '../pages/mailbox/MessageBody';
+
+/**
+ * One email a record came out of, reduced to what a picker needs.
+ *
+ * <b>Neutral on purpose.</b> Two features hand this list over and they store provenance in
+ * different tables — a review item's arrivals in `intake_item_sources`, a cargo's in
+ * `cargo_sources` — with different columns and different names for the sender. Teaching this
+ * component either shape would mean teaching it both, so each caller maps into this instead.
+ */
+export interface EmailSource {
+  /** Null where the mailbox no longer holds the message: it can be named but not opened. */
+  mailMessageId?: number;
+  /** Who sent it, as the picker should label it. */
+  label?: string;
+  /** When it arrived, for telling two lists from the same broker apart. */
+  when?: string;
+  /** Whether the record's figures came from this arrival. */
+  current?: boolean;
+}
 
 /**
  * The email the reading came out of, for checking it by eye.
@@ -36,18 +54,18 @@ export default function OriginalEmail({
 }: {
   /** The item's own message — what to show when there is no source list (a list row). */
   mailMessageId?: number;
-  /** Every arrival behind the item, newest first. */
-  sources?: IntakeItemSourceResponse[];
+  /** Every arrival behind the record, newest first. */
+  sources?: EmailSource[];
   open: boolean;
   onClose: () => void;
 }) {
   // Only the ones the mailbox still holds can be opened; the rest are named but not readable,
   // which is what ON DELETE SET NULL on the source row means in practice.
   const readable = (sources ?? []).filter((s) => s.mailMessageId != null);
-  const choices = readable.length > 0
+  const choices: EmailSource[] = readable.length > 0
     ? readable
     : mailMessageId != null
-      ? [{ id: -1, mailMessageId, current: true } as IntakeItemSourceResponse]
+      ? [{ mailMessageId, current: true }]
       : [];
 
   const [chosen, setChosen] = useState<number | undefined>(choices[0]?.mailMessageId);
@@ -82,7 +100,7 @@ export default function OriginalEmail({
       {choices.length > 1 && (
         <Space direction="vertical" size={4} style={{ marginBottom: 12, width: '100%' }}>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {choices.length} emails raised this. The figures on the item are from the newest.
+            {choices.length} emails. The figures on the record are from the newest.
           </Typography.Text>
           <Segmented
             value={showing}
@@ -91,10 +109,10 @@ export default function OriginalEmail({
               value: s.mailMessageId!,
               label: (
                 <Space size={4}>
-                  {s.senderCompanyName ?? s.fromName ?? s.fromAddress ?? 'Unknown sender'}
-                  {s.receivedAt && (
+                  {s.label ?? 'Unknown sender'}
+                  {s.when && (
                     <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                      {dayjs(s.receivedAt).format('D MMM')}
+                      {dayjs(s.when).format('D MMM')}
                     </Typography.Text>
                   )}
                   {s.current && <Tag color="blue" style={{ marginInlineEnd: 0 }}>newest</Tag>}

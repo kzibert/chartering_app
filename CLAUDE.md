@@ -622,7 +622,16 @@ openings.
 **`cargo_sources` is why a merge is safe.** A position is already one row per report carrying
 its reporter, and Open Fleet collapses them per hull — the sources are the rows. A cargo is
 one record several brokers describe, so the provenance moves to its own table: one row per
-arrival, kept through the merge, which is what answers "who else is working this".
+arrival, kept through the merge, which is what answers "who else is working this". **The
+cargo's own drawer opens them**: a figure on that screen is a broker's typing, and the only
+thing that settles whether it is right is what he actually wrote — with a picker when several
+sent it, since a merged cargo is exactly the case where which of them said what is the
+question. `components/OriginalEmail` is shared with the Intake tab and takes a neutral list,
+because the two features keep provenance in different tables with different column names.
+Cargoes predating `cargo_sources` have only `source_mail_message_id` on the cargo itself, and
+the button falls back to it rather than being missing on the oldest rows. Not behind the
+parser switch, for the reason the endpoint is not: a merged cargo's sources are part of the
+cargo.
 
 The sweep is on a timer whose interval, batch size and **lookback window** live in
 `app_settings` and on the Settings tab, not in the environment — they are knobs turned while

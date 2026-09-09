@@ -23,7 +23,7 @@ import { useIntakeItem, useIntakeMutations } from '../../intake/store';
 import CompanyDrawer from '../companies/CompanyDrawer';
 import VesselDrawer from '../vessels/VesselDrawer';
 import FromTheWeb from './FromTheWeb';
-import OriginalEmail from './OriginalEmail';
+import OriginalEmail from '../../components/OriginalEmail';
 import LinkSender from './LinkSender';
 import CreateHerModal from './CreateHerModal';
 import { ROLE_WORDS } from './capacities';
@@ -282,7 +282,12 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
               between two brokers is reading what each of them actually wrote. */}
           <OriginalEmail
             mailMessageId={item.mailMessageId}
-            sources={item.sources}
+            sources={(item.sources ?? []).map((s) => ({
+              mailMessageId: s.mailMessageId,
+              label: s.senderCompanyName ?? s.fromName ?? s.fromAddress,
+              when: s.receivedAt,
+              current: s.current,
+            }))}
             open={emailOpen}
             onClose={() => setEmailOpen(false)}
           />
