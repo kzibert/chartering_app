@@ -416,9 +416,43 @@ export interface MatchResponse {
   unknowns: number;
   checks: MatchCheckResponse[];
   ballastDays?: number;
+  /**
+   * The same leg in nautical miles, present only when both ends named a berth the sea
+   * network could place.
+   *
+   * Absent is meaningful rather than missing: it says the days came from the trade-area
+   * table — a broker's round figure between two waters — because one end was only ever
+   * quoted as a water, which is how most of this mailbox writes a position.
+   */
+  ballastDistanceNm?: number;
   earliestArrival?: string;
   outcome?: MatchOutcome;
   outcomeNote?: string;
+}
+
+/**
+ * The four numbers the matching rule cannot derive, with what "reset" would restore.
+ *
+ * The utilisation floor is the one worth understanding: it is what stops a 14,000-tonner
+ * being offered for a 4,000-tonne parcel. She can lift it — that is the problem — and
+ * freight is earned by the tonne while the ship is paid for whole.
+ */
+export interface MatchSettingsResponse {
+  ballastSpeedKnots: number;
+  portAllowanceHours: number;
+  minUtilisationPercent: number;
+  idealUtilisationPercent: number;
+  defaultBallastSpeedKnots: number;
+  defaultPortAllowanceHours: number;
+  defaultMinUtilisationPercent: number;
+  defaultIdealUtilisationPercent: number;
+}
+
+export interface MatchSettingsRequest {
+  ballastSpeedKnots?: number;
+  portAllowanceHours?: number;
+  minUtilisationPercent?: number;
+  idealUtilisationPercent?: number;
 }
 
 /** One live cargo and how much tonnage stands against it. */

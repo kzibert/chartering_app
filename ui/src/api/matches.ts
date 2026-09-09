@@ -2,6 +2,8 @@ import { client, cleanParams } from './client';
 import type {
   MatchOutcomeRequest,
   MatchResponse,
+  MatchSettingsRequest,
+  MatchSettingsResponse,
   MatchSummaryResponse,
 } from './types';
 
@@ -37,4 +39,13 @@ export const matchesApi = {
 
   clear: (cargoId: number, vesselId: number) =>
     client.delete<void>(`/matches/cargo/${cargoId}/vessel/${vesselId}`).then((r) => r.data),
+
+  /** The tuning: speed, allowance, and the two ends of what counts as filling a ship. */
+  settings: () => client.get<MatchSettingsResponse>('/matches/settings').then((r) => r.data),
+
+  updateSettings: (body: MatchSettingsRequest) =>
+    client.put<MatchSettingsResponse>('/matches/settings', body).then((r) => r.data),
+
+  resetSettings: () =>
+    client.delete<MatchSettingsResponse>('/matches/settings').then((r) => r.data),
 };

@@ -2,8 +2,11 @@ package com.chartering.controller;
 
 import com.chartering.dto.MatchOutcomeRequest;
 import com.chartering.dto.MatchResponse;
+import com.chartering.dto.MatchSettingsRequest;
+import com.chartering.dto.MatchSettingsResponse;
 import com.chartering.dto.MatchSummaryResponse;
 import com.chartering.service.MatchService;
+import com.chartering.service.MatchSettings;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -21,6 +24,7 @@ import java.util.List;
 public class MatchController {
 
     private final MatchService matchService;
+    private final MatchSettings settings;
 
     @GetMapping
     @Operation(summary = "Every live cargo with the tonnage against it counted",
@@ -84,5 +88,43 @@ public class MatchController {
     public ResponseEntity<Void> clear(@PathVariable Long cargoId, @PathVariable Long vesselId) {
         matchService.clearDecision(cargoId, vesselId);
         return ResponseEntity.noContent().build();
+    }
+
+    // ------------------------------------------------------------------ settings
+
+    @GetMapping("/settings")
+    @Operation(summary = "The four numbers the matching rule cannot derive")
+    public ResponseEntity<MatchSettingsResponse> settings() {
+        return ResponseEntity.ok(toResponse(settings.values()));
+    }
+
+    @PutMapping("/settings")
+    @Operation(summary = "Change the ballast speed or what counts as filling a ship",
+            description = "The utilisation floor is what stops a 14,000-tonner being offered "
+                    + "for a 4,000-tonne parcel: she can lift it, which is the problem, and "
+                    + "freight is earned by the tonne while the ship is paid for whole. Raise "
+                    + "it and part cargoes stop being suggested; lower it and they come back. "
+                    + "Every field is optional, so the form can send one without holding the "
+                    + "others.")
+    public ResponseEntity<MatchSettingsResponse> updateSettings(
+            @Valid @RequestBody MatchSettingsRequest req) {
+        return ResponseEntity.ok(toResponse(settings.update(
+                req.getBallastSpeedKnots(), req.getPortAllowanceHours(),
+                req.getMinUtilisationPercent(), req.getIdealUtilisationPercent())));
+    }
+
+    @DeleteMapping("/settings")
+    @Operation(summary = "Back to the defaults")
+    public ResponseEntity<MatchSettingsResponse> resetSettings() {
+        return ResponseEntity.ok(toResponse(settings.reset()));
+    }
+
+    private static MatchSettingsResponse toResponse(MatchSettings.Values v) {
+        MatchSettings.Values defaults = MatchSettings.defaults();
+        return new MatchSettingsResponse(
+                v.ballastSpeedKnots(), v.portAllowanceHours(),
+                v.minUtilisationPercent(), v.idealUtilisationPercent(),
+                defaults.ballastSpeedKnots(), defaults.portAllowanceHours(),
+                defaults.minUtilisationPercent(), defaults.idealUtilisationPercent());
     }
 }

@@ -25,8 +25,20 @@ public record MatchResponse(
         long unknowns,
         List<MatchCheckResponse> checks,
 
-        /** The ballast leg, in days, when both ends resolve to areas something connects. */
+        /** The ballast leg, in days, when both ends are known and something connects them. */
         Double ballastDays,
+
+        /**
+         * The same leg in nautical miles, and present only when both ends named a berth the
+         * sea network could place.
+         *
+         * <p>Absent is meaningful rather than missing: it says the days came from the
+         * trade-area table — a broker's round figure between two waters — because one end of
+         * the pairing was only ever quoted as a water. The check's own detail line says which
+         * of the two answered, and this is what lets the compact row say so too.
+         */
+        Double ballastDistanceNm,
+
         /** When she could present at the load port, on those ballast days. */
         LocalDate earliestArrival,
 

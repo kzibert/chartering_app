@@ -130,6 +130,29 @@ export const useMatchesForPosition = (positionId?: number, includeRuledOut = fal
     enabled: positionId != null,
   });
 
+/**
+ * The tuning behind every score on the tab.
+ *
+ * Changing it changes every score, so the mutations invalidate 'matches' wholesale rather
+ * than only the settings query — a saved floor that left yesterday's list on screen would be
+ * a setting that looks ignored.
+ */
+export const useMatchSettings = () =>
+  useQuery({ queryKey: ['matches', 'settings'], queryFn: matchesApi.settings });
+
+export function useMatchSettingsMutations() {
+  const invalidate = useInvalidator();
+  const update = useMutation({
+    mutationFn: matchesApi.updateSettings,
+    onSuccess: () => invalidate('matches'),
+  });
+  const reset = useMutation({
+    mutationFn: matchesApi.resetSettings,
+    onSuccess: () => invalidate('matches'),
+  });
+  return { update, reset };
+}
+
 export function useMatchMutations() {
   const invalidate = useInvalidator();
   const decide = useMutation({

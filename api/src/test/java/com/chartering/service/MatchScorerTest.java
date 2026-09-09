@@ -6,6 +6,7 @@ import org.mockito.Mockito;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.OptionalDouble;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -22,9 +23,17 @@ class MatchScorerTest {
 
     private static final LocalDate TODAY = LocalDate.of(2026, 8, 26);
 
-    // The real vocabulary is a database table; these tests only need it to answer two
-    // questions, so it is stubbed rather than loaded.
+    // The real vocabulary and the real sea network are database tables; these tests only
+    // need them to answer two questions each, so they are stubbed rather than loaded. The
+    // routes mock answers Optional.empty() to everything by default, which is exactly the
+    // "neither end named a placed berth" case that sends the scorer to the area table -- the
+    // path most of this mailbox's positions actually take.
     private final TradeAreaGraph areas = Mockito.mock(TradeAreaGraph.class);
+    private final SeaRouteGraph routes = Mockito.mock(SeaRouteGraph.class);
+
+    private MatchContext ctx() {
+        return new MatchContext(areas, routes, MatchSettings.defaults(), TODAY);
+    }
 
     private final TradeArea bsea = area(1L, "BSEA");
     private final TradeArea wmed = area(2L, "WMED");
@@ -137,7 +146,7 @@ class MatchScorerTest {
         p.setOpenArea(bsea);
         p.setOpenFrom(LocalDate.of(2026, 9, 1));
 
-        MatchScorer.Result r = MatchScorer.score(c, p, areas, TODAY);
+        MatchScorer.Result r = MatchScorer.score(c, p, ctx());
         assertThat(check(r, "timing").verdict()).isEqualTo(MatchScorer.Verdict.PASS);
         assertThat(r.ballastDays()).isZero();
     }
@@ -154,7 +163,7 @@ class MatchScorerTest {
         p.setOpenFrom(LocalDate.of(2026, 9, 1));
         p.setOpenTo(LocalDate.of(2026, 9, 2));
 
-        MatchScorer.Result r = MatchScorer.score(c, p, areas, TODAY);
+        MatchScorer.Result r = MatchScorer.score(c, p, ctx());
 
         // Free on the 2nd, six days' ballast, so the 8th - three days past cancelling.
         assertThat(r.ruledOut()).isTrue();
@@ -175,7 +184,7 @@ class MatchScorerTest {
         p.setOpenFrom(LocalDate.of(2026, 9, 1));
         p.setOpenTo(LocalDate.of(2026, 9, 3));
 
-        assertThat(MatchScorer.score(c, p, areas, TODAY).earliestArrival())
+        assertThat(MatchScorer.score(c, p, ctx()).earliestArrival())
                 .isEqualTo(LocalDate.of(2026, 9, 5));
     }
 
@@ -193,7 +202,7 @@ class MatchScorerTest {
         p.setOpenArea(caspian);
         p.setOpenFrom(LocalDate.of(2026, 9, 1));
 
-        MatchScorer.Result r = MatchScorer.score(c, p, areas, TODAY);
+        MatchScorer.Result r = MatchScorer.score(c, p, ctx());
         assertThat(r.ruledOut()).isTrue();
         assertThat(check(r, "timing").detail()).contains("too far to consider");
     }
@@ -213,7 +222,7 @@ class MatchScorerTest {
         p.setOpenArea(wmed);
         p.setOpenFrom(LocalDate.of(2026, 9, 1));
 
-        MatchScorer.Result r = MatchScorer.score(c, p, areas, TODAY);
+        MatchScorer.Result r = MatchScorer.score(c, p, ctx());
         assertThat(r.ruledOut()).isFalse();
         assertThat(check(r, "timing").detail()).contains("no cancelling date");
     }
@@ -258,10 +267,151 @@ class MatchScorerTest {
         assertThat(unknown.ruledOut()).isFalse();
     }
 
+
+    // ---------------------------------------------------------------- intake
+
+    @Test
+    void refusesToOfferAShipThreeTimesTheSizeOfTheParcel() {
+        // The rule this check exists for. She lifts it easily, which is exactly the problem:
+        // freight is earned by the tonne and the ship is paid for whole, so 4,000 tonnes in a
+        // 14,000-tonner earns 29% of what she costs to run and no owner takes it.
+        Cargo c = cargo();
+        c.setQuantity(new BigDecimal("4000"));
+
+        MatchScorer.Result r = score(c, position(vessel(v ->
+                v.setDeadweightTonnage(new BigDecimal("14000")))));
+
+        assertThat(r.ruledOut()).isTrue();
+        assertThat(check(r, "intake").verdict()).isEqualTo(MatchScorer.Verdict.FAIL);
+        assertThat(check(r, "intake").detail()).contains("29% full").contains("55%");
+    }
+
+    @Test
+    void measuresTheCargoAtItsUpperEndBecauseTheOptionIsTheCharterers() {
+        // 25,000 +/- 10% will load 27,500 into a hull that can take it. Testing the low end
+        // would call a full ship a badly used one on a tolerance that exists to help.
+        Cargo c = cargo();
+        c.setQuantity(new BigDecimal("25000"));
+        c.setQuantityMin(new BigDecimal("22500"));
+        c.setQuantityMax(new BigDecimal("27500"));
+
+        MatchScorer.Result r = score(c, position(vessel(v ->
+                v.setDeadweightCargoCapacity(new BigDecimal("28000")))));
+
+        assertThat(check(r, "intake").verdict()).isEqualTo(MatchScorer.Verdict.PASS);
+        assertThat(check(r, "intake").credit()).isEqualTo(1);
+    }
+
+    @Test
+    void scoresAFullerShipAboveAnEmptierOneWithoutRulingEitherOut() {
+        // Between the floor and the ideal a pairing is an argument rather than a mistake -
+        // part cargoes are real - so both pass and the score says which is better.
+        Cargo c = cargo();
+        c.setQuantity(new BigDecimal("6000"));
+
+        MatchScorer.Result full = score(c, position(vessel(v ->
+                v.setDeadweightCargoCapacity(new BigDecimal("6500")))));
+        MatchScorer.Result loose = score(c, position(vessel(v ->
+                v.setDeadweightCargoCapacity(new BigDecimal("9000")))));
+
+        assertThat(full.ruledOut()).isFalse();
+        assertThat(loose.ruledOut()).isFalse();
+        assertThat(check(loose, "intake").verdict()).isEqualTo(MatchScorer.Verdict.PASS);
+        assertThat(check(loose, "intake").credit()).isBetween(0.0, 1.0);
+        assertThat(full.score()).isGreaterThan(loose.score());
+    }
+
+    @Test
+    void staysOutOfItWhenTheChartererStatedTheSizeTheyWant() {
+        // "Abt 28-35,000 DWT" is the charterer's own answer to this question and the size
+        // check has already tested it. A ratio arguing with it would rule out a ship they
+        // asked for by name.
+        Cargo c = cargo();
+        c.setQuantity(new BigDecimal("20000"));
+        c.setMinDwt(new BigDecimal("28000"));
+        c.setMaxDwt(new BigDecimal("35000"));
+
+        MatchScorer.Result r = score(c, position(vessel(v ->
+                v.setDeadweightTonnage(new BigDecimal("34000")))));
+
+        assertThat(r.checks()).noneMatch(x -> x.code().equals("intake"));
+        assertThat(r.ruledOut()).isFalse();
+    }
+
+    @Test
+    void doesNotRuleOutAgainstAFloorTheCargoNeverClaimed() {
+        // "Min 3,000 mt" bounds the cargo from below and says nothing about the most it
+        // could be. Reading it as the intake would rule out every ship above 5,500 tonnes
+        // for an enquiry that may well fill them.
+        Cargo c = cargo();
+        c.setQuantityMin(new BigDecimal("3000"));
+
+        MatchScorer.Result r = score(c, position(vessel(v ->
+                v.setDeadweightCargoCapacity(new BigDecimal("14000")))));
+
+        assertThat(r.checks()).noneMatch(x -> x.code().equals("intake"));
+        assertThat(r.ruledOut()).isFalse();
+    }
+
+    // ------------------------------------------------------- the sea network
+
+    @Test
+    void measuresTheLegInMilesWhenBothEndsNameABerth() {
+        // The whole point of the network: Constanza and Rostov are both "Black Sea" and two
+        // days apart, and the area table cannot tell them apart at all.
+        Cargo c = cargo();
+        Port load = port("Odessa", bsea);
+        c.setLoadPort(load);
+        c.setLaycanTo(LocalDate.of(2026, 9, 20));
+
+        VesselPosition p = position(vessel(v -> {}));
+        Port open = port("Salerno", wmed);
+        p.setOpenPort(open);
+        p.setOpenFrom(LocalDate.of(2026, 9, 1));
+        Mockito.when(routes.between(open, load)).thenReturn(java.util.Optional.of(
+                new SeaRouteGraph.Route(1500, 14, List.of("Dardanelles", "Bosphorus north"))));
+
+        MatchScorer.Result r = MatchScorer.score(c, p, ctx());
+
+        assertThat(check(r, "timing").verdict()).isEqualTo(MatchScorer.Verdict.PASS);
+        assertThat(check(r, "timing").detail())
+                .contains("Salerno to Odessa")
+                .contains("1,500 nm")
+                .contains("via Dardanelles, Bosphorus north");
+        assertThat(r.ballast().distanceNm()).isEqualTo(1500);
+        // 1,500 nm at 11.5 kn is 130.4 hours; the strait waits and the two berths add 26 more.
+        assertThat(r.ballast().days()).isEqualTo(6.5);
+        assertThat(r.earliestArrival()).isEqualTo(LocalDate.of(2026, 9, 8));
+    }
+
+    @Test
+    void fallsBackToTheAreaTableWhenTheNetworkCannotPlaceABerth() {
+        // A port nobody has given coordinates to is no worse off than it was before the
+        // network existed, which is the whole reason the fallback is there.
+        Cargo c = cargo();
+        c.setLoadPort(port("Somewhere", bsea));
+        Mockito.when(routes.between(Mockito.any(), Mockito.any()))
+                .thenReturn(java.util.Optional.empty());
+        Mockito.when(areas.ballastDays(2L, 1L)).thenReturn(OptionalDouble.of(6));
+        Mockito.when(areas.byId(Mockito.anyLong()))
+                .thenReturn(new TradeAreaGraph.Area(1L, "X", "X", null, null, 0, null));
+
+        VesselPosition p = position(vessel(v -> {}));
+        p.setOpenArea(wmed);
+        p.setOpenFrom(LocalDate.of(2026, 9, 1));
+
+        MatchScorer.Result r = MatchScorer.score(c, p, ctx());
+
+        assertThat(check(r, "timing").verdict()).isEqualTo(MatchScorer.Verdict.PASS);
+        assertThat(check(r, "timing").detail()).contains("about 6 days");
+        assertThat(r.ballast().distanceNm()).isNull();
+        assertThat(r.ballast().fromPorts()).isFalse();
+    }
+
     // ------------------------------------------------------------- fixtures
 
     private MatchScorer.Result score(Cargo c, VesselPosition p) {
-        return MatchScorer.score(c, p, areas, TODAY);
+        return MatchScorer.score(c, p, ctx());
     }
 
     private static MatchScorer.Check check(MatchScorer.Result r, String code) {
@@ -285,6 +435,13 @@ class MatchScorerTest {
     private static VesselPosition position(Vessel v) {
         VesselPosition p = new VesselPosition();
         p.setVessel(v);
+        return p;
+    }
+
+    private static Port port(String name, TradeArea area) {
+        Port p = new Port();
+        p.setName(name);
+        p.setTradeArea(area);
         return p;
     }
 
