@@ -230,6 +230,23 @@ public class ParserSweepService {
             } catch (Exception e) {
                 failed++;
                 log.warn("Message {} could not be read: {}", message.getId(), e.toString());
+                // Recorded here rather than inside parseOne, and that is the whole point:
+                // parseOne is one transaction, so whatever threw took the row that would
+                // have recorded it down with the rollback - and where the cause is a
+                // database error the connection is already refusing statements. The message
+                // was left with no row at all, which is exactly the shape the sweep's queue
+                // treats as "never read": it came back every sweep, spent a model call every
+                // time, never showed up under the Log's FAILED filter and never reached the
+                // attempt ceiling. This is its own transaction, after the failed one is done
+                // with.
+                try {
+                    runner.recordFailure(message.getId(), e.toString());
+                } catch (Exception recording) {
+                    // A failure to record a failure is not a reason to abandon the sweep,
+                    // but it is the one that leaves no trace anywhere else.
+                    log.error("Could not record the failure of message {}",
+                            message.getId(), recording);
+                }
             }
         }
 

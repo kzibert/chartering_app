@@ -1,4 +1,16 @@
-import { Alert, Button, Descriptions, Drawer, Space, Tag, Typography, message } from 'antd';
+import {
+  Alert,
+  Button,
+  Descriptions,
+  Drawer,
+  Input,
+  Popconfirm,
+  Space,
+  Tag,
+  Typography,
+  message,
+} from 'antd';
+import { useState } from 'react';
 import dayjs from 'dayjs';
 import { useIntakeMutations, useParsedEmail } from '../../intake/store';
 import { EMAIL_TYPES, parseStatusMeta } from './labels';
@@ -22,7 +34,8 @@ interface Props {
  */
 export default function ParsedEmailDrawer({ parsedId, onClose }: Props) {
   const query = useParsedEmail(parsedId);
-  const { reopen } = useIntakeMutations();
+  const { reopen, ignoreParsed } = useIntakeMutations();
+  const [note, setNote] = useState('');
   const p = query.data;
 
   if (!parsedId) return null;
@@ -38,20 +51,65 @@ export default function ParsedEmailDrawer({ parsedId, onClose }: Props) {
       title={p?.subject || 'Loading…'}
       loading={query.isLoading}
       extra={
-        p && p.status === 'FAILED' && p.mailMessageId ? (
-          <Button
-            loading={reopen.isPending}
-            onClick={() =>
-              reopen.mutate(p.mailMessageId!, {
-                onSuccess: () => {
-                  message.success('Queued to be read again on the next sweep.');
-                  onClose();
-                },
-              })
-            }
-          >
-            Read again
-          </Button>
+        /* Both actions, because a failure a person has opened has two honest answers and
+           only one of them was here. "Read again" is for the box that was asleep; "Ignore"
+           is for the email that will defeat the model every time it is offered one, and
+           without it the only way to stop the retries was to leave them running. Offered on
+           a skipped row too - an attachment-only list is the standing example of a message
+           there is no point ever reading. */
+        p && p.mailMessageId && p.status !== 'PARSED' ? (
+          <Space>
+            <Button
+              loading={reopen.isPending}
+              onClick={() =>
+                reopen.mutate(p.mailMessageId!, {
+                  onSuccess: () => {
+                    message.success('Queued to be read again on the next sweep.');
+                    onClose();
+                  },
+                })
+              }
+            >
+              Read again
+            </Button>
+            {p.status !== 'IGNORED' && (
+              <Popconfirm
+                title="Stop trying to read this one"
+                description={
+                  <div style={{ maxWidth: 320 }}>
+                    <Typography.Paragraph style={{ fontSize: 12, marginBottom: 8 }}>
+                      It stays on this log and can be reopened, but no sweep will spend the
+                      model on it again. Say why, if it is not obvious from the subject.
+                    </Typography.Paragraph>
+                    <Input.TextArea
+                      rows={2}
+                      maxLength={500}
+                      value={note}
+                      onChange={(e) => setNote(e.target.value)}
+                      placeholder="Optional — e.g. position list is in the attachment"
+                    />
+                  </div>
+                }
+                okText="Ignore it"
+                onConfirm={() =>
+                  ignoreParsed.mutate(
+                    { mailMessageId: p.mailMessageId!, note: note.trim() || undefined },
+                    {
+                      onSuccess: () => {
+                        message.success('Ignored. It will not be read again.');
+                        setNote('');
+                        onClose();
+                      },
+                    },
+                  )
+                }
+              >
+                <Button danger loading={ignoreParsed.isPending}>
+                  Ignore
+                </Button>
+              </Popconfirm>
+            )}
+          </Space>
         ) : undefined
       }
     >
@@ -59,10 +117,16 @@ export default function ParsedEmailDrawer({ parsedId, onClose }: Props) {
         <>
           {p.error && (
             <Alert
-              type={p.status === 'SKIPPED' ? 'info' : 'error'}
+              type={p.status === 'PARSED' || p.status === 'FAILED' ? 'error' : 'info'}
               showIcon
               style={{ marginBottom: 16 }}
-              message={p.status === 'SKIPPED' ? 'Nothing to read' : 'The parse failed'}
+              message={
+                p.status === 'SKIPPED'
+                  ? 'Nothing to read'
+                  : p.status === 'IGNORED'
+                    ? 'Not to be read'
+                    : 'The parse failed'
+              }
               description={p.error}
             />
           )}

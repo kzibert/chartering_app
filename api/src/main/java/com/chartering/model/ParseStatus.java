@@ -19,5 +19,17 @@ public enum ParseStatus {
     FAILED,
 
     /** Nothing to read — no text body at all. */
-    SKIPPED
+    SKIPPED,
+
+    /**
+     * A person has taken this message out of the parser's hands.
+     *
+     * <p>The other half of a failure somebody has actually looked at. {@link #FAILED} is a
+     * standing question — try again, the box may have been asleep — and there has to be an
+     * answer to it that is not "retry for ever" or "delete the row and let tomorrow's sweep
+     * find it again". The email that defeats the model every time, the forwarded thread with
+     * no position in it, the newsletter: recorded as ignored, out of the retry queue, still
+     * on the Log where it can be reopened if the judgement was wrong.
+     */
+    IGNORED
 }

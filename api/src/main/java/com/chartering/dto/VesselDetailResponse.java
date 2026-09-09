@@ -20,5 +20,21 @@ public record VesselDetailResponse(
          * The most recent position reported about her, of any status — "last open".
          * Absent when nobody has ever reported one.
          */
-        VesselLastPositionResponse lastPosition) {
+        VesselLastPositionResponse lastPosition,
+
+        /**
+         * The last web search run from her own record, if any — the candidate, the evidence,
+         * and what it would change.
+         *
+         * <p>Here rather than on an endpoint of its own for the reason {@code lastPosition} is:
+         * it is one indexed row, it is part of what the screen showing her is for, and a second
+         * call would mean the card flickers in after the record it belongs to. Absent when
+         * nothing has been searched for her, and always absent where {@code LOOKUP_ENABLED} is
+         * off — the feature is not part of that deployment, so the card does not appear.
+         *
+         * <p>Searches raised by the review queue are deliberately not here: those belong to the
+         * email that caused them, and showing one on her record would present a question asked
+         * about a circular three weeks ago as something somebody just ran.
+         */
+        VesselLookupResponse lookup) {
 }

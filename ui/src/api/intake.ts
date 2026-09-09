@@ -1,5 +1,15 @@
 import { client, cleanParams } from './client';
-import type { PageResponse } from './types';
+import type { IntakeItemSourceResponse, PageResponse, VesselLookupResponse } from './types';
+
+// The lookup shapes live in types.ts, because the vessel's own record shows the same card.
+// Re-exported here so the Intake screens keep importing them from the module they read as
+// belonging to.
+export type {
+  IntakeItemSourceResponse,
+  LookupProposal,
+  VesselLookupResponse,
+  VesselParticulars,
+} from './types';
 
 /**
  * Intake: incoming mail read by the local model into cargoes and open positions.
@@ -19,7 +29,7 @@ export type IntakeItemKind = 'NEW_VESSEL' | 'VESSEL_FIELDS' | 'CARGO_MERGE';
 
 export type IntakeItemStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED';
 
-export type ParseStatus = 'PARSED' | 'FAILED' | 'SKIPPED';
+export type ParseStatus = 'PARSED' | 'FAILED' | 'SKIPPED' | 'IGNORED';
 
 /**
  * ACCEPT does the proposed thing; ALTERNATIVE does the other one and also writes — keeping
@@ -95,66 +105,17 @@ export interface IntakeItemResponse {
   payload?: IntakePayload;
   /** What an outside source found. Detail call only — the list never carries it. */
   lookup?: VesselLookupResponse;
+  /**
+   * Every email that raised this item, newest first. Detail call only.
+   *
+   * Always at least one: the arrival that first raised it is a source like any other. More
+   * than one means the same hull arrived again before anybody reviewed her.
+   */
+  sources?: IntakeItemSourceResponse[];
   createdAt?: string;
   resolvedAt?: string;
   resolvedBy?: string;
   resolutionNote?: string;
-}
-
-/** One hull as an outside source describes her. */
-export interface VesselParticulars {
-  imo?: string;
-  name?: string;
-  vesselType?: string;
-  flag?: string;
-  yearBuilt?: number;
-  grossTonnage?: number;
-  deadweightTonnage?: number;
-  lengthM?: number;
-  beamM?: number;
-  /** The page to open and check. Nothing is stored without one. */
-  sourceUrl?: string;
-}
-
-/** One field the source could supply, beside what the record holds. */
-export interface LookupProposal {
-  field: string;
-  label: string;
-  current?: string;
-  incoming?: string;
-  /** True when the record already holds something else — the ones worth a second look. */
-  differs: boolean;
-}
-
-/**
- * What an outside source said about a hull, and what it would change if believed.
- *
- * Everything here is a proposal. Accepting it is a separate action from accepting the
- * email's figures, precisely so the two origins stay apart in the change log.
- */
-export interface VesselLookupResponse {
-  id: number;
-  provider: string;
-  query: string;
-  /** OK, NO_MATCH or FAILED. NO_MATCH is a result, not an error. */
-  status: 'OK' | 'NO_MATCH' | 'FAILED';
-  confidence?: number;
-  /**
-   * Whether anything beyond the name agreed. The name is what was searched for, so a match
-   * on it alone scores 100% and is entirely unverified.
-   */
-  corroborated?: boolean;
-  sourceUrl?: string;
-  error?: string;
-  fetchedAt?: string;
-  matched?: VesselParticulars;
-  reasons?: string[];
-  disagreements?: string[];
-  /** A hull already on file carrying this IMO — she is not new, she has been renamed. */
-  onFileVesselId?: number;
-  onFileVesselName?: string;
-  proposals?: LookupProposal[];
-  candidates?: VesselParticulars[];
 }
 
 export interface ApplyLookupRequest {
@@ -166,6 +127,12 @@ export interface ApplyLookupRequest {
 export interface LinkSenderRequest {
   /** owner, exclusive_broker or broker. */
   role: string;
+  /**
+   * Which sender to attach, for an item several emails raised. Must be one of the item's own
+   * senders — attaching an unrelated firm is a decision about the ship, not about this email,
+   * and belongs on her record. Absent means the arrival that first raised the item.
+   */
+  companyId?: number;
   notes?: string;
 }
 
@@ -323,6 +290,11 @@ export const intakeApi = {
 
   reopen: (mailMessageId: number) =>
     client.post<void>(`/intake/parsed/${mailMessageId}/reopen`).then((r) => r.data),
+
+  ignoreParsed: (mailMessageId: number, note?: string) =>
+    client
+      .post<void>(`/intake/parsed/${mailMessageId}/ignore`, { note })
+      .then((r) => r.data),
 
   cargoSources: (cargoId: number) =>
     client.get<CargoSourceResponse[]>(`/intake/cargoes/${cargoId}/sources`).then((r) => r.data),

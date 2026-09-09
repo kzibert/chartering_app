@@ -3,6 +3,7 @@ package com.chartering.controller;
 import com.chartering.dto.ApplyLookupRequest;
 import com.chartering.dto.CargoSourceResponse;
 import com.chartering.dto.LinkSenderRequest;
+import com.chartering.dto.IgnoreRequest;
 import com.chartering.dto.IntakeItemResponse;
 import com.chartering.dto.IntakeResolveRequest;
 import com.chartering.dto.IntakeStatusResponse;
@@ -140,8 +141,10 @@ public class IntakeController {
     @Operation(summary = "Answer one item",
             description = "ACCEPT does the proposed thing: create the vessel, write the "
                     + "ticked fields, merge the cargo. ALTERNATIVE does the other one — link "
-                    + "the position to a vessel already on file, or keep the cargo as a row "
-                    + "of its own — and it writes too, which is why it is not called a "
+                    + "the position to a vessel already on file, keep the cargo as a row "
+                    + "of its own, or - on a VESSEL_FIELDS item - say that the matched hull "
+                    + "is not this ship at all, which creates the vessel the email describes "
+                    + "and withdraws the reading this email put on the other one — and it writes too, which is why it is not called a "
                     + "rejection. DISCARD writes nothing.\n\n"
                     + "On a VESSEL_FIELDS item, `fields` names which differences to accept; "
                     + "leaving it out accepts all of them.")
@@ -166,6 +169,11 @@ public class IntakeController {
                     + "until POST /items/{id}/apply-lookup names the fields to believe.")
     public ResponseEntity<IntakeItemResponse> lookup(@PathVariable Long id) {
         lookupService.lookUpNow(id);
+        // If the number that came back is already on a hull here, this item was never a
+        // question about creating a ship — it is a question about her particulars, and the
+        // reader should get that answer with the search rather than on the next pass. An IMO
+        // is identity; see IntakeService#reconcileIdentifiedHulls.
+        intake.reconcileIdentifiedHulls();
         return ResponseEntity.ok(queries.get(id));
     }
 
@@ -193,10 +201,14 @@ public class IntakeController {
                     + "it is who to ring about her. The capacity is chosen rather than "
                     + "assumed: owner displaces the owner on the record, the two broker roles "
                     + "sit alongside it. Uses the same rule as the vessel's own screen, so a "
-                    + "company appears once per hull.")
+                    + "company appears once per hull.\n\n"
+                    + "`companyId` picks which sender, for an item several emails raised - two "
+                    + "brokers on one hull is the ordinary case and both are worth keeping. It "
+                    + "must be one of the item's own senders; anything else belongs on her "
+                    + "record.")
     public ResponseEntity<IntakeItemResponse> linkSender(
             @PathVariable Long id, @Valid @RequestBody LinkSenderRequest req) {
-        intake.linkSenderCompany(id, req.getRole(), req.getNotes());
+        intake.linkSenderCompany(id, req.getRole(), req.getCompanyId(), req.getNotes());
         return ResponseEntity.ok(queries.get(id));
     }
 
@@ -249,6 +261,21 @@ public class IntakeController {
                     + "database by hand.")
     public ResponseEntity<Void> reopen(@PathVariable Long mailMessageId) {
         runner.reopen(mailMessageId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/parsed/{mailMessageId}/ignore")
+    @Operation(summary = "Take a message out of the parser's hands for good",
+            description = "The answer to a failure a person has looked at and does not want "
+                    + "retried: the email that defeats the model every time, the forwarded "
+                    + "thread with no position in it, the newsletter. Recorded rather than "
+                    + "deleted - a row is what stops tomorrow's sweep finding the message "
+                    + "again and spending another model call on it. Reversible: reopen puts "
+                    + "it back in the queue.")
+    public ResponseEntity<Void> ignoreParsed(@PathVariable Long mailMessageId,
+                                             @org.springframework.web.bind.annotation.RequestBody(required = false)
+                                             @Valid IgnoreRequest req) {
+        runner.ignore(mailMessageId, req == null ? null : req.getNote());
         return ResponseEntity.noContent().build();
     }
 

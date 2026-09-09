@@ -50,6 +50,25 @@ public interface IntakeItemRepository
             """)
     List<IntakeItem> pendingForVessel(IntakeItemKind kind, Long vesselId);
 
+    /**
+     * Every waiting item of one kind, with its parse and message loaded.
+     *
+     * <p>For the pass that re-reads {@code NEW_VESSEL} items against what a lookup has since
+     * found: a hull whose number turns out to be on file is not a new ship, and the item is
+     * rewritten rather than left asking the wrong question. Small by construction — the queue
+     * is a screen's worth, not a table scan — and the fetch is because converting reads the
+     * message to file her position.
+     */
+    @Query("""
+            select distinct i from IntakeItem i
+            left join fetch i.parsedEmail p
+            left join fetch p.mailMessage
+            where i.status = com.chartering.model.IntakeItemStatus.PENDING
+              and i.kind = ?1
+            order by i.id asc
+            """)
+    List<IntakeItem> pendingByKind(IntakeItemKind kind);
+
     /** The same question about a hull that is not on file yet, matched on the name as spelled. */
     @Query("""
             select i from IntakeItem i

@@ -29,6 +29,19 @@ public class VesselLookup {
     public static final String STATUS_NO_MATCH = "NO_MATCH";
     public static final String STATUS_FAILED = "FAILED";
 
+    /**
+     * Nothing was asked, because a search could not have helped.
+     *
+     * <p>A hull both the email and the record name by IMO is already identified; searching
+     * for her would spend somebody else's bandwidth to be told what is on the screen. The
+     * row exists anyway because the enrichment pass asks "which pending items have no lookup
+     * row", and an item that produced none was answered again by every pass for ever — while
+     * the hulls with no IMO queued behind it, which are the only ones this feature is for,
+     * were never reached. Same reasoning as {@code NO_MATCH}: an answer recorded is what
+     * stops the question being asked again.
+     */
+    public static final String STATUS_SKIPPED = "SKIPPED";
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

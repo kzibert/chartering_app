@@ -17,7 +17,9 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -56,6 +58,7 @@ public class IntakeService {
     private final CargoRepository cargoes;
     private final VesselRepository vessels;
     private final VesselExNameRepository exNames;
+    private final IntakeItemSourceRepository itemSources;
     private final VesselPositionRepository positions;
     private final IntakeResolver resolver;
     private final VesselLookupService lookups;
@@ -253,10 +256,36 @@ public class IntakeService {
                 : "the name \"" + name + "\"";
         IntakePayloads.NewVessel payload =
                 new IntakePayloads.NewVessel(v, searchedBy, resolver.suggest(v));
-        save(parsed, IntakeItemKind.NEW_VESSEL, null, null, name, payload);
+        addSource(save(parsed, IntakeItemKind.NEW_VESSEL, null, null, name, payload), parsed);
         return true;
     }
 
+    /**
+     * Raise the question about this hull — or add this email to the one already asking it.
+     *
+     * <p><b>One pending question per vessel, however many emails raise it.</b> The question is
+     * about a ship rather than about an email: a broker re-sends his list on Monday and again
+     * on Wednesday, two brokers carry the same hull, and every arrival used to produce its own
+     * row. The queue then showed one vessel three times and answering one left the others
+     * sitting there, still asking.
+     *
+     * <p>Exact suppression was the old answer and it was too brittle to be one. It compared the
+     * two sets of disagreements literally, so FOX came back twice over a single reworded word —
+     * "GENERAL-DRY CARGO VESSEL / DOUBLE SKIN/BOX" against "GENERAL-DRY CARGO VESSEL", every
+     * other figure identical. Loosening the comparison would not have helped: those two strings
+     * genuinely differ, and so will the next pair. The fix is not a better test for "the same
+     * question" but recognising that it was always one question.
+     *
+     * <p><b>The newest reading wins the figures, and every arrival is kept.</b> Merging takes
+     * the union by field with this email's value where both speak, because the later list is
+     * the later statement and that is what a desk would act on. Nothing is lost by it: each
+     * source stays readable in full from the item, which is where a reviewer settles a
+     * disagreement between two brokers — by reading what each of them actually wrote, rather
+     * than by trusting a column that picked one.
+     *
+     * <p>Only pending items merge. An answered question is history, and an email disagreeing
+     * again afterwards is a new question about a record that has since been decided.
+     */
     private boolean raiseVesselFields(ParsedEmail parsed, Vessel vessel,
                                       IntakeResolver.VesselMatch how,
                                       Extraction.ExtractedVessel v,
@@ -264,13 +293,132 @@ public class IntakeService {
         for (IntakeItem pending : items.pendingForVessel(IntakeItemKind.VESSEL_FIELDS, vessel.getId())) {
             IntakePayloads.VesselFields existing =
                     read(pending, IntakePayloads.VesselFields.class);
-            if (existing != null && sameQuestion(existing.diffs(), diff.conflicts())) return false;
+            if (existing == null) continue;
+            mergeInto(pending, existing, how, v, diff);
+            addSource(pending, parsed);
+            // Not a new question, so the sweep's "raised" count does not grow. The email is on
+            // the item and the reviewer will see it; the queue is no longer than it was.
+            return false;
         }
         IntakePayloads.VesselFields payload = new IntakePayloads.VesselFields(
                 vessel.getId(), vessel.getName(), matchNote(how), v,
                 diff.conflicts(), diff.filled());
-        save(parsed, IntakeItemKind.VESSEL_FIELDS, vessel.getId(), null, vessel.getName(), payload);
+        IntakeItem item = save(parsed, IntakeItemKind.VESSEL_FIELDS, vessel.getId(), null,
+                vessel.getName(), payload);
+        addSource(item, parsed);
         return true;
+    }
+
+    /**
+     * Turn "is this a new ship?" into "her particulars disagree", wherever the number says so.
+     *
+     * <p><b>An IMO is identity.</b> Two records carrying one IMO are one hull, with no room
+     * for judgement in it — so a {@code NEW_VESSEL} item whose lookup came back with a number
+     * this database already holds is not a question about whether to create a ship. It is a
+     * question about a ship we have, under a name nobody here recognised, which is exactly
+     * what a {@code VESSEL_FIELDS} item is for. The screen used to say so in a paragraph and
+     * then leave the reader to close the drawer and go and link her by hand; seventeen of the
+     * forty-one hulls waiting in this queue were that.
+     *
+     * <p><b>What converting does and does not decide.</b> It changes which question is asked,
+     * not what is written to her: every field still waits for a person, and the rename reads
+     * as an ordinary row in the table — "Name: CELIA → LIUDMILA" — which is the honest shape
+     * of it. The position is filed on her, because that is an <em>add</em> and the perishable
+     * half the desk is waiting for; if the identification were wrong, tomorrow's list
+     * supersedes it, which is the whole reason positions are append-only.
+     *
+     * <p>The former name is deliberately not filed here. That is a claim about identity which
+     * outlives this item and steers every future match, and it is written by accepting the
+     * name row — a person's decision, on the screen that shows them both names.
+     *
+     * <p>{@code LOOKUP_IMO} says where the identification came from, so the drawer can show
+     * the lookup's own confidence beside it. The IMO-to-hull step is certain; whether the
+     * source was talking about this email's ship is the part worth a reader's eye, and a
+     * name-only match says so on the card.
+     */
+    @Transactional
+    public int reconcileIdentifiedHulls() {
+        int converted = 0;
+        for (IntakeItem item : items.pendingByKind(IntakeItemKind.NEW_VESSEL)) {
+            try {
+                if (convertToFieldsReview(item)) converted++;
+            } catch (Exception e) {
+                // One item must not stop the rest: this runs unattended after every pass.
+                log.warn("Could not reconcile intake item {}: {}", item.getId(), e.toString());
+            }
+        }
+        return converted;
+    }
+
+    private boolean convertToFieldsReview(IntakeItem item) {
+        VesselLookup row = lookups.forItem(item.getId()).orElse(null);
+        if (row == null || !VesselLookup.STATUS_OK.equals(row.getStatus())) return false;
+        Vessel vessel = lookups.alreadyOnFile(row).orElse(null);
+        if (vessel == null) return false;
+
+        IntakePayloads.NewVessel payload = read(item, IntakePayloads.NewVessel.class);
+        if (payload == null || payload.vessel() == null) return false;
+
+        VesselFieldDiff.Result diff = VesselFieldDiff.compare(vessel, payload.vessel());
+        item.setKind(IntakeItemKind.VESSEL_FIELDS);
+        item.setVesselId(vessel.getId());
+        item.setSubjectLabel(truncate(vessel.getName()));
+        item.setPayload(write(new IntakePayloads.VesselFields(
+                vessel.getId(), vessel.getName(),
+                matchNote(IntakeResolver.VesselMatch.LOOKUP_IMO), payload.vessel(),
+                diff.conflicts(), diff.filled())));
+        items.save(item);
+
+        // Her position, now that there is a hull to file it against. An add, and the half of
+        // the email that goes stale — the particulars can wait for a reviewer, "where is she
+        // open" cannot.
+        ParsedEmail parsed = item.getParsedEmail();
+        recordPosition(vessel, payload.vessel(), parsed.getMailMessage(), parsed);
+        return true;
+    }
+
+    /**
+     * Fold a fresh reading into the question already waiting.
+     *
+     * <p>Union by field with the newer email's value where the two speak about the same one.
+     * The vessel paragraph is replaced wholesale for the same reason — accepting the item
+     * writes from it, and a half-old half-new paragraph would write figures no single email
+     * ever stated.
+     */
+    private void mergeInto(IntakeItem pending, IntakePayloads.VesselFields existing,
+                           IntakeResolver.VesselMatch how, Extraction.ExtractedVessel v,
+                           VesselFieldDiff.Result diff) {
+        Map<String, FieldDiff> byField = new LinkedHashMap<>();
+        for (FieldDiff d : existing.diffs()) byField.put(d.field(), d);
+        for (FieldDiff d : diff.conflicts()) byField.put(d.field(), d);
+
+        List<String> filled = new ArrayList<>(existing.filled() == null
+                ? List.of() : existing.filled());
+        for (String f : diff.filled()) if (!filled.contains(f)) filled.add(f);
+
+        pending.setPayload(write(new IntakePayloads.VesselFields(
+                existing.vesselId(), existing.vesselName(), matchNote(how), v,
+                List.copyOf(byField.values()), List.copyOf(filled))));
+        items.save(pending);
+    }
+
+    /**
+     * Record that this email raised the item too.
+     *
+     * <p>Guarded because re-parsing a message must not double up its sources — the same rule
+     * the unique index states, checked here so it reads as "already counted" rather than as a
+     * constraint violation and a 500.
+     */
+    private void addSource(IntakeItem item, ParsedEmail parsed) {
+        if (itemSources.existsByIntakeItemIdAndParsedEmailId(item.getId(), parsed.getId())) return;
+        MailMessage message = parsed.getMailMessage();
+        IntakeItemSource source = new IntakeItemSource();
+        source.setIntakeItem(item);
+        source.setParsedEmail(parsed);
+        source.setMailMessage(message);
+        source.setReportedByCompany(message == null ? null : message.getCompany());
+        source.setReportedAt(reportedAt(message));
+        itemSources.save(source);
     }
 
     private boolean raiseCargoMerge(ParsedEmail parsed, ResolvedCargo resolved,
@@ -280,13 +428,13 @@ public class IntakeService {
         IntakePayloads.CargoMerge payload = new IntakePayloads.CargoMerge(
                 resolved.parsed(), existing.getId(), describe(existing),
                 candidate.reasons(), preview.filled(), preview.differing());
-        save(parsed, IntakeItemKind.CARGO_MERGE, null, existing.getId(),
-                Extraction.text(resolved.parsed().commodity()), payload);
+        addSource(save(parsed, IntakeItemKind.CARGO_MERGE, null, existing.getId(),
+                Extraction.text(resolved.parsed().commodity()), payload), parsed);
         return true;
     }
 
-    private void save(ParsedEmail parsed, IntakeItemKind kind, Long vesselId, Long cargoId,
-                      String label, Object payload) {
+    private IntakeItem save(ParsedEmail parsed, IntakeItemKind kind, Long vesselId, Long cargoId,
+                            String label, Object payload) {
         IntakeItem item = new IntakeItem();
         item.setParsedEmail(parsed);
         item.setKind(kind);
@@ -294,7 +442,7 @@ public class IntakeService {
         item.setCargoId(cargoId);
         item.setSubjectLabel(truncate(label));
         item.setPayload(write(payload));
-        items.save(item);
+        return items.save(item);
     }
 
     // ------------------------------------------------------------------ resolving items
@@ -369,7 +517,7 @@ public class IntakeService {
             // The name the email used is a name this hull answers to, and it is the name a
             // later list will use again. Filing it now is what stops the next circular
             // raising the identical item - which is the whole reason ex-names exist.
-            rememberExName(vessel, payload.vessel().name());
+            rememberExName(vessel, payload.vessel().name(), vessel.getName());
             VesselFieldDiff.Result diff = VesselFieldDiff.compare(vessel, payload.vessel());
             summary = "Linked to " + vessel.getName()
                     + (diff.hasConflicts()
@@ -393,6 +541,8 @@ public class IntakeService {
         Vessel vessel = vessels.findById(payload.vesselId()).orElseThrow(() ->
                 new com.chartering.exception.ResourceNotFoundException("Vessel", payload.vesselId()));
 
+        if (action == Action.ALTERNATIVE) return separateVessel(item, payload, vessel);
+
         // An empty list means all of them, which is what the "Accept all" button sends. A
         // list that names nothing and meant nothing would be an accept that quietly did
         // nothing, so the UI never sends one.
@@ -403,12 +553,63 @@ public class IntakeService {
         // A rename is the one accepted field that has a second effect: the name she is
         // losing is the name this database has been finding her under, and dropping it would
         // make every older position list unsearchable for her.
-        if (chosen.contains("name")) rememberExName(vessel, vessel.getName());
+        if (chosen.contains("name")) {
+            rememberExName(vessel, vessel.getName(),
+                    payload.vessel() == null ? null : payload.vessel().name());
+        }
 
         List<String> written = VesselFieldDiff.applySelected(vessel, payload.vessel(), chosen);
         if (written.isEmpty()) return "Nothing changed — the record already reads that way.";
         return "Updated " + String.join(", ", written.stream().map(VesselFieldDiff::labelOf).toList())
                 + " on " + vessel.getName() + ".";
+    }
+
+    /**
+     * She is not that ship: create the hull the email describes, and move the reading to her.
+     *
+     * <p><b>The answer this screen was missing.</b> Matching is exact - IMO, then current
+     * name, then a former name - and exact is not the same as right: a name is re-used when
+     * an owner scraps a ship and gives it to the next one, and a former-name hit is right for
+     * a reason nobody can see from the row. The screen already shows the particulars side by
+     * side precisely so a person can notice that they describe two different vessels, and
+     * until now the only answers to noticing were to accept figures onto the wrong hull or to
+     * discard the reading entirely. Both lose the ship the email was actually about.
+     *
+     * <p><b>What happens to the position already filed against the matched hull.</b> By the
+     * time this item exists the parse has recorded her position there, because where a ship
+     * is open is the perishable half and does not wait for a review. That reading was never
+     * about that vessel, so it comes off Open Fleet - as {@code WITHDRAWN}, not deleted.
+     * Positions are append-only and a hull's history is worth more than a tidy table; the
+     * status says the reading was pulled, the row still says who reported what and when, and
+     * "why did she show open Marmara last week" stays answerable.
+     *
+     * <p>Only what this email put there. A row an earlier circular created and this one
+     * merely re-confirmed belongs to that earlier reading, and taking it down would be
+     * correcting somebody else's record on the strength of this one.
+     */
+    private String separateVessel(IntakeItem item, IntakePayloads.VesselFields payload,
+                                  Vessel matched) {
+        MailMessage message = item.getParsedEmail().getMailMessage();
+
+        int withdrawn = 0;
+        for (VesselPosition p : positions.findByVesselIdOrderByReportedAtDesc(matched.getId())) {
+            if (p.getStatus() == PositionStatus.LIVE
+                    && p.getSourceMailMessage() != null
+                    && p.getSourceMailMessage().getId().equals(message.getId())) {
+                p.setStatus(PositionStatus.WITHDRAWN);
+                withdrawn++;
+            }
+        }
+
+        Vessel created = createVessel(payload.vessel());
+        recordPosition(created, payload.vessel(), message, item.getParsedEmail());
+        item.setVesselId(created.getId());
+
+        return "Created " + created.getName() + " as a separate vessel and filed the position "
+                + "on her" + (withdrawn > 0
+                ? "; the reading this email put on " + matched.getName() + " was withdrawn."
+                : ". Nothing was taken off " + matched.getName() + " - this email had added "
+                  + "no live position there.");
     }
 
     private String resolveCargoMerge(IntakeItem item, Action action) {
@@ -480,7 +681,7 @@ public class IntakeService {
      * is.
      */
     @Transactional
-    public void linkSenderCompany(Long itemId, String role, String notes) {
+    public void linkSenderCompany(Long itemId, String role, Long companyId, String notes) {
         IntakeItem item = items.findWithEmailById(itemId).orElseThrow(() ->
                 new com.chartering.exception.ResourceNotFoundException("Intake item", itemId));
         if (item.getVesselId() == null) {
@@ -488,8 +689,7 @@ public class IntakeService {
                     "There is no vessel to attach a company to yet — create her or link her to "
                             + "one on file first.");
         }
-        MailMessage message = item.getParsedEmail().getMailMessage();
-        Company sender = message == null ? null : message.getCompany();
+        Company sender = chooseSender(item, itemId, companyId);
         if (sender == null) {
             throw new IllegalArgumentException(
                     "The sender of that email is not linked to a company. Link it on the "
@@ -498,6 +698,29 @@ public class IntakeService {
         ChangeContext.describe("Intake: linked %s to the vessel as %s"
                 .formatted(sender.getName(), role));
         vesselService.setLink(item.getVesselId(), sender.getId(), role, notes);
+    }
+
+    /**
+     * Which of the item's senders to attach.
+     *
+     * <p>Checked against the item's own arrivals rather than taken on trust. This endpoint
+     * records what an email is evidence of — that this firm was writing about this hull — and
+     * a company id that appears on none of them is not that. Attaching an unrelated firm is a
+     * decision about the ship and belongs on her own record, where every link is in view.
+     */
+    private Company chooseSender(IntakeItem item, Long itemId, Long companyId) {
+        if (companyId == null) {
+            MailMessage message = item.getParsedEmail().getMailMessage();
+            return message == null ? null : message.getCompany();
+        }
+        return itemSources.forItem(itemId).stream()
+                .map(IntakeItemSource::getReportedByCompany)
+                .filter(Objects::nonNull)
+                .filter(c -> c.getId().equals(companyId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "That company did not send any of the emails behind this item. Attach it "
+                                + "on the vessel's own record instead."));
     }
 
     // ------------------------------------------------------------------ writing rows
@@ -522,10 +745,29 @@ public class IntakeService {
         return vessels.save(vessel);
     }
 
-    private void rememberExName(Vessel vessel, String name) {
+    /**
+     * File a name she used to carry.
+     *
+     * <p><b>The name she is keeping has to be passed in, and that is the whole of the bug this
+     * signature exists to prevent.</b> There are two callers and they mean opposite things by
+     * "her name". Linking a position to a hull on file records the name the <em>email</em>
+     * used, and the thing not worth recording is a name identical to the one she already has.
+     * Accepting a rename records the name she <em>is losing</em>, and the thing not worth
+     * recording is a name identical to the one she is gaining. The guard used to read
+     * {@code vessel.getName()} either way, so the rename caller — which passes exactly that —
+     * compared the value against itself and returned every single time. FWN SOLIDE became
+     * LADY VIOLETTA with the rename in the change log and no former name anywhere, and the
+     * next circular calling her FWN SOLIDE would have found nothing.
+     *
+     * @param name   the name to file
+     * @param keeping the name she will carry afterwards; filing is skipped when they are the
+     *                same, because a former name identical to the current one answers nothing
+     */
+    private void rememberExName(Vessel vessel, String name, String keeping) {
         String trimmed = Extraction.text(name);
         if (trimmed == null) return;
-        if (trimmed.equalsIgnoreCase(vessel.getName())) return;
+        String stays = Extraction.text(keeping);
+        if (stays != null && trimmed.equalsIgnoreCase(stays)) return;
         if (exNames.existsByVesselIdAndNameIgnoreCase(vessel.getId(), trimmed)) return;
         VesselExName ex = new VesselExName();
         ex.setVessel(vessel);
@@ -697,17 +939,6 @@ public class IntakeService {
     }
 
     /** The same fields disagreeing about the same values — the question already asked. */
-    private static boolean sameQuestion(List<FieldDiff> a, List<FieldDiff> b) {
-        if (a == null || a.size() != b.size()) return false;
-        for (int i = 0; i < a.size(); i++) {
-            FieldDiff x = a.get(i);
-            FieldDiff y = b.get(i);
-            if (!x.field().equals(y.field()) || !Objects.equals(x.incoming(), y.incoming())) {
-                return false;
-            }
-        }
-        return true;
-    }
 
     /**
      * How she was identified, as a code rather than a sentence.
