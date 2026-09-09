@@ -2,41 +2,14 @@ import { useState } from 'react';
 import { Alert, Button, Card, Select, Space, Tag, Typography, message } from 'antd';
 import { ApartmentOutlined } from '@ant-design/icons';
 import { useIntakeMutations } from '../../intake/store';
+import { CAPACITIES, DEFAULT_CAPACITY, ROLE_WORDS } from './capacities';
 import type { IntakeItemResponse } from '../../api/intake';
 import type { VesselCompanyLinkResponse } from '../../api/types';
 
-/**
- * The capacities a company can act in on a hull.
- *
- * <b>Owner is not one of the broker roles and the difference is not cosmetic.</b> Choosing it
- * displaces whoever is on the record as owner, which reassigns the ship. The two broker roles
- * sit alongside ownership and say who is working her — which is the fact a position list
- * usually carries, since the broker sending the list is very often not the owner.
- */
-/** The capacity words, for printing a link that already exists. */
-const ROLE_WORDS: Record<string, string> = {
-  owner: 'owner',
-  exclusive_broker: 'exclusive broker',
-  broker: 'broker',
-};
-
-const ROLES = [
-  {
-    value: 'broker',
-    label: 'Broker',
-    hint: 'Works this vessel. Sits alongside the owner and displaces nothing — the ordinary answer for a broker whose list this came from.',
-  },
-  {
-    value: 'exclusive_broker',
-    label: 'Exclusive broker',
-    hint: 'Works her exclusively. Only one per vessel: whoever held it is demoted to broker rather than the save failing.',
-  },
-  {
-    value: 'owner',
-    label: 'Owner',
-    hint: 'Displaces the owner currently on the record. Choose this only if you know the ship has changed hands — it is a claim about who owns her, not about who sent the email.',
-  },
-];
+// The three capacities and their wording live in capacities.ts, shared with the modal behind
+// "Not this ship — create her", which asks the same question about a hull that does not exist
+// yet. Two copies would drift, and the one that drifted would be the one describing `owner`.
+const ROLES = CAPACITIES;
 
 /**
  * Attach the company that sent the email to the vessel it was about.
@@ -81,7 +54,7 @@ export default function LinkSender({
   onOpenVessel?: () => void;
 }) {
   const { linkSender } = useIntakeMutations();
-  const [role, setRole] = useState<string>('broker');
+  const [role, setRole] = useState<string>(DEFAULT_CAPACITY);
 
   const sender = item.senderCompanyId;
   const onHer = links ?? [];
