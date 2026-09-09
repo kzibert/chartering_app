@@ -382,6 +382,23 @@ public class VesselLookupService {
         Vessel vessel = vessels.findById(payload.vesselId()).orElse(null);
         if (vessel == null) return null;
 
+        // A converted item is scored on the facts the search actually had, which were the
+        // email's alone: this hull was not known to be hers until the number came back, so
+        // scoring against her record now would credit the search with corroboration it never
+        // earned. The failure is the one this class already carries a warning about, in the
+        // other direction — a re-score printing evidence the stored confidence was not built
+        // on. LIUDMILA is the case: matched on the name and nothing else, and CELIA's record
+        // agrees with the candidate about three more things, none of which the search saw.
+        if (IntakeResolver.VesselMatch.LOOKUP_IMO.name().equals(payload.matchedBy())) {
+            Extraction.ExtractedVessel v = payload.vessel();
+            if (v == null) return null;
+            String searched = VesselNameQuery.clean(Extraction.text(v.name()));
+            if (searched == null) return null;
+            return new Known(searched, new LookupMatcher.Known(
+                    IntakeResolver.normaliseImo(v.imo()), searched, v.built(), v.dwt(),
+                    Extraction.text(v.flag())), false);
+        }
+
         Extraction.ExtractedVessel parsed = payload.vessel();
         boolean emailHasImo = parsed != null && Extraction.text(parsed.imo()) != null;
         boolean recordHasImo = vessel.getImoNumber() != null && !vessel.getImoNumber().isBlank();

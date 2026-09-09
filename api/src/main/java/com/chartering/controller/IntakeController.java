@@ -169,6 +169,11 @@ public class IntakeController {
                     + "until POST /items/{id}/apply-lookup names the fields to believe.")
     public ResponseEntity<IntakeItemResponse> lookup(@PathVariable Long id) {
         lookupService.lookUpNow(id);
+        // If the number that came back is already on a hull here, this item was never a
+        // question about creating a ship — it is a question about her particulars, and the
+        // reader should get that answer with the search rather than on the next pass. An IMO
+        // is identity; see IntakeService#reconcileIdentifiedHulls.
+        intake.reconcileIdentifiedHulls();
         return ResponseEntity.ok(queries.get(id));
     }
 

@@ -45,6 +45,7 @@ class IntakeServiceTest {
     private VesselPositionRepository positions;
     private IntakeResolver resolver;
     private com.chartering.repository.IntakeItemSourceRepository itemSources;
+    private com.chartering.service.lookup.VesselLookupService lookupService;
     private IntakeService service;
 
     private Vessel pacificDawn;
@@ -63,8 +64,9 @@ class IntakeServiceTest {
         positions = mock(VesselPositionRepository.class);
         resolver = mock(IntakeResolver.class);
         itemSources = mock(com.chartering.repository.IntakeItemSourceRepository.class);
+        lookupService = mock(com.chartering.service.lookup.VesselLookupService.class);
         service = new IntakeService(items, cargoSources, cargoes, vessels, exNames, itemSources,
-                positions, resolver, mock(com.chartering.service.lookup.VesselLookupService.class),
+                positions, resolver, lookupService,
                 mock(com.chartering.service.VesselService.class), new ObjectMapper());
         // The item is saved and then a source row is attached to it, so the mock has to hand
         // the entity back rather than null.
@@ -337,6 +339,87 @@ class IntakeServiceTest {
         // emails stay readable from the item for anybody who wants to compare them.
         assertThat(alreadyAsked.getPayload()).contains("GENERAL-DRY CARGO VESSEL");
         assertThat(alreadyAsked.getPayload()).doesNotContain("DOUBLE SKIN");
+    }
+
+    /**
+     * An IMO is identity. A hull whose looked-up number is already on a ship here is that
+     * ship under a name nobody recognised — so the question stops being "should we create
+     * her" and becomes "her particulars disagree", which is a question we know how to ask.
+     */
+    @Test
+    void turnsANewVesselIntoAParticularsReviewWhenTheNumberIsAlreadyOnFile() {
+        Vessel celia = new Vessel();
+        celia.setId(2776L);
+        celia.setName("CELIA");
+        celia.setFlag("Malta");
+
+        IntakeItem newVessel = new IntakeItem();
+        newVessel.setId(6L);
+        newVessel.setKind(IntakeItemKind.NEW_VESSEL);
+        newVessel.setParsedEmail(parsed);
+        newVessel.setSubjectLabel("LIUDMILA");
+        newVessel.setPayload("""
+                {"vessel":{"name":"LIUDMILA","flag":"PANAMA","openArea":"MARMARA"},
+                 "searchedBy":"LIUDMILA","suggestions":[]}""");
+        when(items.pendingByKind(IntakeItemKind.NEW_VESSEL)).thenReturn(List.of(newVessel));
+
+        VesselLookup row = new VesselLookup();
+        row.setStatus(VesselLookup.STATUS_OK);
+        row.setMatchedImo("9344394");
+        when(lookupService.forItem(6L)).thenReturn(java.util.Optional.of(row));
+        when(lookupService.alreadyOnFile(row)).thenReturn(java.util.Optional.of(celia));
+
+        assertThat(service.reconcileIdentifiedHulls()).isEqualTo(1);
+
+        assertThat(newVessel.getKind()).isEqualTo(IntakeItemKind.VESSEL_FIELDS);
+        assertThat(newVessel.getVesselId()).isEqualTo(2776L);
+        // The label becomes the ship we hold, because that is the record being asked about.
+        assertThat(newVessel.getSubjectLabel()).isEqualTo("CELIA");
+        // Says where the identification came from, so the drawer can show the lookup's own
+        // confidence beside it - the IMO step is certain, the search behind it may not be.
+        assertThat(newVessel.getPayload()).contains("LOOKUP_IMO");
+        // The rename is an ordinary row for a person to accept, not something done to her.
+        assertThat(newVessel.getPayload()).contains("LIUDMILA");
+        verify(vessels, never()).save(any());
+        // Her position is filed, because that is an add and it is the half that goes stale.
+        verify(positions).save(any());
+    }
+
+    @Test
+    void leavesANewVesselAloneWhenTheNumberIsOnNoHullHere() {
+        IntakeItem newVessel = new IntakeItem();
+        newVessel.setId(7L);
+        newVessel.setKind(IntakeItemKind.NEW_VESSEL);
+        newVessel.setParsedEmail(parsed);
+        newVessel.setPayload("""
+                {"vessel":{"name":"UNKNOWN TRADER"},"searchedBy":"UNKNOWN TRADER","suggestions":[]}""");
+        when(items.pendingByKind(IntakeItemKind.NEW_VESSEL)).thenReturn(List.of(newVessel));
+
+        VesselLookup row = new VesselLookup();
+        row.setStatus(VesselLookup.STATUS_OK);
+        row.setMatchedImo("9999999");
+        when(lookupService.forItem(7L)).thenReturn(java.util.Optional.of(row));
+        when(lookupService.alreadyOnFile(row)).thenReturn(java.util.Optional.empty());
+
+        assertThat(service.reconcileIdentifiedHulls()).isZero();
+        assertThat(newVessel.getKind()).isEqualTo(IntakeItemKind.NEW_VESSEL);
+        verify(positions, never()).save(any());
+    }
+
+    /** Nothing has been searched for her yet, so there is no number to be identity about. */
+    @Test
+    void leavesANewVesselAloneWhenNothingHasBeenLookedUp() {
+        IntakeItem newVessel = new IntakeItem();
+        newVessel.setId(8L);
+        newVessel.setKind(IntakeItemKind.NEW_VESSEL);
+        newVessel.setParsedEmail(parsed);
+        newVessel.setPayload("""
+                {"vessel":{"name":"UNKNOWN TRADER"},"searchedBy":"UNKNOWN TRADER","suggestions":[]}""");
+        when(items.pendingByKind(IntakeItemKind.NEW_VESSEL)).thenReturn(List.of(newVessel));
+        when(lookupService.forItem(8L)).thenReturn(java.util.Optional.empty());
+
+        assertThat(service.reconcileIdentifiedHulls()).isZero();
+        assertThat(newVessel.getKind()).isEqualTo(IntakeItemKind.NEW_VESSEL);
     }
 
     @Test

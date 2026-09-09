@@ -697,6 +697,22 @@ arrives, one class is written, one setting changes.
   flag (1), and separately reports whether anything *beyond the name* agreed. A name-only
   match scores 100% and is flagged uncorroborated; with more than one candidate it is refused
   outright, as are ties.
+- **A number already on a hull here converts the item rather than advising about it.** An IMO
+  is identity: two records carrying one are one ship, with no judgement in it. So a
+  `NEW_VESSEL` item whose lookup returns a number this database holds is not a question about
+  creating a ship — it is a question about her particulars, and it is rewritten into one
+  (`VESSEL_FIELDS`, `matchedBy = LOOKUP_IMO`), with her position filed on the hull because
+  that is an *add* and the perishable half. Seventeen of forty-one hulls waiting in the queue
+  were that. The rename then reads as an ordinary row — "Name: CELIA → LIUDMILA" — for a
+  person to accept, and the former name is written by accepting it rather than by the
+  conversion: that is a claim about identity which steers every future match. It runs on its
+  own pass (`IntakeReconcileRunner`) because the two answers arrive hours apart, and because
+  the lookup service writing items would be a dependency cycle.
+  **A converted item is scored on the facts the search actually had** — the email's alone,
+  since the hull was not known to be hers until the number came back. Scoring against her
+  record would credit the search with corroboration it never earned, which is this feature's
+  standing failure in the other direction: LIUDMILA matched on the name and nothing else, and
+  CELIA's record agrees with the candidate about three more things the search never saw.
 - **The best thing it does is find a rename.** The search returns an IMO; that IMO is already
   on a hull here under the name she carried three owners ago. Without it she is entered twice.
   `ux_vessels_imo` is a *partial unique index*, so writing a number another vessel holds fails

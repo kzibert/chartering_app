@@ -61,8 +61,8 @@ export default function FromTheWeb({
           Search anyway if you want a second opinion on her particulars.
         </>
       }
-      onFileHint={() =>
-        'A vessel here already carries this IMO. She is not a new hull — she has been renamed. Close this and link the position to that ship instead of creating a second one; the name from the email is kept as a former name.'
+      onFileHint={(name) =>
+        `A vessel here already carries this IMO${name ? `, as ${name}` : ''}. An IMO is identity, so she is not a new hull — she has been renamed. This item is being turned into a particulars review against that ship, and her position is filed on her; reload if it is still showing as a new vessel. Accepting the name row is what records the name from this email as her current one.`
       }
       blockedHint="Create her or link her to a ship on file first — there is no record to write to yet."
     />

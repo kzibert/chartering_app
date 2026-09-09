@@ -88,6 +88,17 @@ public class IntakeResolver {
         NAME,
         /** By a former name — the reason {@code vessel_ex_names} exists. */
         EX_NAME,
+        /**
+         * By an IMO an outside source supplied, which this database already holds.
+         *
+         * <p>Not something the resolver can produce at parse time — the email gave no usable
+         * number, which is why the hull reached the review queue at all. It is reached later,
+         * when a web lookup answers with a number and that number turns out to be on a ship
+         * here under a name nobody recognised. The IMO is identity, so the identification is
+         * as certain as {@link #IMO}; what is less certain is whether the source was talking
+         * about this email's ship, and the lookup's own confidence is shown beside it.
+         */
+        LOOKUP_IMO,
         /** Nothing on file answers to this. */
         NONE
     }

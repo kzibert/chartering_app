@@ -310,6 +310,74 @@ public class IntakeService {
     }
 
     /**
+     * Turn "is this a new ship?" into "her particulars disagree", wherever the number says so.
+     *
+     * <p><b>An IMO is identity.</b> Two records carrying one IMO are one hull, with no room
+     * for judgement in it — so a {@code NEW_VESSEL} item whose lookup came back with a number
+     * this database already holds is not a question about whether to create a ship. It is a
+     * question about a ship we have, under a name nobody here recognised, which is exactly
+     * what a {@code VESSEL_FIELDS} item is for. The screen used to say so in a paragraph and
+     * then leave the reader to close the drawer and go and link her by hand; seventeen of the
+     * forty-one hulls waiting in this queue were that.
+     *
+     * <p><b>What converting does and does not decide.</b> It changes which question is asked,
+     * not what is written to her: every field still waits for a person, and the rename reads
+     * as an ordinary row in the table — "Name: CELIA → LIUDMILA" — which is the honest shape
+     * of it. The position is filed on her, because that is an <em>add</em> and the perishable
+     * half the desk is waiting for; if the identification were wrong, tomorrow's list
+     * supersedes it, which is the whole reason positions are append-only.
+     *
+     * <p>The former name is deliberately not filed here. That is a claim about identity which
+     * outlives this item and steers every future match, and it is written by accepting the
+     * name row — a person's decision, on the screen that shows them both names.
+     *
+     * <p>{@code LOOKUP_IMO} says where the identification came from, so the drawer can show
+     * the lookup's own confidence beside it. The IMO-to-hull step is certain; whether the
+     * source was talking about this email's ship is the part worth a reader's eye, and a
+     * name-only match says so on the card.
+     */
+    @Transactional
+    public int reconcileIdentifiedHulls() {
+        int converted = 0;
+        for (IntakeItem item : items.pendingByKind(IntakeItemKind.NEW_VESSEL)) {
+            try {
+                if (convertToFieldsReview(item)) converted++;
+            } catch (Exception e) {
+                // One item must not stop the rest: this runs unattended after every pass.
+                log.warn("Could not reconcile intake item {}: {}", item.getId(), e.toString());
+            }
+        }
+        return converted;
+    }
+
+    private boolean convertToFieldsReview(IntakeItem item) {
+        VesselLookup row = lookups.forItem(item.getId()).orElse(null);
+        if (row == null || !VesselLookup.STATUS_OK.equals(row.getStatus())) return false;
+        Vessel vessel = lookups.alreadyOnFile(row).orElse(null);
+        if (vessel == null) return false;
+
+        IntakePayloads.NewVessel payload = read(item, IntakePayloads.NewVessel.class);
+        if (payload == null || payload.vessel() == null) return false;
+
+        VesselFieldDiff.Result diff = VesselFieldDiff.compare(vessel, payload.vessel());
+        item.setKind(IntakeItemKind.VESSEL_FIELDS);
+        item.setVesselId(vessel.getId());
+        item.setSubjectLabel(truncate(vessel.getName()));
+        item.setPayload(write(new IntakePayloads.VesselFields(
+                vessel.getId(), vessel.getName(),
+                matchNote(IntakeResolver.VesselMatch.LOOKUP_IMO), payload.vessel(),
+                diff.conflicts(), diff.filled())));
+        items.save(item);
+
+        // Her position, now that there is a hull to file it against. An add, and the half of
+        // the email that goes stale — the particulars can wait for a reviewer, "where is she
+        // open" cannot.
+        ParsedEmail parsed = item.getParsedEmail();
+        recordPosition(vessel, payload.vessel(), parsed.getMailMessage(), parsed);
+        return true;
+    }
+
+    /**
      * Fold a fresh reading into the question already waiting.
      *
      * <p>Union by field with the newer email's value where the two speak about the same one.

@@ -500,6 +500,11 @@ const MATCH_META: Record<string, { label: string; colour: string; hint: string }
     colour: 'gold',
     hint: 'The email used a name she used to carry. Usually right — that is what former names are for — but check the particulars: the record is called something else.',
   },
+  LOOKUP_IMO: {
+    label: 'Identified by IMO from the web',
+    colour: 'green',
+    hint: 'Nothing here answered to the name in the email, so she was searched for — and the IMO that came back is already on this ship. Two records carrying one IMO are one hull, so this is her under a name nobody here recognised. What is worth your eye is whether the source was talking about this email’s ship: the card below shows how confident that match was.',
+  },
 };
 
 /**
