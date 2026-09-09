@@ -43,6 +43,19 @@ public class VesselExName {
      */
     public static final String SOURCE_MAIL = "mail";
 
+    /**
+     * Caught as it happened: her record was saved under a new name, and this is the one it
+     * carried until then.
+     *
+     * <p>Its own value rather than {@link #SOURCE_MANUAL} because the two answer different
+     * questions. {@code manual} means somebody sat down and entered a former name, which is a
+     * statement about the ship's history; this means nobody entered anything — the name field
+     * changed on a save and the old value was kept rather than dropped. The distinction matters
+     * when a row looks wrong: a typo corrected twice leaves a former name that was never a
+     * name, and this source is where to look for it.
+     */
+    public static final String SOURCE_RENAME = "rename";
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

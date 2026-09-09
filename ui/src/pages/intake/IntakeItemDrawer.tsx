@@ -23,8 +23,10 @@ import { useIntakeItem, useIntakeMutations } from '../../intake/store';
 import CompanyDrawer from '../companies/CompanyDrawer';
 import VesselDrawer from '../vessels/VesselDrawer';
 import FromTheWeb from './FromTheWeb';
-import OriginalEmail from './OriginalEmail';
+import OriginalEmail from '../../components/OriginalEmail';
 import LinkSender from './LinkSender';
+import CreateHerModal from './CreateHerModal';
+import { ROLE_WORDS } from './capacities';
 import { kindMeta } from './labels';
 import type { FieldDiff, IntakeAction, IntakeItemResponse } from '../../api/intake';
 import type { VesselResponse } from '../../api/types';
@@ -50,7 +52,7 @@ interface Props {
  */
 export default function IntakeItemDrawer({ itemId, onClose }: Props) {
   const query = useIntakeItem(itemId);
-  const { resolve, applyLookup } = useIntakeMutations();
+  const { resolve, applyLookup, linkSender } = useIntakeMutations();
   const item = query.data;
 
   const diffs = useMemo<FieldDiff[]>(() => {
@@ -71,6 +73,10 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
   // The web card's ticks, held here so one button can answer both halves of the screen.
   // Still two writes with two change sets - see FromTheWeb for why that must not change.
   const [webChosen, setWebChosen] = useState<string[]>([]);
+  // "Not this ship - create her" asks one question before it writes, so it is a modal rather
+  // than a Popconfirm: the hull it creates has nobody on her, and the firm that sent the list
+  // is usually the answer to who works her. See CreateHerModal.
+  const [createHerOpen, setCreateHerOpen] = useState(false);
 
   // Everything ticked when the drawer opens: the common answer is "the list is right", and a
   // screen that starts with nothing selected makes the common answer the most clicking.
@@ -93,7 +99,11 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
       ? webChosen.filter((f) => (item.lookup?.proposals ?? []).some((p) => p.field === f))
       : [];
 
-  const answer = (action: IntakeAction) => {
+  /**
+   * @param senderRole only meaningful with ALTERNATIVE on a VESSEL_FIELDS item, where the
+   *   answer creates a brand-new hull with nobody on her. Absent means attach nobody.
+   */
+  const answer = (action: IntakeAction, senderRole?: string) => {
     if (!item) return;
     if (item.kind === 'NEW_VESSEL' && action === 'ALTERNATIVE' && linkTo == null) {
       message.warning('Choose the vessel this position belongs to.');
@@ -121,6 +131,35 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
         },
         {
           onSuccess: (updated) => {
+            // Her record exists as of this line, so the sender can be attached to it. A
+            // second write with its own change set, the same split the web figures keep —
+            // and it has to happen before the drawer closes, because the item id is the
+            // only handle the link endpoint takes.
+            if (senderRole) {
+              linkSender.mutate(
+                { id: item.id, body: { role: senderRole } },
+                {
+                  onSuccess: () => {
+                    message.success(
+                      `${updated.resolutionNote || 'Created her.'} ${item.senderCompanyName} attached as ${
+                        ROLE_WORDS[senderRole] ?? senderRole
+                      }.`,
+                    );
+                    onClose();
+                  },
+                  // The ship was created either way, and saying so is the whole point: a
+                  // failure here must not read as "nothing happened", or the next click
+                  // creates her a second time.
+                  onError: () => {
+                    message.warning(
+                      `${updated.resolutionNote || 'Created her.'} The company could not be attached — do it on her own record.`,
+                    );
+                    onClose();
+                  },
+                },
+              );
+              return;
+            }
             message.success(updated.resolutionNote || 'Done.');
             onClose();
           },
@@ -168,6 +207,7 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
           <Tooltip title="What the model actually read. The only thing that settles whether a figure on this screen is right.">
             <Button size="small" icon={<MailOutlined />} onClick={() => setEmailOpen(true)}>
               Original email
+              {(item.sources?.length ?? 0) > 1 ? `s (${item.sources!.length})` : ''}
             </Button>
           </Tooltip>
         ) : undefined
@@ -178,6 +218,7 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
             item={item}
             busy={resolve.isPending || applyLookup.isPending}
             fromWeb={webPending.length}
+            onCreateHer={() => setCreateHerOpen(true)}
             onAnswer={answer}
           />
         ) : undefined
@@ -236,8 +277,17 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
             <CargoMergeBody item={item} />
           )}
 
+          {/* Every arrival behind the item, not just the one that raised it first: the same
+              hull reaching the queue twice is one question, and settling a disagreement
+              between two brokers is reading what each of them actually wrote. */}
           <OriginalEmail
             mailMessageId={item.mailMessageId}
+            sources={(item.sources ?? []).map((s) => ({
+              mailMessageId: s.mailMessageId,
+              label: s.senderCompanyName ?? s.fromName ?? s.fromAddress,
+              when: s.receivedAt,
+              current: s.current,
+            }))}
             open={emailOpen}
             onClose={() => setEmailOpen(false)}
           />
@@ -253,6 +303,19 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
             vesselId={vesselOpen ? item.payload?.vesselId : undefined}
             onClose={() => setVesselOpen(false)}
             onEdit={() => undefined}
+          />
+          {/* The capacity question, asked while creating her rather than left to a card the
+              drawer is about to close over. */}
+          <CreateHerModal
+            open={createHerOpen}
+            busy={resolve.isPending || linkSender.isPending}
+            senderCompanyName={item.senderCompanyName}
+            matchedVesselName={item.subjectLabel}
+            onCancel={() => setCreateHerOpen(false)}
+            onConfirm={(role) => {
+              setCreateHerOpen(false);
+              answer('ALTERNATIVE', role);
+            }}
           />
         </>
       )}
@@ -441,6 +504,11 @@ const MATCH_META: Record<string, { label: string; colour: string; hint: string }
     label: 'Matched by a former name',
     colour: 'gold',
     hint: 'The email used a name she used to carry. Usually right — that is what former names are for — but check the particulars: the record is called something else.',
+  },
+  LOOKUP_IMO: {
+    label: 'Identified by IMO from the web',
+    colour: 'green',
+    hint: 'Nothing here answered to the name in the email, so she was searched for — and the IMO that came back is already on this ship. Two records carrying one IMO are one hull, so this is her under a name nobody here recognised. What is worth your eye is whether the source was talking about this email’s ship: the card below shows how confident that match was.',
   },
 };
 
@@ -750,12 +818,15 @@ function Footer({
   busy,
   fromWeb,
   onAnswer,
+  onCreateHer,
 }: {
   item: IntakeItemResponse;
   busy: boolean;
   /** How many web figures are ticked, so the button can say what it is about to do. */
   fromWeb: number;
   onAnswer: (action: IntakeAction) => void;
+  /** VESSEL_FIELDS only: opens the modal that asks the capacity before creating her. */
+  onCreateHer: () => void;
 }) {
   const words: Record<string, { accept: string; alternative: string; discard: string }> = {
     NEW_VESSEL: {
@@ -795,28 +866,18 @@ function Footer({
           {fromWeb > 0 ? ` + ${fromWeb} from the web` : ''}
         </Button>
       </Tooltip>
-      {w.alternative &&
-        (item.kind === 'VESSEL_FIELDS' ? (
-          <Popconfirm
-            title="She is a different ship"
-            description={
-              <div style={{ maxWidth: 340 }}>
-                Creates the vessel the email describes, as her own record, and files the
-                position on her. The reading this email put on the matched hull is withdrawn —
-                marked, not deleted, so her history still says what was reported and when.
-              </div>
-            }
-            okText="Create her"
-            cancelText="Cancel"
-            onConfirm={() => onAnswer('ALTERNATIVE')}
-          >
-            <Button loading={busy}>{w.alternative}</Button>
-          </Popconfirm>
-        ) : (
-          <Button loading={busy} onClick={() => onAnswer('ALTERNATIVE')}>
-            {w.alternative}
-          </Button>
-        ))}
+      {/* On a VESSEL_FIELDS item this opens a modal rather than a Popconfirm, because
+          creating her raises a question a confirmation cannot hold: the new hull has nobody
+          on her, and in what capacity the sending firm works her is a choice. See
+          CreateHerModal. */}
+      {w.alternative && (
+        <Button
+          loading={busy}
+          onClick={() => (item.kind === 'VESSEL_FIELDS' ? onCreateHer() : onAnswer('ALTERNATIVE'))}
+        >
+          {w.alternative}
+        </Button>
+      )}
       <Popconfirm
         title={w.discard}
         description="Nothing will be written. The email stays in the log."

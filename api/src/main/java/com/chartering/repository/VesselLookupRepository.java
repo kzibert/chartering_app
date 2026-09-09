@@ -14,6 +14,21 @@ public interface VesselLookupRepository extends JpaRepository<VesselLookup, Long
     boolean existsByIntakeItemId(Long intakeItemId);
 
     /**
+     * The latest search asked about a hull from her own record rather than from a review item.
+     *
+     * <p><b>Why the {@code intakeItemId is null} half matters.</b> Both kinds of row carry a
+     * {@code vessel_id} once they have been applied, so "the lookups for this vessel" would
+     * also return the ones raised by an email — and the vessel screen would show a search
+     * prompted by a circular read three weeks ago as though somebody had just run it. The item
+     * rows belong to the item drawer, where the email that caused them is on the page.
+     *
+     * <p>Newest first and one row taken, because a search supersedes the last one: the screen
+     * asks "what does the source say about her now". The older rows stay as the provenance of
+     * figures already applied, which is what {@code ix_vessel_lookups_vessel} is indexed for.
+     */
+    Optional<VesselLookup> findTopByVesselIdAndIntakeItemIsNullOrderByFetchedAtDesc(Long vesselId);
+
+    /**
      * Review items that are still waiting and have never been looked up.
      *
      * <p>The trigger for the whole feature: a hull is searched for because somebody has to

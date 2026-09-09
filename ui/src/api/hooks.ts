@@ -262,6 +262,20 @@ export const useVessels = (filter: VesselFilter) =>
 export const useVessel = (id?: number) =>
   useQuery({ queryKey: ['vessel', id], queryFn: () => vesselsApi.get(id!), enabled: id != null });
 
+/**
+ * Whether the web-lookup card exists at all.
+ *
+ * A deployment fact rather than a piece of data, so it is fetched once and kept: it cannot
+ * change without a redeploy, and refetching it on every vessel opened would be a request per
+ * drawer to be told the same thing.
+ */
+export const useVesselLookupStatus = () =>
+  useQuery({
+    queryKey: ['vessel-lookup-status'],
+    queryFn: vesselsApi.lookupStatus,
+    staleTime: Infinity,
+  });
+
 export function useVesselMutations() {
   const invalidate = useInvalidator();
   const markDeleted = useMarkDeleted();
@@ -310,6 +324,21 @@ export function useVesselMutations() {
       vesselsApi.removeExName(v.id, v.exNameId),
     onSuccess: () => invalidate('vessels', 'vessel'),
   });
+  // The outside source, from her own record. The search itself writes nothing to her, but
+  // the row it stores rides on the vessel detail call, so 'vessel' has to be refetched for
+  // the card to show what came back.
+  const lookup = useMutation({
+    mutationFn: (id: number) => vesselsApi.lookup(id),
+    onSuccess: () => invalidate('vessel'),
+  });
+  // Applying does write to her, and to the five columns the lists show - so the full set,
+  // the same as an edit. 'positions' because Open fleet draws each row's size and name off
+  // the vessel carried on the position.
+  const applyLookup = useMutation({
+    mutationFn: (v: { id: number; fields: string[] }) =>
+      vesselsApi.applyLookup(v.id, v.fields),
+    onSuccess: () => invalidate(...touched),
+  });
   const setLink = useMutation({
     mutationFn: (v: { vesselId: number; companyId: number; role: VesselCompanyRole }) =>
       vesselsApi.setLink(v.vesselId, v.companyId, v.role),
@@ -330,7 +359,7 @@ export function useVesselMutations() {
   });
   return {
     create, update, remove, confirm, ban, setOwner, setLink, removeLink,
-    addExName, removeExName,
+    addExName, removeExName, lookup, applyLookup,
   };
 }
 

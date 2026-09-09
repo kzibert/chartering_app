@@ -4,6 +4,8 @@ import type {
   ContactResponse,
   PageResponse,
   VesselDetailResponse,
+  VesselLookupResponse,
+  VesselLookupStatusResponse,
   VesselCompanyLinkResponse,
   VesselCompanyRole,
   VesselExNameRequest,
@@ -98,5 +100,28 @@ export const vesselsApi = {
   setBanned: (id: number, banned: boolean) =>
     client
       .patch<VesselResponse>(`/vessels/${id}/ban`, {}, { params: { banned } })
+      .then((r) => r.data),
+
+  /**
+   * Whether web lookup is part of this deployment. Always answers, which is how a screen
+   * decides whether the card exists before drawing it.
+   */
+  lookupStatus: () =>
+    client.get<VesselLookupStatusResponse>('/vessels/lookup-status').then((r) => r.data),
+
+  /**
+   * Search an outside source for this hull, now.
+   *
+   * Only ever on request. The unattended pass works the review queue and nothing else - a
+   * sweep over the whole fleet is exactly the traffic this feature is careful not to send at
+   * somebody else's server.
+   */
+  lookup: (id: number) =>
+    client.post<VesselLookupResponse>(`/vessels/${id}/lookup`).then((r) => r.data),
+
+  /** Write the ticked figures onto her, as one change set naming the source. */
+  applyLookup: (id: number, fields: string[]) =>
+    client
+      .post<VesselLookupResponse>(`/vessels/${id}/apply-lookup`, { fields })
       .then((r) => r.data),
 };

@@ -9,6 +9,7 @@ import com.chartering.model.CargoSource;
 import com.chartering.model.Contact;
 import com.chartering.model.DataChange;
 import com.chartering.model.IntakeItem;
+import com.chartering.model.IntakeItemSource;
 import com.chartering.model.MailFolder;
 import com.chartering.model.MailMessage;
 import com.chartering.model.MailRule;
@@ -360,6 +361,16 @@ public class DtoMapper {
      */
     public IntakeItemResponse toIntakeItemResponse(IntakeItem item, JsonNode payload,
                                                    String summary, VesselLookupResponse lookup) {
+        return toIntakeItemResponse(item, payload, summary, lookup, null);
+    }
+
+    /**
+     * @param sources every arrival behind the item, newest first. Null on the list, where the
+     *                row prints one line and a join per row would buy nothing.
+     */
+    public IntakeItemResponse toIntakeItemResponse(IntakeItem item, JsonNode payload,
+                                                   String summary, VesselLookupResponse lookup,
+                                                   List<IntakeItemSource> sources) {
         MailMessage m = item.getParsedEmail() != null
                 ? item.getParsedEmail().getMailMessage() : null;
         // The sender's company is read off the message's own link, which the mail sync
@@ -379,8 +390,38 @@ public class DtoMapper {
                 m != null ? m.getReceivedAt() : null,
                 payload,
                 lookup,
+                sources == null ? null : toIntakeItemSources(sources),
                 item.getCreatedAt(), item.getResolvedAt(), item.getResolvedBy(),
                 item.getResolutionNote());
+    }
+
+    /**
+     * The arrivals behind one item.
+     *
+     * <p>The first is flagged {@code current}: the list comes back newest first and a merge
+     * takes the newest reading, so the top row is the email the item's figures came from. The
+     * screen says so rather than leaving a reader to compare timestamps.
+     */
+    private List<IntakeItemSourceResponse> toIntakeItemSources(List<IntakeItemSource> sources) {
+        List<IntakeItemSourceResponse> out = new java.util.ArrayList<>(sources.size());
+        for (int i = 0; i < sources.size(); i++) {
+            IntakeItemSource s = sources.get(i);
+            MailMessage m = s.getMailMessage();
+            Company c = s.getReportedByCompany();
+            out.add(new IntakeItemSourceResponse(
+                    s.getId(),
+                    s.getParsedEmail() != null ? s.getParsedEmail().getId() : null,
+                    m != null ? m.getId() : null,
+                    m != null ? m.getSubject() : null,
+                    m != null ? m.getFromAddress() : null,
+                    m != null ? m.getFromName() : null,
+                    c != null ? c.getId() : null,
+                    c != null ? c.getName() : null,
+                    m != null ? m.getReceivedAt() : null,
+                    s.getReportedAt(),
+                    i == 0));
+        }
+        return List.copyOf(out);
     }
 
     /**

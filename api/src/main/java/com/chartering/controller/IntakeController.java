@@ -169,6 +169,11 @@ public class IntakeController {
                     + "until POST /items/{id}/apply-lookup names the fields to believe.")
     public ResponseEntity<IntakeItemResponse> lookup(@PathVariable Long id) {
         lookupService.lookUpNow(id);
+        // If the number that came back is already on a hull here, this item was never a
+        // question about creating a ship — it is a question about her particulars, and the
+        // reader should get that answer with the search rather than on the next pass. An IMO
+        // is identity; see IntakeService#reconcileIdentifiedHulls.
+        intake.reconcileIdentifiedHulls();
         return ResponseEntity.ok(queries.get(id));
     }
 
@@ -196,10 +201,14 @@ public class IntakeController {
                     + "it is who to ring about her. The capacity is chosen rather than "
                     + "assumed: owner displaces the owner on the record, the two broker roles "
                     + "sit alongside it. Uses the same rule as the vessel's own screen, so a "
-                    + "company appears once per hull.")
+                    + "company appears once per hull.\n\n"
+                    + "`companyId` picks which sender, for an item several emails raised - two "
+                    + "brokers on one hull is the ordinary case and both are worth keeping. It "
+                    + "must be one of the item's own senders; anything else belongs on her "
+                    + "record.")
     public ResponseEntity<IntakeItemResponse> linkSender(
             @PathVariable Long id, @Valid @RequestBody LinkSenderRequest req) {
-        intake.linkSenderCompany(id, req.getRole(), req.getNotes());
+        intake.linkSenderCompany(id, req.getRole(), req.getCompanyId(), req.getNotes());
         return ResponseEntity.ok(queries.get(id));
     }
 

@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.util.List;
 
 /**
  * One row of the review queue.
@@ -49,6 +50,15 @@ public record IntakeItemResponse(
          * carries every candidate a search returned and a page of rows would be mostly that.
          */
         VesselLookupResponse lookup,
+        /**
+         * Every email that raised this item, newest first — detail call only.
+         *
+         * <p>A question about a hull is asked by however many emails mention her, and they
+         * are merged into one item rather than one row each. This is what lets the drawer
+         * offer each original to read and each sending firm to attach. Always at least one:
+         * the arrival that first raised it is a source like any other.
+         */
+        List<IntakeItemSourceResponse> sources,
         OffsetDateTime createdAt,
         OffsetDateTime resolvedAt,
         String resolvedBy,

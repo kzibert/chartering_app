@@ -1,6 +1,7 @@
 package com.chartering.service.lookup;
 
 import com.chartering.config.VesselLookupProperties;
+import com.chartering.dto.VesselLookupResponse;
 import com.chartering.exception.FeatureDisabledException;
 import com.chartering.exception.ResourceNotFoundException;
 import com.chartering.model.IntakeItem;
@@ -186,6 +187,58 @@ public class VesselLookupService {
 
         VesselLookup row = new VesselLookup();
         row.setIntakeItem(items.getReferenceById(itemId));
+        return search(row, known);
+    }
+
+    /**
+     * Look a hull up from her own record, on somebody pressing the button there.
+     *
+     * <p><b>Why her record needs this at all, when the review queue already has it.</b> The
+     * queue's lookups happen because an email raised a question; most hulls here were never the
+     * subject of one. A ship opened to be worked on — quoted, offered, put on a list — is
+     * exactly where somebody notices that her IMO is blank or her deadweight is the round
+     * number a broker once said, and the desk's own answer has always been to type her name
+     * into a ship database in another tab. This is that, with the answer beside the record it
+     * is about.
+     *
+     * <p><b>Never unattended.</b> {@link #enrichPending} works the review queue and nothing
+     * else: a pass over four thousand hulls is precisely the traffic this feature is careful
+     * not to send at somebody else's server. A hull is searched for because a person asked
+     * about her, which here means a button.
+     *
+     * <p>The previous row for her is deleted rather than added to, so the screen shows one
+     * answer — what the source says now. Rows raised by review items are left alone; they
+     * belong to the email that caused them.
+     */
+    public VesselLookup lookUpVesselNow(Long vesselId) {
+        requireEnabled();
+        Vessel vessel = vessels.findById(vesselId)
+                .orElseThrow(() -> new ResourceNotFoundException("Vessel", vesselId));
+        Known known = knownFactsForVessel(vessel);
+        if (known == null) {
+            // No name and no number is not a failure worth a row: there is nothing to search
+            // for, and the message says what would make it possible.
+            throw new IllegalArgumentException(
+                    "There is nothing to search for — she has no name on file. Give her a name "
+                            + "or an IMO first.");
+        }
+        lookups.findTopByVesselIdAndIntakeItemIsNullOrderByFetchedAtDesc(vesselId)
+                .ifPresent(lookups::delete);
+        VesselLookup row = new VesselLookup();
+        row.setVesselId(vesselId);
+        return search(row, known);
+    }
+
+    /**
+     * The search itself, for whichever of the two reasons prompted it.
+     *
+     * <p>One path on purpose. The row differs — a review item's or a vessel's — but what is
+     * sent, how it is paced, how the candidates are ranked and what counts as a match must not,
+     * or the confidence on a vessel's screen would mean something different from the same
+     * number on a review item's. Same reasoning as {@code knownFacts} being public: the
+     * evidence a decision was made on has one definition.
+     */
+    private VesselLookup search(VesselLookup row, Known known) {
         row.setProvider(provider.name());
         row.setFetchedAt(OffsetDateTime.now());
 
@@ -329,6 +382,23 @@ public class VesselLookupService {
         Vessel vessel = vessels.findById(payload.vesselId()).orElse(null);
         if (vessel == null) return null;
 
+        // A converted item is scored on the facts the search actually had, which were the
+        // email's alone: this hull was not known to be hers until the number came back, so
+        // scoring against her record now would credit the search with corroboration it never
+        // earned. The failure is the one this class already carries a warning about, in the
+        // other direction — a re-score printing evidence the stored confidence was not built
+        // on. LIUDMILA is the case: matched on the name and nothing else, and CELIA's record
+        // agrees with the candidate about three more things, none of which the search saw.
+        if (IntakeResolver.VesselMatch.LOOKUP_IMO.name().equals(payload.matchedBy())) {
+            Extraction.ExtractedVessel v = payload.vessel();
+            if (v == null) return null;
+            String searched = VesselNameQuery.clean(Extraction.text(v.name()));
+            if (searched == null) return null;
+            return new Known(searched, new LookupMatcher.Known(
+                    IntakeResolver.normaliseImo(v.imo()), searched, v.built(), v.dwt(),
+                    Extraction.text(v.flag())), false);
+        }
+
         Extraction.ExtractedVessel parsed = payload.vessel();
         boolean emailHasImo = parsed != null && Extraction.text(parsed.imo()) != null;
         boolean recordHasImo = vessel.getImoNumber() != null && !vessel.getImoNumber().isBlank();
@@ -356,6 +426,132 @@ public class VesselLookupService {
                 vessel.getFlag() != null ? vessel.getFlag()
                         : parsed != null ? Extraction.text(parsed.flag()) : null),
                 emailHasImo && recordHasImo);
+    }
+
+    /**
+     * What is known about a hull from her own record alone.
+     *
+     * <p>No email in the picture, so every figure is the record's own and there is nothing to
+     * prefer one source over another about — which makes this the short half of
+     * {@link #knownFacts}. Null only when she has no name to search for.
+     *
+     * <p><b>{@code alreadyIdentified} is always false here, and that is not an oversight.</b>
+     * It exists to stop the unattended pass spending a request on a hull an email and a record
+     * already agree the identity of; nothing about this path is unattended. A person looking at
+     * a ship who presses the button has a reason — her deadweight looks wrong, or her flag is
+     * blank — and a hull with an IMO on file is the case where the search is most likely to
+     * come back certain.
+     */
+    public Known knownFactsForVessel(Vessel vessel) {
+        String name = VesselNameQuery.clean(vessel.getName());
+        String imo = vessel.getImoNumber() == null || vessel.getImoNumber().isBlank()
+                ? null : vessel.getImoNumber().trim();
+        // A hull with a number and no usable name is still worth asking about: the number is
+        // the question with one answer, and the name is only the fallback.
+        if (name == null || name.isBlank()) {
+            if (imo == null) return null;
+            return new Known(imo, new LookupMatcher.Known(
+                    imo, null, vessel.getYearBuilt(), nonZero(vessel.getDeadweightTonnage()),
+                    vessel.getFlag()), false);
+        }
+        return new Known(name, new LookupMatcher.Known(
+                imo, name, vessel.getYearBuilt(), nonZero(vessel.getDeadweightTonnage()),
+                vessel.getFlag()), false);
+    }
+
+    /** The latest search run from her own record, if one has been. */
+    public Optional<VesselLookup> forVessel(Long vesselId) {
+        return lookups.findTopByVesselIdAndIntakeItemIsNullOrderByFetchedAtDesc(vesselId);
+    }
+
+    /**
+     * A stored search, assembled for whichever screen is showing it.
+     *
+     * <p><b>One assembly for both, which is the point of it being here.</b> The review drawer
+     * and the vessel's own record show the same thing — the candidate, what agreed, what did
+     * not, and what it would change — and two builders would drift into two notions of what the
+     * confidence figure rests on. That has already happened once inside this feature: the
+     * drawer re-scored against a thinner set of facts and printed "name only, uncorroborated"
+     * beside a confidence of 63 that had been earned on the build year agreeing.
+     *
+     * <p>It builds a DTO from a service rather than through {@code DtoMapper}, unlike the rest
+     * of this codebase, because it is not a mapping: it re-scores, reads the candidate list out
+     * of JSON and asks the repository whether some other hull already carries the IMO. The
+     * mapper would need this service injected to do any of it.
+     *
+     * @param vessel the hull the proposals are measured against, and the one hull that does not
+     *               count as "already on file" — finding the IMO on the ship you are looking at
+     *               is not a rename, it is agreement
+     */
+    public VesselLookupResponse describe(VesselLookup row, Vessel vessel,
+                                         LookupMatcher.Known facts) {
+        if (row == null) return null;
+
+        VesselParticulars matched = matched(row).orElse(null);
+        List<VesselParticulars> candidates = candidates(row);
+
+        List<String> reasons = List.of();
+        List<String> disagreements = List.of();
+        Boolean corroborated = null;
+        List<LookupFields.Proposal> proposals = List.of();
+        Long onFileId = null;
+        String onFileName = null;
+
+        if (matched != null) {
+            LookupMatcher.Scored scored = LookupMatcher.score(facts, List.of(matched)).get(0);
+            reasons = scored.reasons();
+            disagreements = scored.disagreements();
+            corroborated = scored.corroborated();
+            proposals = LookupFields.proposals(vessel, matched);
+
+            Vessel onFile = alreadyOnFile(row).orElse(null);
+            if (onFile != null && (vessel == null || !onFile.getId().equals(vessel.getId()))) {
+                onFileId = onFile.getId();
+                onFileName = onFile.getName();
+            }
+        }
+
+        return new VesselLookupResponse(
+                row.getId(), row.getProvider(), row.getQuery(), row.getStatus(),
+                row.getConfidence(), corroborated, row.getSourceUrl(), row.getError(),
+                row.getFetchedAt(),
+                matched, reasons, disagreements, onFileId, onFileName, proposals, candidates);
+    }
+
+    /**
+     * The latest search run from her own record, assembled for her screen.
+     *
+     * <p>Scored against her record's own figures — the same ones the search was made with, so
+     * the evidence printed is the evidence the confidence was earned on.
+     */
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    public VesselLookupResponse describeForVessel(Long vesselId) {
+        if (!isEnabled()) return null;
+        VesselLookup row = forVessel(vesselId).orElse(null);
+        if (row == null) return null;
+        Vessel vessel = vessels.findById(vesselId)
+                .orElseThrow(() -> new ResourceNotFoundException("Vessel", vesselId));
+        Known known = knownFactsForVessel(vessel);
+        LookupMatcher.Known facts = known != null ? known.facts()
+                : new LookupMatcher.Known(null, vessel.getName(), null, null, null);
+        return describe(row, vessel, facts);
+    }
+
+    /**
+     * Write the ticked figures from her own screen's search onto her.
+     *
+     * <p>Thin on purpose: it finds the row the screen is showing and hands it to
+     * {@link #applyToVessel}, which is the same write the review drawer makes — the same
+     * change-set name, the same refusal when the IMO is already on another hull. Two ways in,
+     * one write, so a figure taken here and a figure taken there are indistinguishable in the
+     * History tab, which is correct: they came from the same place for the same reason.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public List<String> applyVesselLookup(Long vesselId, List<String> fields) {
+        requireEnabled();
+        VesselLookup row = forVessel(vesselId).orElseThrow(() -> new IllegalArgumentException(
+                "Nothing has been looked up for her yet — run a search first."));
+        return applyToVessel(vesselId, row, fields);
     }
 
     /**

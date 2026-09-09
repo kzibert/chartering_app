@@ -2,41 +2,14 @@ import { useState } from 'react';
 import { Alert, Button, Card, Select, Space, Tag, Typography, message } from 'antd';
 import { ApartmentOutlined } from '@ant-design/icons';
 import { useIntakeMutations } from '../../intake/store';
+import { CAPACITIES, DEFAULT_CAPACITY, ROLE_WORDS } from './capacities';
 import type { IntakeItemResponse } from '../../api/intake';
 import type { VesselCompanyLinkResponse } from '../../api/types';
 
-/**
- * The capacities a company can act in on a hull.
- *
- * <b>Owner is not one of the broker roles and the difference is not cosmetic.</b> Choosing it
- * displaces whoever is on the record as owner, which reassigns the ship. The two broker roles
- * sit alongside ownership and say who is working her — which is the fact a position list
- * usually carries, since the broker sending the list is very often not the owner.
- */
-/** The capacity words, for printing a link that already exists. */
-const ROLE_WORDS: Record<string, string> = {
-  owner: 'owner',
-  exclusive_broker: 'exclusive broker',
-  broker: 'broker',
-};
-
-const ROLES = [
-  {
-    value: 'broker',
-    label: 'Broker',
-    hint: 'Works this vessel. Sits alongside the owner and displaces nothing — the ordinary answer for a broker whose list this came from.',
-  },
-  {
-    value: 'exclusive_broker',
-    label: 'Exclusive broker',
-    hint: 'Works her exclusively. Only one per vessel: whoever held it is demoted to broker rather than the save failing.',
-  },
-  {
-    value: 'owner',
-    label: 'Owner',
-    hint: 'Displaces the owner currently on the record. Choose this only if you know the ship has changed hands — it is a claim about who owns her, not about who sent the email.',
-  },
-];
+// The three capacities and their wording live in capacities.ts, shared with the modal behind
+// "Not this ship — create her", which asks the same question about a hull that does not exist
+// yet. Two copies would drift, and the one that drifted would be the one describing `owner`.
+const ROLES = CAPACITIES;
 
 /**
  * Attach the company that sent the email to the vessel it was about.
@@ -81,9 +54,32 @@ export default function LinkSender({
   onOpenVessel?: () => void;
 }) {
   const { linkSender } = useIntakeMutations();
-  const [role, setRole] = useState<string>('broker');
+  const [role, setRole] = useState<string>(DEFAULT_CAPACITY);
 
-  const sender = item.senderCompanyId;
+  // Every distinct firm behind this item. One question about a hull is raised by however many
+  // emails mention her, so two brokers can be sitting on the same one - and both are worth
+  // keeping, because who works her is exactly what the record is for. Deduped by company: a
+  // broker who sent the same list twice is one firm, not two offers to attach him.
+  const senders = (() => {
+    const seen = new Map<number, { id: number; name?: string }>();
+    for (const src of item.sources ?? []) {
+      if (src.senderCompanyId != null && !seen.has(src.senderCompanyId)) {
+        seen.set(src.senderCompanyId, { id: src.senderCompanyId, name: src.senderCompanyName });
+      }
+    }
+    // The item's own sender, for rows raised before sources existed and for the list view.
+    if (seen.size === 0 && item.senderCompanyId != null) {
+      seen.set(item.senderCompanyId, {
+        id: item.senderCompanyId,
+        name: item.senderCompanyName,
+      });
+    }
+    return [...seen.values()];
+  })();
+
+  const [pickedSender, setPickedSender] = useState<number | undefined>(senders[0]?.id);
+  const sender = pickedSender ?? senders[0]?.id;
+  const senderName = senders.find((x) => x.id === sender)?.name ?? item.senderCompanyName;
   const onHer = links ?? [];
   // Owner lives on the vessel rather than in the link table, so it has to be folded in or
   // the list would show a ship's brokers and not her owner.
@@ -114,12 +110,31 @@ export default function LinkSender({
         {sender && (
           <Space wrap size={8}>
             <Typography.Link strong onClick={() => onOpenCompany(sender)}>
-              {item.senderCompanyName}
+              {senderName}
             </Typography.Link>
-            <Tag color="blue">sent the email</Tag>
+            <Tag color="blue">
+              sent {senders.length > 1 ? 'one of these emails' : 'the email'}
+            </Tag>
             {existing && (
               <Tag color="green">already on her as {ROLE_WORDS[existing.role] ?? existing.role}</Tag>
             )}
+          </Space>
+        )}
+
+        {/* More than one firm wrote about her before anybody reviewed the question. Each is
+            attachable on its own terms - they may well work her in different capacities. */}
+        {senders.length > 1 && (
+          <Space wrap size={4}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {senders.length} firms sent these emails:
+            </Typography.Text>
+            <Select
+              size="small"
+              value={sender}
+              onChange={setPickedSender}
+              style={{ minWidth: 210 }}
+              options={senders.map((x) => ({ value: x.id, label: x.name ?? `#${x.id}` }))}
+            />
           </Space>
         )}
 
@@ -170,7 +185,7 @@ export default function LinkSender({
              record where every link is in view - not on a card that happens to be open
              because a circular arrived. */
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            Nothing to add — {item.senderCompanyName} is already on her as{' '}
+            Nothing to add — {senderName} is already on her as{' '}
             {ROLE_WORDS[existing.role] ?? existing.role}. Change the capacity on her own record
             if it is wrong.
           </Typography.Text>
@@ -196,11 +211,11 @@ export default function LinkSender({
                 loading={linkSender.isPending}
                 onClick={() =>
                   linkSender.mutate(
-                    { id: item.id, body: { role } },
+                    { id: item.id, body: { role, companyId: sender } },
                     {
                       onSuccess: () =>
                         message.success(
-                          `${item.senderCompanyName} attached as ${chosen?.label.toLowerCase()}.`,
+                          `${senderName} attached as ${chosen?.label.toLowerCase()}.`,
                         ),
                     },
                   )
