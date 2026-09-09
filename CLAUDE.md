@@ -97,7 +97,8 @@ Three things bite here:
   `V18__add_port_geography_and_sea_routes.sql` and
   `V19__seed_sea_routes_and_port_geography.sql`, `V20__add_intake_item_sources.sql` and
   `V21__collapse_duplicate_pending_vessel_items.sql` and
-  `V22__recover_former_names_from_change_log.sql` exist; the next one is V23.
+  `V22__recover_former_names_from_change_log.sql` and
+  `V23__add_cargo_max_ballast_days.sql` exist; the next one is V24.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
@@ -476,7 +477,9 @@ the vessel cannot answer stay in the denominator, which is what makes a document
 outrank an unknown one carrying the same guesses.
 
 A check normally earns all of its weight or none, and `Check.credit` reads as the verdict
-does. **Intake is the exception the field exists for**, and it is the check that stops a
+does. **Two are graded, and they are the two that decide the order of a list.**
+
+The first is intake, and it is the check that stops a
 14,000-tonner being offered for a 4,000-tonne parcel. Size has no objection to that pairing —
 she lifts it easily, which is exactly the problem — but freight is earned by the tonne and
 the ship is paid for whole, so at 29% full she earns 29% of what she costs and no owner takes
@@ -486,12 +489,39 @@ passes and earns the share of the distance she has come, because part cargoes ar
 the ballast speed and the port allowance (`MatchSettings`, the Settings tab) — they are what
 a broker argues with the screen about, and a constant would make that argument a redeploy.
 
+The second is ballast, and it is the one that says a nearer ship is a better ship. It has
+the same floor-and-ideal shape and its own pair of settings: under `idealBallastDays` the leg
+costs the pairing nothing, past `maxBallastDays` the pairing is ruled out, and between them
+she passes and earns the share of the distance she has come. Without it two hulls that both
+make a cancelling date three weeks out scored identically, which is how a list ends up
+leading with a ship on the wrong side of the Med — and when the enquiry says "laycan: please
+advise", which is half of them, it is the only thing that can order the list at all.
+**`maxBallastDays` is a default and `cargoes.max_ballast_days` overrides it per enquiry**,
+because a full cargo worth crossing an ocean for and a part cargo nobody would cross the Med
+for are both an ordinary week. Null there means "use the setting" rather than "no limit"; a
+cargo that really would take any ballast says so with a large number. A FAIL here is a desk
+policy rather than a fact about the hull — the same stretch the intake floor already makes,
+in the same direction.
+
+**Whether she can make it is a separate check from how far she has to come**, because they
+are separate arguments and one weight covering both made the wrong one invisible. The laycan
+check tests the arrival against the cancelling date and does nothing else; where the cargo
+names no cancelling date it **does not apply and drops out of both halves of the score**,
+rather than being paid full marks for meeting a deadline nobody set. Where she is on a list
+with no dates against her at all it is UNKNOWN, which is what a gap in the record is.
+
 Four asymmetries in there are deliberate and easy to "fix" wrongly:
 
 - A cargo needing gear rules out a gearless ship, but a cargo *not* needing gear does not
   rule out a geared one — cranes she does not need cost the charterer nothing.
 - Timing counts from her **last** free day, not her first: a ship open 1/3 September is not
-  sailing on the 1st, and the optimistic end would put ships on lists they cannot make.
+  sailing on the 1st, and the optimistic end would put ships on lists they cannot make. And
+  **never from a day already past.** A position stays LIVE after its dates run out — nothing
+  withdraws it — so a list swept three weeks ago still reports her open 25/28 August, and
+  counting the leg from the 28th printed "Could present 2 September" on a screen being read
+  on the 9th. Worse than the date being silly: it passed her for cancelling dates she cannot
+  reach, because the arrival it compared them against was one nobody could sail to. Whatever
+  the list said, the earliest she can leave is today.
 - Intake is measured against the **most** the cargo could load, never the least. A "25,000
   +/- 10%" enquiry will put 27,500 into a hull that takes it, because the option is the
   charterer's — and where the cargo gives no upper figure at all ("min 3,000 mt") the check
@@ -505,6 +535,12 @@ where both ends name a placed berth (miles, the straits on the way, the convoy w
 total), the trade-area table where either end is only a water — which is how most circulars
 write a position, and what that table was built for. Half a day is as fine as the result is
 quoted, because the speed is an assumption and the laycan is a spread.
+
+The list is sorted best first and **the nearer ship breaks a tie, and only breaks a tie**.
+How far she has to come is already inside the score, so sorting on it ahead of the score
+would put a nearby ship answering half of what the charterer asked above a documented one
+across the water — "closest" is not the question the list is answering. Below the score it
+settles the pairs a hundred points over eight checks cannot, which is a great many of them.
 
 Match reads in both directions, because the desk does. Most of the mail here is somebody
 else's tonnage asking for work — "pls propose suitable cgoes for our below home tonnages"

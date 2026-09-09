@@ -35,10 +35,12 @@ import java.util.OptionalDouble;
  * well-documented hull outrank an unknown one carrying the same guesses.
  *
  * <p><b>A check can be part right.</b> Most cannot — she is grain-fitted or she is not — and
- * for those {@link Check#credit()} is one or nothing and reads as the verdict does. Intake is
- * the exception the field exists for: a ship 92% full and a ship 60% full both pass, and
- * saying so without saying which is better would be the difference between a list sorted by
- * how well the ship fits and a list sorted by how many boxes were ticked.
+ * for those {@link Check#credit()} is one or nothing and reads as the verdict does. Two are
+ * graded, and they are the two that decide the order of a list: intake, where a ship 92% full
+ * and a ship 60% full both pass, and ballast, where a ship two days away and one nine days
+ * away both make the laycan. Saying they pass without saying which is better is the difference
+ * between a list sorted by how well the ship fits and a list sorted by how many boxes were
+ * ticked.
  *
  * <p>Nothing here is stored. A score goes stale the moment a position or a cargo moves, and
  * a table of them would need invalidating on every write in the feature — for a calculation
@@ -107,11 +109,17 @@ public final class MatchScorer {
         }
     }
 
-    // The weights. Size, intake and timing are what a broker asks first and they are worth
-    // more than everything else together; the fittings are real knockouts but a small part of
-    // "how good is this fit" once they have passed.
+    // The weights. Size, intake and where she is are what a broker asks first and they are
+    // worth more than everything else together; the fittings are real knockouts but a small
+    // part of "how good is this fit" once they have passed.
+    //
+    // Position is two of these rather than one. The laycan is the larger half because missing
+    // it ends the conversation, but the ballast carries real weight of its own: it is what
+    // separates two ships that both make the date, and it is the only thing that can order a
+    // list at all when the enquiry says "laycan: please advise".
     private static final int W_SIZE = 30;
-    private static final int W_TIMING = 30;
+    private static final int W_TIMING = 20;
+    private static final int W_BALLAST = 15;
     private static final int W_INTAKE = 20;
     private static final int W_CUBIC = 10;
     private static final int W_DRAFT = 10;
@@ -139,7 +147,8 @@ public final class MatchScorer {
         checks.add(ageCheck(cargo, v, ctx.today()));
 
         Timing timing = timing(cargo, position, ctx);
-        checks.add(timing.check());
+        checks.add(timing.ballastCheck());
+        checks.add(timing.laycanCheck());
 
         checks.removeIf(java.util.Objects::isNull);
 
@@ -372,36 +381,54 @@ public final class MatchScorer {
 
     // ---------------------------------------------------------------- timing
 
-    private record Timing(Check check, Ballast ballast, LocalDate arrival) {
+    /**
+     * @param ballastCheck how far she has to come, graded and capped
+     * @param laycanCheck  whether she can be there by the cancelling date, and only that
+     */
+    private record Timing(Check ballastCheck, Check laycanCheck, Ballast ballast,
+                          LocalDate arrival) {
+
+        static Timing none() {
+            return new Timing(null, null, null, null);
+        }
+
+        static Timing ballastOnly(Check ballast) {
+            return new Timing(ballast, null, null, null);
+        }
     }
 
     /**
-     * Can she be there in time?
+     * Where she is, and whether that works - two checks, because they are two arguments.
      *
-     * <p><b>Two sources, asked in order of what they can tell apart.</b> Where both ends name
-     * a berth this database has placed, the sea network answers in miles and straits: Rostov
-     * and Constanza are both "Black Sea" and two days apart, and this is the difference
-     * between the two. Where either end is only a water — which is most of the mail, because
-     * a circular says "SPOT AT MARMARA" — the trade-area table answers in a broker's round
-     * days, which is what it was built for and is still the right answer to a question asked
-     * that coarsely.
+     * <p><b>The distance and the deadline are not one question.</b> A ship five days away and
+     * one fifteen days away both make a cancelling date three weeks out, and asking only "can
+     * she make it" scores them identically - which is how a list ends up leading with a hull
+     * on the wrong side of the Med. The ballast leg is a cost the owner carries whether or not
+     * there is a laycan to meet, so it is scored on its own and graded. It is also what orders
+     * the list when the cargo says "laycan: please advise", which is half the enquiries in
+     * this mailbox and exactly where nothing else can order it.
      *
-     * <p>Her open date plus that leg is the earliest she can present. If that is after the
-     * cancelling date she cannot make it, which is a fact and rules the pair out.
+     * <p><b>Two sources for the leg, asked in order of what they can tell apart.</b> Where
+     * both ends name a berth this database has placed, the sea network answers in miles and
+     * straits: Rostov and Constanza are both "Black Sea" and two days apart. Where either end
+     * is only a water - which is most of the mail, because a circular says "SPOT AT MARMARA" -
+     * the trade-area table answers in a broker's round days, which is what it was built for
+     * and is still the right answer to a question asked that coarsely.
      *
      * <p>Four different absences are four different answers, and collapsing them would be the
      * easiest way to make this screen untrustworthy:
      *
      * <ul>
-     *   <li>The cargo names no load point — nothing to test, the check does not apply.
-     *   <li>Her position names no area — UNKNOWN. Somebody wrote a position we could not
+     *   <li>The cargo names no load point - nothing to test, neither check applies.
+     *   <li>Her position names no area - UNKNOWN. Somebody wrote a position we could not
      *       resolve, and that is worth seeing rather than guessing past.
-     *   <li>Both known but nothing connects them — FAIL. Neither the network nor the distance
+     *   <li>Both known but nothing connects them - FAIL. Neither the network nor the distance
      *       table joins them, and both are sparse on purpose, so a missing pair means too far
      *       to consider. Saying "unknown" would invite offering a Caspian ship for a Med cargo.
-     *   <li>Reachable, but the cargo gives no laycan — PASS, with the leg named. Half the
-     *       enquiries in this mailbox say "laycan: please advise", and refusing to match them
-     *       would refuse to match the ones most in need of tonnage.
+     *   <li>Reachable, but the cargo gives no cancelling date - the laycan check does not apply
+     *       and drops out of both halves of the score, the same as a cargo stating no draft
+     *       limit. It used to be a PASS worth full marks, which paid a ship the whole of the
+     *       position weight for meeting a deadline nobody had set.
      * </ul>
      */
     private static Timing timing(Cargo c, VesselPosition p, MatchContext ctx) {
@@ -411,47 +438,137 @@ public final class MatchScorer {
         Ballast leg = portLeg(openPort, loadPort, ctx).orElse(null);
         if (leg == null) {
             Long cargoArea = areaOf(loadPort == null ? null : loadPort.getTradeArea(), c.getLoadArea());
-            if (cargoArea == null) return new Timing(null, null, null);
+            if (cargoArea == null) return Timing.none();
 
             Long openArea = areaOf(openPort == null ? null : openPort.getTradeArea(), p.getOpenArea());
             if (openArea == null) {
-                return new Timing(new Check("timing", "Position", Verdict.UNKNOWN, W_TIMING,
-                        "Her position names no area we could resolve"), null, null);
+                return Timing.ballastOnly(new Check("ballast", "Ballast", Verdict.UNKNOWN,
+                        W_BALLAST, "Her position names no area we could resolve"));
             }
 
             OptionalDouble days = ctx.areas().ballastDays(openArea, cargoArea);
             String from = nameOf(ctx.areas(), openArea);
             String to = nameOf(ctx.areas(), cargoArea);
             if (days.isEmpty()) {
-                return new Timing(new Check("timing", "Position", Verdict.FAIL, W_TIMING,
-                        "Nothing on file connects %s and %s - too far to consider".formatted(from, to)),
-                        null, null);
+                return Timing.ballastOnly(new Check("ballast", "Ballast", Verdict.FAIL, W_BALLAST,
+                        "Nothing on file connects %s and %s - too far to consider"
+                                .formatted(from, to)));
             }
             leg = new Ballast(days.getAsDouble(), null, List.of(), false, from, to);
         }
 
-        // Her latest free day, not her earliest: a ship open 1/3 September is not sailing on
-        // the 1st, and using the optimistic end would put ships on lists they cannot make.
-        LocalDate free = p.getOpenTo() != null ? p.getOpenTo() : p.getOpenFrom();
-        LocalDate arrival = free == null ? null : free.plusDays((long) Math.ceil(leg.days()));
-        String description = describe(leg);
-
-        if (c.getLaycanTo() == null || arrival == null) {
-            String why = c.getLaycanTo() == null
-                    ? description + " - cargo gives no cancelling date"
-                    : description + " - her position gives no date";
-            return new Timing(new Check("timing", "Position", Verdict.PASS, W_TIMING, why),
-                    leg, arrival);
+        Check ballastCheck = ballastCheck(leg, c, ctx.tuning());
+        if (ballastCheck.verdict() == Verdict.FAIL) {
+            // Past the limit the pairing is out, and an arrival date under it would be an
+            // answer to a question that stopped being asked. The leg still travels, because
+            // the row behind "show ruled out" is where somebody argues with the limit.
+            return new Timing(ballastCheck, null, leg, null);
         }
 
+        Departure departure = departure(p, ctx.today());
+        LocalDate arrival = departure == null
+                ? null
+                : departure.sails().plusDays((long) Math.ceil(leg.days()));
+
+        if (c.getLaycanTo() == null) {
+            return new Timing(ballastCheck, null, leg, arrival);
+        }
+        if (arrival == null) {
+            // She is on somebody's list with no dates against her at all. That is a gap in the
+            // record rather than an answer, and it is the one thing this check can be asked
+            // and cannot say.
+            return new Timing(ballastCheck,
+                    new Check("timing", "Laycan", Verdict.UNKNOWN, W_TIMING,
+                            "Cancelling %s; her position gives no dates".formatted(c.getLaycanTo())),
+                    leg, null);
+        }
+
+        String sailing = departure.sailsToday()
+                ? "Was open %s, so counted from today".formatted(departure.free())
+                : "Free %s".formatted(departure.free());
         if (arrival.isAfter(c.getLaycanTo())) {
-            return new Timing(new Check("timing", "Position", Verdict.FAIL, W_TIMING,
-                    "%s - arrives %s, cancelling %s".formatted(description, arrival, c.getLaycanTo())),
+            return new Timing(ballastCheck,
+                    new Check("timing", "Laycan", Verdict.FAIL, W_TIMING,
+                            "%s - arrives %s, cancelling %s"
+                                    .formatted(sailing, arrival, c.getLaycanTo())),
                     leg, arrival);
         }
-        return new Timing(new Check("timing", "Position", Verdict.PASS, W_TIMING,
-                "%s - arrives %s, laycan to %s".formatted(description, arrival, c.getLaycanTo())),
+        return new Timing(ballastCheck,
+                new Check("timing", "Laycan", Verdict.PASS, W_TIMING,
+                        "%s - arrives %s, laycan to %s"
+                                .formatted(sailing, arrival, c.getLaycanTo())),
                 leg, arrival);
+    }
+
+    /**
+     * How far she has to come, and whether that is further than this cargo is worth.
+     *
+     * <p>Two figures rather than one, the same shape the intake check uses and for the same
+     * reason. Under the ideal she is near enough that the leg costs nothing worth scoring;
+     * beyond the limit the pairing is ruled out; between them she passes and earns the share
+     * of the distance she has come, because a ship six days away is an argument rather than a
+     * mistake. Linear in between, which is as much shape as an estimate built on an assumed
+     * speed can honestly carry.
+     *
+     * <p><b>The limit is the cargo's own where it states one.</b> A desk-wide figure is the
+     * right default and the wrong answer for the parcel somebody would ballast the Atlantic
+     * for, or the one nobody would cross the Med for - so {@code cargoes.max_ballast_days}
+     * overrides it per enquiry and the detail line says which figure it used, because the
+     * limit is exactly the thing a broker will want to disagree with.
+     *
+     * <p>A FAIL here is a desk policy rather than a fact about the hull, which is the one
+     * place this scorer's usual reading of FAIL is stretched - and it is stretched in the same
+     * direction the intake floor already stretches it. She can physically make the passage;
+     * she is simply not tonnage for this cargo, and a broker should not have to scroll past
+     * her to find one that is.
+     */
+    private static Check ballastCheck(Ballast leg, Cargo c, MatchSettings.Values t) {
+        int limit = c.getMaxBallastDays() != null ? c.getMaxBallastDays() : t.maxBallastDays();
+        int ideal = Math.min(t.idealBallastDays(), limit);
+        String whose = c.getMaxBallastDays() != null
+                ? "this cargo will take"
+                : "this desk will ballast";
+
+        if (leg.days() > limit) {
+            return new Check("ballast", "Ballast", Verdict.FAIL, W_BALLAST,
+                    "%s - past the %d days %s".formatted(describe(leg), limit, whose));
+        }
+        double credit = leg.days() <= ideal || limit <= ideal
+                ? 1
+                : (limit - leg.days()) / (double) (limit - ideal);
+        return new Check("ballast", "Ballast", Verdict.PASS, W_BALLAST, credit, describe(leg));
+    }
+
+    /**
+     * When she can actually start the leg.
+     *
+     * @param free       her last free day as reported, which may be weeks ago
+     * @param sails      the day the ballast is counted from
+     * @param sailsToday {@code free} has passed, so {@code sails} is today instead
+     */
+    private record Departure(LocalDate free, LocalDate sails, boolean sailsToday) {
+    }
+
+    /**
+     * Her last free day, or today if that day has gone.
+     *
+     * <p><b>Her last, not her first:</b> a ship open 1/3 September is not sailing on the 1st,
+     * and the optimistic end would put ships on lists they cannot make.
+     *
+     * <p><b>And never a day already past.</b> Positions are append-only and a LIVE row is not
+     * withdrawn when its dates run out, so a list swept three weeks ago still reports her open
+     * 25/28 August. Counting the ballast from the 28th printed "Could present 2 September" on
+     * a screen being read on the 9th - a date in the past, offered as a promise - and, worse,
+     * passed her for cancelling dates she cannot reach, because the arrival it compared them
+     * against was one nobody could sail to. Whatever the list said, the earliest she can leave
+     * is today.
+     */
+    private static Departure departure(VesselPosition p, LocalDate today) {
+        LocalDate free = p.getOpenTo() != null ? p.getOpenTo() : p.getOpenFrom();
+        if (free == null) return null;
+        return free.isBefore(today)
+                ? new Departure(free, today, true)
+                : new Departure(free, free, false);
     }
 
     /**

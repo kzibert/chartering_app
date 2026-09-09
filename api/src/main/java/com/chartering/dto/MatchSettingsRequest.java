@@ -3,7 +3,7 @@ package com.chartering.dto;
 import lombok.Data;
 
 /**
- * The four numbers the matching rule cannot derive.
+ * The numbers the matching rule cannot derive.
  *
  * <p>Every field is optional so the Settings tab can send one without holding the others,
  * matching how the rest of that screen behaves. The service validates the ranges — and the
@@ -30,4 +30,16 @@ public class MatchSettingsRequest {
 
     /** Percent. At or above this, the intake check scores full marks. */
     private Integer idealUtilisationPercent;
+
+    /** Days. At or under this ballast, the leg costs a pairing nothing. */
+    private Integer idealBallastDays;
+
+    /**
+     * Days. Past this ballast a pairing is ruled out.
+     *
+     * <p>The desk-wide default. A cargo can carry its own figure, which overrides this one
+     * for that enquiry - the parcel worth crossing an ocean for and the one nobody would
+     * cross the Med for are both ordinary, and neither is what this number should be set to.
+     */
+    private Integer maxBallastDays;
 }

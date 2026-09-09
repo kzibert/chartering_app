@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Alert, Col, DatePicker, Form, Input, InputNumber, Modal, Row, Select, Typography } from 'antd';
 import dayjs from 'dayjs';
-import { useCargoMutations } from '../../api/hooks';
+import { useCargoMutations, useMatchSettings } from '../../api/hooks';
 import FormWithReference from '../../components/FormWithReference';
 import CompanySelect from '../../components/CompanySelect';
 import PortSelect from '../../components/PortSelect';
@@ -64,6 +64,10 @@ export default function CargoForm({
   const [form] = Form.useForm();
   const { create, update, remove } = useCargoMutations();
   const [record, setRecord] = useState<CargoResponse | null>(editing ?? null);
+  // Read only to show the desk-wide ballast limit as a placeholder. The cargo stores its own
+  // figure or nothing at all, never a copy of this one - copying it down would freeze today's
+  // setting onto every cargo saved while it was in force.
+  const matchSettings = useMatchSettings();
 
   useEffect(() => {
     if (open) setRecord(editing ?? null);
@@ -295,6 +299,28 @@ export default function CargoForm({
             <Col xs={12} md={4}>
               <Form.Item name="requiresImoFitted" label="IMO fitted">
                 <Select allowClear options={REQUIREMENT_OPTIONS} placeholder="Not said" />
+              </Form.Item>
+            </Col>
+            {/* Not a requirement of the ship at all — it is this desk's answer to how far
+                the cargo is worth reaching for, which is why it sits at the end of the row
+                rather than among the charterer's own terms. Blank is the ordinary state and
+                means the setting decides; the placeholder shows what that currently is, so
+                the box can be left alone by somebody who agrees with it. */}
+            <Col xs={12} md={4}>
+              <Form.Item
+                name="maxBallastDays"
+                label="Ballast limit"
+                tooltip="How far this desk will send a ship for this cargo. Past it the pairing is ruled out, with the figure on the row. Leave it blank to use the Settings figure — which is not the same as no limit, and a cargo worth crossing an ocean for says so with a large number."
+              >
+                <InputNumber
+                  style={{ width: '100%' }}
+                  min={0}
+                  max={120}
+                  addonAfter="d"
+                  placeholder={
+                    matchSettings.data ? String(matchSettings.data.maxBallastDays) : 'setting'
+                  }
+                />
               </Form.Item>
             </Col>
           </Row>

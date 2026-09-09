@@ -93,7 +93,7 @@ public class MatchController {
     // ------------------------------------------------------------------ settings
 
     @GetMapping("/settings")
-    @Operation(summary = "The four numbers the matching rule cannot derive")
+    @Operation(summary = "The numbers the matching rule cannot derive")
     public ResponseEntity<MatchSettingsResponse> settings() {
         return ResponseEntity.ok(toResponse(settings.values()));
     }
@@ -110,7 +110,8 @@ public class MatchController {
             @Valid @RequestBody MatchSettingsRequest req) {
         return ResponseEntity.ok(toResponse(settings.update(
                 req.getBallastSpeedKnots(), req.getPortAllowanceHours(),
-                req.getMinUtilisationPercent(), req.getIdealUtilisationPercent())));
+                req.getMinUtilisationPercent(), req.getIdealUtilisationPercent(),
+                req.getIdealBallastDays(), req.getMaxBallastDays())));
     }
 
     @DeleteMapping("/settings")
@@ -124,7 +125,9 @@ public class MatchController {
         return new MatchSettingsResponse(
                 v.ballastSpeedKnots(), v.portAllowanceHours(),
                 v.minUtilisationPercent(), v.idealUtilisationPercent(),
+                v.idealBallastDays(), v.maxBallastDays(),
                 defaults.ballastSpeedKnots(), defaults.portAllowanceHours(),
-                defaults.minUtilisationPercent(), defaults.idealUtilisationPercent());
+                defaults.minUtilisationPercent(), defaults.idealUtilisationPercent(),
+                defaults.idealBallastDays(), defaults.maxBallastDays());
     }
 }

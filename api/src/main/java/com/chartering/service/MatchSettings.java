@@ -12,7 +12,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * The four numbers the matching rule cannot derive and should not hard-code.
+ * The numbers the matching rule cannot derive and should not hard-code.
  *
  * <p><b>Runtime settings rather than constants, for the reason the parser's knobs are:</b>
  * these are turned while looking at a list of ships and disagreeing with it. "That is not a
@@ -42,6 +42,15 @@ public class MatchSettings {
 
     /** Percent. At or above this, the intake check scores full marks. */
     public static final String IDEAL_UTILISATION = "match.idealUtilisationPercent";
+
+    /** Days. At or under this ballast, the leg costs the pairing nothing. */
+    public static final String IDEAL_BALLAST_DAYS = "match.idealBallastDays";
+
+    /**
+     * Days. Past this ballast the pairing is ruled out - unless the cargo names its own
+     * figure, which overrides this one for that enquiry alone.
+     */
+    public static final String MAX_BALLAST_DAYS = "match.maxBallastDays";
 
     /**
      * Eleven and a half knots.
@@ -88,6 +97,33 @@ public class MatchSettings {
      */
     public static final int DEFAULT_IDEAL_UTILISATION = 85;
 
+    /**
+     * Three days.
+     *
+     * <p>A ship inside three days of the load port is, for this purpose, there: the leg is
+     * inside the noise of a laycan quoted as a spread, and scoring her down for it would be
+     * splitting hairs with an estimate built on an assumed speed. Above it the leg starts
+     * costing the owner real money and the score starts saying so.
+     */
+    public static final int DEFAULT_IDEAL_BALLAST_DAYS = 3;
+
+    /**
+     * Fifteen days.
+     *
+     * <p>The desk-wide answer to "how far would we ballast for this". It is a rule about the
+     * cargo rather than about the ship, which is why {@code cargoes.max_ballast_days} can
+     * override it for one enquiry: a parcel worth crossing an ocean for and one nobody would
+     * cross the Med for are both ordinary, and neither is the default.
+     *
+     * <p>Deliberately generous as a default. The distance tables are sparse on purpose and an
+     * absent pair already answers "too far to consider"; this figure is for the pairings that
+     * are connected and still not worth working, and set too low it would quietly hide the
+     * long ballast somebody was about to fix.
+     */
+    public static final int DEFAULT_MAX_BALLAST_DAYS = 15;
+
+    private static final int MAX_BALLAST_DAYS_ALLOWED = 120;
+
     private static final double MIN_SPEED = 4;
     private static final double MAX_SPEED = 25;
     private static final int MAX_ALLOWANCE_HOURS = 168;
@@ -98,7 +134,9 @@ public class MatchSettings {
     public record Values(double ballastSpeedKnots,
                          int portAllowanceHours,
                          int minUtilisationPercent,
-                         int idealUtilisationPercent) {
+                         int idealUtilisationPercent,
+                         int idealBallastDays,
+                         int maxBallastDays) {
 
         /** Miles into days, at this speed and with the allowance for both ends. */
         public double daysFor(double distanceNm, double delayHours) {
@@ -111,24 +149,29 @@ public class MatchSettings {
     public Values values() {
         Map<String, String> stored = repository
                 .findByKeyIn(List.of(BALLAST_SPEED_KNOTS, PORT_ALLOWANCE_HOURS,
-                        MIN_UTILISATION, IDEAL_UTILISATION))
+                        MIN_UTILISATION, IDEAL_UTILISATION,
+                        IDEAL_BALLAST_DAYS, MAX_BALLAST_DAYS))
                 .stream()
                 .collect(Collectors.toMap(AppSetting::getKey, AppSetting::getValue));
         return new Values(
                 readDouble(stored, BALLAST_SPEED_KNOTS, DEFAULT_BALLAST_SPEED),
                 readInt(stored, PORT_ALLOWANCE_HOURS, DEFAULT_PORT_ALLOWANCE_HOURS),
                 readInt(stored, MIN_UTILISATION, DEFAULT_MIN_UTILISATION),
-                readInt(stored, IDEAL_UTILISATION, DEFAULT_IDEAL_UTILISATION));
+                readInt(stored, IDEAL_UTILISATION, DEFAULT_IDEAL_UTILISATION),
+                readInt(stored, IDEAL_BALLAST_DAYS, DEFAULT_IDEAL_BALLAST_DAYS),
+                readInt(stored, MAX_BALLAST_DAYS, DEFAULT_MAX_BALLAST_DAYS));
     }
 
     public static Values defaults() {
         return new Values(DEFAULT_BALLAST_SPEED, DEFAULT_PORT_ALLOWANCE_HOURS,
-                DEFAULT_MIN_UTILISATION, DEFAULT_IDEAL_UTILISATION);
+                DEFAULT_MIN_UTILISATION, DEFAULT_IDEAL_UTILISATION,
+                DEFAULT_IDEAL_BALLAST_DAYS, DEFAULT_MAX_BALLAST_DAYS);
     }
 
     @Transactional
     public Values update(Double ballastSpeedKnots, Integer portAllowanceHours,
-                         Integer minUtilisation, Integer idealUtilisation) {
+                         Integer minUtilisation, Integer idealUtilisation,
+                         Integer idealBallastDays, Integer maxBallastDays) {
         if (ballastSpeedKnots != null) {
             if (ballastSpeedKnots < MIN_SPEED || ballastSpeedKnots > MAX_SPEED) {
                 throw new IllegalArgumentException(
@@ -165,18 +208,39 @@ public class MatchSettings {
             if (idealUtilisation != null) put(IDEAL_UTILISATION, String.valueOf(idealUtilisation));
         }
 
+        // The ballast pair the same way round, and against what is stored for the same
+        // reason: sending only the limit must not be able to push it under an ideal the
+        // caller never saw.
+        int nearEnough = idealBallastDays != null ? idealBallastDays : current.idealBallastDays();
+        int furthest = maxBallastDays != null ? maxBallastDays : current.maxBallastDays();
+        if (idealBallastDays != null || maxBallastDays != null) {
+            if (nearEnough < 0 || furthest < 0 || furthest > MAX_BALLAST_DAYS_ALLOWED) {
+                throw new IllegalArgumentException(
+                        "A ballast leg is a number of days between 0 and "
+                                + MAX_BALLAST_DAYS_ALLOWED + ".");
+            }
+            if (nearEnough > furthest) {
+                throw new IllegalArgumentException(
+                        "The ideal ballast cannot be longer than the limit - a ship would be "
+                                + "ruled out for a leg shorter than the one that scores full marks.");
+            }
+            if (idealBallastDays != null) put(IDEAL_BALLAST_DAYS, String.valueOf(idealBallastDays));
+            if (maxBallastDays != null) put(MAX_BALLAST_DAYS, String.valueOf(maxBallastDays));
+        }
+
         Values values = values();
         log.info("Match settings updated: {} kn ballast, {}h allowance, ruled out below {}%, "
-                        + "full marks at {}%",
+                        + "full marks at {}%, ballast free to {}d and ruled out past {}d",
                 values.ballastSpeedKnots(), values.portAllowanceHours(),
-                values.minUtilisationPercent(), values.idealUtilisationPercent());
+                values.minUtilisationPercent(), values.idealUtilisationPercent(),
+                values.idealBallastDays(), values.maxBallastDays());
         return values;
     }
 
     @Transactional
     public Values reset() {
         repository.deleteByKeyIn(List.of(BALLAST_SPEED_KNOTS, PORT_ALLOWANCE_HOURS,
-                MIN_UTILISATION, IDEAL_UTILISATION));
+                MIN_UTILISATION, IDEAL_UTILISATION, IDEAL_BALLAST_DAYS, MAX_BALLAST_DAYS));
         return values();
     }
 

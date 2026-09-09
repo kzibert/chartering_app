@@ -452,10 +452,16 @@ export interface MatchSettingsResponse {
   portAllowanceHours: number;
   minUtilisationPercent: number;
   idealUtilisationPercent: number;
+  /** Days. At or under this ballast the leg costs a pairing nothing. */
+  idealBallastDays: number;
+  /** Days. Past this ballast a pairing is ruled out, unless the cargo names its own figure. */
+  maxBallastDays: number;
   defaultBallastSpeedKnots: number;
   defaultPortAllowanceHours: number;
   defaultMinUtilisationPercent: number;
   defaultIdealUtilisationPercent: number;
+  defaultIdealBallastDays: number;
+  defaultMaxBallastDays: number;
 }
 
 export interface MatchSettingsRequest {
@@ -463,6 +469,8 @@ export interface MatchSettingsRequest {
   portAllowanceHours?: number;
   minUtilisationPercent?: number;
   idealUtilisationPercent?: number;
+  idealBallastDays?: number;
+  maxBallastDays?: number;
 }
 
 /** One live cargo and how much tonnage stands against it. */
@@ -615,6 +623,14 @@ export interface CargoResponse {
   requiresGeared?: boolean;
   requiresGrainFitted?: boolean;
   requiresImoFitted?: boolean;
+  /**
+   * Days of ballast this cargo is worth, when it overrides the desk-wide setting.
+   *
+   * Absent means it does not, which is almost every cargo — and absent is "use the setting",
+   * not "no limit". The form shows the setting's figure as a placeholder rather than copying
+   * it down, so changing the setting still moves every cargo that never disagreed with it.
+   */
+  maxBallastDays?: number;
 
   freightIdea?: string;
   commission?: string;
@@ -676,6 +692,8 @@ export interface CargoRequest {
   requiresGeared?: boolean;
   requiresGrainFitted?: boolean;
   requiresImoFitted?: boolean;
+  /** Days. Clearing it puts the cargo back on the desk-wide setting. */
+  maxBallastDays?: number;
 
   freightIdea?: string;
   commission?: string;

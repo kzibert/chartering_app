@@ -57,6 +57,14 @@ public class CargoRequest {
     private Boolean requiresGrainFitted;
     private Boolean requiresImoFitted;
 
+    /**
+     * Days. How far to ballast a ship for this one cargo, overriding the desk-wide setting.
+     *
+     * <p>Null clears the override and puts the cargo back on the setting - it is not "no
+     * limit", which is said with a large number instead.
+     */
+    private Short maxBallastDays;
+
     private String freightIdea;
     private String commission;
     private String terms;

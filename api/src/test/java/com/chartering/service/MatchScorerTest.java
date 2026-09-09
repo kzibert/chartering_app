@@ -144,10 +144,11 @@ class MatchScorerTest {
 
         VesselPosition p = position(vessel(v -> {}));
         p.setOpenArea(bsea);
-        p.setOpenFrom(LocalDate.of(2026, 9, 1));
+        p.setOpenFrom(TODAY.plusDays(6));
 
         MatchScorer.Result r = MatchScorer.score(c, p, ctx());
-        assertThat(check(r, "timing").verdict()).isEqualTo(MatchScorer.Verdict.PASS);
+        assertThat(check(r, "ballast").verdict()).isEqualTo(MatchScorer.Verdict.PASS);
+        assertThat(check(r, "ballast").credit()).isEqualTo(1);
         assertThat(r.ballastDays()).isZero();
     }
 
@@ -155,20 +156,21 @@ class MatchScorerTest {
     void rulesOutAShipThatCannotMakeTheCancellingDate() {
         Cargo c = cargo();
         c.setLoadArea(bsea);
-        c.setLaycanTo(LocalDate.of(2026, 9, 5));
+        c.setLaycanTo(TODAY.plusDays(10));
         Mockito.when(areas.ballastDays(2L, 1L)).thenReturn(OptionalDouble.of(6));
 
         VesselPosition p = position(vessel(v -> {}));
         p.setOpenArea(wmed);
-        p.setOpenFrom(LocalDate.of(2026, 9, 1));
-        p.setOpenTo(LocalDate.of(2026, 9, 2));
+        p.setOpenFrom(TODAY.plusDays(6));
+        p.setOpenTo(TODAY.plusDays(7));
 
         MatchScorer.Result r = MatchScorer.score(c, p, ctx());
 
-        // Free on the 2nd, six days' ballast, so the 8th - three days past cancelling.
+        // Free on the seventh day, six days' ballast, so the thirteenth - three past cancelling.
         assertThat(r.ruledOut()).isTrue();
-        assertThat(r.earliestArrival()).isEqualTo(LocalDate.of(2026, 9, 8));
-        assertThat(check(r, "timing").detail()).contains("arrives 2026-09-08");
+        assertThat(r.earliestArrival()).isEqualTo(TODAY.plusDays(13));
+        assertThat(check(r, "timing").verdict()).isEqualTo(MatchScorer.Verdict.FAIL);
+        assertThat(check(r, "timing").detail()).contains("arrives " + TODAY.plusDays(13));
     }
 
     @Test
@@ -181,11 +183,50 @@ class MatchScorerTest {
 
         VesselPosition p = position(vessel(v -> {}));
         p.setOpenArea(wmed);
-        p.setOpenFrom(LocalDate.of(2026, 9, 1));
-        p.setOpenTo(LocalDate.of(2026, 9, 3));
+        p.setOpenFrom(TODAY.plusDays(6));
+        p.setOpenTo(TODAY.plusDays(8));
 
         assertThat(MatchScorer.score(c, p, ctx()).earliestArrival())
-                .isEqualTo(LocalDate.of(2026, 9, 5));
+                .isEqualTo(TODAY.plusDays(10));
+    }
+
+    @Test
+    void neverPresentsHerOnADayThatHasAlreadyGone() {
+        // The bug this test exists for: a LIVE position is not withdrawn when its dates run
+        // out, so a list swept three weeks ago still reports her open then. Counting the
+        // ballast from a date in the past printed "Could present" in the past.
+        Cargo c = cargo();
+        c.setLoadArea(bsea);
+        Mockito.when(areas.ballastDays(2L, 1L)).thenReturn(OptionalDouble.of(4));
+
+        VesselPosition p = position(vessel(v -> {}));
+        p.setOpenArea(wmed);
+        p.setOpenFrom(TODAY.minusDays(15));
+        p.setOpenTo(TODAY.minusDays(12));
+
+        MatchScorer.Result r = MatchScorer.score(c, p, ctx());
+
+        assertThat(r.earliestArrival()).isEqualTo(TODAY.plusDays(4));
+    }
+
+    @Test
+    void doesNotPassAStaleShipForALaycanSheCannotReach() {
+        // The same bug with teeth. Open twelve days ago, four days' ballast: counted from
+        // her stale date she "arrives" eight days ago and clears a cancelling date two days
+        // out. She cannot sail before today, so she cannot make it at all.
+        Cargo c = cargo();
+        c.setLoadArea(bsea);
+        c.setLaycanTo(TODAY.plusDays(2));
+        Mockito.when(areas.ballastDays(2L, 1L)).thenReturn(OptionalDouble.of(4));
+
+        VesselPosition p = position(vessel(v -> {}));
+        p.setOpenArea(wmed);
+        p.setOpenTo(TODAY.minusDays(12));
+
+        MatchScorer.Result r = MatchScorer.score(c, p, ctx());
+
+        assertThat(r.ruledOut()).isTrue();
+        assertThat(check(r, "timing").detail()).contains("counted from today");
     }
 
     @Test
@@ -200,17 +241,18 @@ class MatchScorerTest {
 
         VesselPosition p = position(vessel(v -> {}));
         p.setOpenArea(caspian);
-        p.setOpenFrom(LocalDate.of(2026, 9, 1));
+        p.setOpenFrom(TODAY.plusDays(6));
 
         MatchScorer.Result r = MatchScorer.score(c, p, ctx());
         assertThat(r.ruledOut()).isTrue();
-        assertThat(check(r, "timing").detail()).contains("too far to consider");
+        assertThat(check(r, "ballast").detail()).contains("too far to consider");
     }
 
     @Test
     void stillMatchesACargoWhoseLaycanIsPleaseAdvise() {
         // Half the enquiries in this mailbox say "laycan: please advise". Refusing to match
-        // them would refuse the ones most in need of tonnage.
+        // them would refuse the ones most in need of tonnage - but the laycan check has
+        // nothing to test either, so it drops out rather than being paid full marks.
         Cargo c = cargo();
         c.setLoadArea(bsea);
         c.setLaycanText("Please advise suitable open tonnage");
@@ -220,11 +262,121 @@ class MatchScorerTest {
 
         VesselPosition p = position(vessel(v -> {}));
         p.setOpenArea(wmed);
-        p.setOpenFrom(LocalDate.of(2026, 9, 1));
+        p.setOpenFrom(TODAY.plusDays(6));
 
         MatchScorer.Result r = MatchScorer.score(c, p, ctx());
         assertThat(r.ruledOut()).isFalse();
-        assertThat(check(r, "timing").detail()).contains("no cancelling date");
+        assertThat(r.checks()).noneMatch(x -> x.code().equals("timing"));
+        assertThat(check(r, "ballast").verdict()).isEqualTo(MatchScorer.Verdict.PASS);
+    }
+
+    @Test
+    void saysUnknownWhenSheIsOnAListWithNoDatesAgainstHer() {
+        // A cancelling date is a real question and her record cannot answer it. Passing her
+        // used to be worth full marks for a deadline nothing had been tested against.
+        Cargo c = cargo();
+        c.setLoadArea(bsea);
+        c.setLaycanTo(TODAY.plusDays(20));
+        Mockito.when(areas.ballastDays(2L, 1L)).thenReturn(OptionalDouble.of(4));
+        Mockito.when(areas.byId(Mockito.anyLong()))
+                .thenReturn(new TradeAreaGraph.Area(1L, "X", "X", null, null, 0, null));
+
+        VesselPosition p = position(vessel(v -> {}));
+        p.setOpenArea(wmed);
+        p.setOpenText("SPOT");
+
+        MatchScorer.Result r = MatchScorer.score(c, p, ctx());
+        assertThat(check(r, "timing").verdict()).isEqualTo(MatchScorer.Verdict.UNKNOWN);
+        assertThat(r.ruledOut()).isFalse();
+        assertThat(r.earliestArrival()).isNull();
+    }
+
+    // --------------------------------------------------------------- ballast
+
+    @Test
+    void scoresANearerShipAboveAFartherOneThatBothMakeTheLaycan() {
+        // The whole point. Both are there in time and the old scorer called them equal,
+        // which is how a list ends up leading with a hull on the wrong side of the Med.
+        Cargo c = cargo();
+        c.setLoadArea(bsea);
+        c.setLaycanTo(TODAY.plusDays(40));
+        Mockito.when(areas.byId(Mockito.anyLong()))
+                .thenReturn(new TradeAreaGraph.Area(1L, "X", "X", null, null, 0, null));
+        Mockito.when(areas.ballastDays(1L, 1L)).thenReturn(OptionalDouble.of(2));
+        Mockito.when(areas.ballastDays(2L, 1L)).thenReturn(OptionalDouble.of(9));
+
+        MatchScorer.Result near = MatchScorer.score(c, openIn(bsea), ctx());
+        MatchScorer.Result far = MatchScorer.score(c, openIn(wmed), ctx());
+
+        assertThat(near.ruledOut()).isFalse();
+        assertThat(far.ruledOut()).isFalse();
+        assertThat(check(far, "ballast").verdict()).isEqualTo(MatchScorer.Verdict.PASS);
+        assertThat(check(near, "ballast").credit()).isGreaterThan(check(far, "ballast").credit());
+        assertThat(near.score()).isGreaterThan(far.score());
+    }
+
+    @Test
+    void ordersTheListEvenWhenTheCargoNamesNoLaycanAtAll() {
+        // "Laycan: please advise" leaves the ballast as the only thing that can order it.
+        Cargo c = cargo();
+        c.setLoadArea(bsea);
+        Mockito.when(areas.byId(Mockito.anyLong()))
+                .thenReturn(new TradeAreaGraph.Area(1L, "X", "X", null, null, 0, null));
+        Mockito.when(areas.ballastDays(1L, 1L)).thenReturn(OptionalDouble.of(1));
+        Mockito.when(areas.ballastDays(2L, 1L)).thenReturn(OptionalDouble.of(11));
+
+        assertThat(MatchScorer.score(c, openIn(bsea), ctx()).score())
+                .isGreaterThan(MatchScorer.score(c, openIn(wmed), ctx()).score());
+    }
+
+    @Test
+    void rulesOutALegLongerThanTheDeskWillBallast() {
+        Cargo c = cargo();
+        c.setLoadArea(bsea);
+        Mockito.when(areas.byId(Mockito.anyLong()))
+                .thenReturn(new TradeAreaGraph.Area(1L, "X", "X", null, null, 0, null));
+        Mockito.when(areas.ballastDays(2L, 1L)).thenReturn(OptionalDouble.of(19));
+
+        MatchScorer.Result r = MatchScorer.score(c, openIn(wmed), ctx());
+
+        assertThat(r.ruledOut()).isTrue();
+        assertThat(check(r, "ballast").detail())
+                .contains("past the 15").contains("this desk will ballast");
+    }
+
+    @Test
+    void letsOneCargoDisagreeWithTheDeskAboutHowFarIsTooFar() {
+        // The per-cargo override. Nine days is inside the desk-wide fifteen and outside the
+        // five this enquiry is worth, and the detail line says whose figure ruled her out.
+        Cargo c = cargo();
+        c.setLoadArea(bsea);
+        c.setMaxBallastDays((short) 5);
+        Mockito.when(areas.byId(Mockito.anyLong()))
+                .thenReturn(new TradeAreaGraph.Area(1L, "X", "X", null, null, 0, null));
+        Mockito.when(areas.ballastDays(2L, 1L)).thenReturn(OptionalDouble.of(9));
+
+        MatchScorer.Result r = MatchScorer.score(c, openIn(wmed), ctx());
+
+        assertThat(r.ruledOut()).isTrue();
+        assertThat(check(r, "ballast").detail())
+                .contains("past the 5").contains("this cargo will take");
+    }
+
+    @Test
+    void keepsAShipTheCargoIsWorthReachingFor() {
+        // And the other way: a cargo worth crossing an ocean for overrides upwards, and a
+        // leg the desk-wide figure would have refused becomes an ordinary pairing.
+        Cargo c = cargo();
+        c.setLoadArea(bsea);
+        c.setMaxBallastDays((short) 30);
+        Mockito.when(areas.byId(Mockito.anyLong()))
+                .thenReturn(new TradeAreaGraph.Area(1L, "X", "X", null, null, 0, null));
+        Mockito.when(areas.ballastDays(2L, 1L)).thenReturn(OptionalDouble.of(19));
+
+        MatchScorer.Result r = MatchScorer.score(c, openIn(wmed), ctx());
+
+        assertThat(r.ruledOut()).isFalse();
+        assertThat(check(r, "ballast").verdict()).isEqualTo(MatchScorer.Verdict.PASS);
     }
 
     // ----------------------------------------------------------------- score
@@ -362,26 +514,26 @@ class MatchScorerTest {
         Cargo c = cargo();
         Port load = port("Odessa", bsea);
         c.setLoadPort(load);
-        c.setLaycanTo(LocalDate.of(2026, 9, 20));
+        c.setLaycanTo(TODAY.plusDays(25));
 
         VesselPosition p = position(vessel(v -> {}));
         Port open = port("Salerno", wmed);
         p.setOpenPort(open);
-        p.setOpenFrom(LocalDate.of(2026, 9, 1));
+        p.setOpenFrom(TODAY.plusDays(6));
         Mockito.when(routes.between(open, load)).thenReturn(java.util.Optional.of(
                 new SeaRouteGraph.Route(1500, 14, List.of("Dardanelles", "Bosphorus north"))));
 
         MatchScorer.Result r = MatchScorer.score(c, p, ctx());
 
         assertThat(check(r, "timing").verdict()).isEqualTo(MatchScorer.Verdict.PASS);
-        assertThat(check(r, "timing").detail())
+        assertThat(check(r, "ballast").detail())
                 .contains("Salerno to Odessa")
                 .contains("1,500 nm")
                 .contains("via Dardanelles, Bosphorus north");
         assertThat(r.ballast().distanceNm()).isEqualTo(1500);
         // 1,500 nm at 11.5 kn is 130.4 hours; the strait waits and the two berths add 26 more.
         assertThat(r.ballast().days()).isEqualTo(6.5);
-        assertThat(r.earliestArrival()).isEqualTo(LocalDate.of(2026, 9, 8));
+        assertThat(r.earliestArrival()).isEqualTo(TODAY.plusDays(13));
     }
 
     @Test
@@ -398,12 +550,12 @@ class MatchScorerTest {
 
         VesselPosition p = position(vessel(v -> {}));
         p.setOpenArea(wmed);
-        p.setOpenFrom(LocalDate.of(2026, 9, 1));
+        p.setOpenFrom(TODAY.plusDays(6));
 
         MatchScorer.Result r = MatchScorer.score(c, p, ctx());
 
-        assertThat(check(r, "timing").verdict()).isEqualTo(MatchScorer.Verdict.PASS);
-        assertThat(check(r, "timing").detail()).contains("about 6 days");
+        assertThat(check(r, "ballast").verdict()).isEqualTo(MatchScorer.Verdict.PASS);
+        assertThat(check(r, "ballast").detail()).contains("about 6 days");
         assertThat(r.ballast().distanceNm()).isNull();
         assertThat(r.ballast().fromPorts()).isFalse();
     }
@@ -430,6 +582,14 @@ class MatchScorerTest {
         v.setName("TEST");
         tweak.accept(v);
         return v;
+    }
+
+    /** A hull free in a week, wherever the caller says. */
+    private VesselPosition openIn(TradeArea where) {
+        VesselPosition p = position(vessel(v -> {}));
+        p.setOpenArea(where);
+        p.setOpenFrom(TODAY.plusDays(7));
+        return p;
     }
 
     private static VesselPosition position(Vessel v) {
