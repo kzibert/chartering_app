@@ -230,11 +230,52 @@ public class VesselService {
     public VesselResponse update(Long id, VesselRequest req) {
         Vessel v = vesselRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Vessel", id));
+        // Read before apply() overwrites it; see rememberRename for why it is kept.
+        String was = v.getName();
         apply(v, req);
+        rememberRename(v, was);
         // With the former names, because the form that sent this update is showing them and
         // takes what comes back as the record's new state. Returning the bare vessel would
         // empty that list on screen after every save.
         return mapper.toVesselResponse(vesselRepository.save(v), exNames(id));
+    }
+
+    /**
+     * Keep the name she was saved under, when a save changes it.
+     *
+     * <p><b>Because the IMO is the only identifier that never moves, and a circular leaves it
+     * out.</b> Owners rename ships constantly; a position list arriving next week may use the
+     * old name for a hull this database has since renamed, and without the former name nothing
+     * matches — she is entered a second time and the fleet quietly doubles. That is the failure
+     * {@code vessel_ex_names} exists to prevent, and it could not prevent it for a rename done
+     * on her own edit form, because the old name was simply overwritten and gone.
+     *
+     * <p><b>This is not the thing the ex-names endpoints were kept separate from.</b> Those are
+     * separate so that a whole-record PUT cannot <em>delete</em> a ship's history — a form
+     * opened five minutes ago submitting a stale list of former names while somebody else
+     * corrected her deadweight. This only ever adds, and it adds the one row the save itself is
+     * evidence for, so there is nothing for a stale form to destroy.
+     *
+     * <p>A changed name is not always a rename: most edits to it are a typo being fixed. The
+     * case folding is what separates the two as far as anything here can — "NORD STAR" to "Nord
+     * Star" is the same ship spelled differently and records nothing, while a different name
+     * records a row. A corrected typo does leave a former name that was never a name, which is
+     * why {@link VesselExName#SOURCE_RENAME} says where the row came from and the Edit form can
+     * delete it.
+     */
+    private void rememberRename(Vessel v, String was) {
+        if (was == null || was.isBlank()) return;
+        String previous = was.trim();
+        String now = v.getName() == null ? null : v.getName().trim();
+        if (now == null || now.isEmpty() || previous.equalsIgnoreCase(now)) return;
+        // Several renames back to a name she already lists is the normal case, not an error —
+        // the same reason addExName checks rather than leaning on the unique index.
+        if (exNameRepository.existsByVesselIdAndNameIgnoreCase(v.getId(), previous)) return;
+        VesselExName ex = new VesselExName();
+        ex.setVessel(v);
+        ex.setName(previous);
+        ex.setSource(VesselExName.SOURCE_RENAME);
+        exNameRepository.save(ex);
     }
 
     @Transactional
