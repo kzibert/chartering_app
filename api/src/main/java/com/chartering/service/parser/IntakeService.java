@@ -517,7 +517,7 @@ public class IntakeService {
             // The name the email used is a name this hull answers to, and it is the name a
             // later list will use again. Filing it now is what stops the next circular
             // raising the identical item - which is the whole reason ex-names exist.
-            rememberExName(vessel, payload.vessel().name());
+            rememberExName(vessel, payload.vessel().name(), vessel.getName());
             VesselFieldDiff.Result diff = VesselFieldDiff.compare(vessel, payload.vessel());
             summary = "Linked to " + vessel.getName()
                     + (diff.hasConflicts()
@@ -553,7 +553,10 @@ public class IntakeService {
         // A rename is the one accepted field that has a second effect: the name she is
         // losing is the name this database has been finding her under, and dropping it would
         // make every older position list unsearchable for her.
-        if (chosen.contains("name")) rememberExName(vessel, vessel.getName());
+        if (chosen.contains("name")) {
+            rememberExName(vessel, vessel.getName(),
+                    payload.vessel() == null ? null : payload.vessel().name());
+        }
 
         List<String> written = VesselFieldDiff.applySelected(vessel, payload.vessel(), chosen);
         if (written.isEmpty()) return "Nothing changed — the record already reads that way.";
@@ -742,10 +745,29 @@ public class IntakeService {
         return vessels.save(vessel);
     }
 
-    private void rememberExName(Vessel vessel, String name) {
+    /**
+     * File a name she used to carry.
+     *
+     * <p><b>The name she is keeping has to be passed in, and that is the whole of the bug this
+     * signature exists to prevent.</b> There are two callers and they mean opposite things by
+     * "her name". Linking a position to a hull on file records the name the <em>email</em>
+     * used, and the thing not worth recording is a name identical to the one she already has.
+     * Accepting a rename records the name she <em>is losing</em>, and the thing not worth
+     * recording is a name identical to the one she is gaining. The guard used to read
+     * {@code vessel.getName()} either way, so the rename caller — which passes exactly that —
+     * compared the value against itself and returned every single time. FWN SOLIDE became
+     * LADY VIOLETTA with the rename in the change log and no former name anywhere, and the
+     * next circular calling her FWN SOLIDE would have found nothing.
+     *
+     * @param name   the name to file
+     * @param keeping the name she will carry afterwards; filing is skipped when they are the
+     *                same, because a former name identical to the current one answers nothing
+     */
+    private void rememberExName(Vessel vessel, String name, String keeping) {
         String trimmed = Extraction.text(name);
         if (trimmed == null) return;
-        if (trimmed.equalsIgnoreCase(vessel.getName())) return;
+        String stays = Extraction.text(keeping);
+        if (stays != null && trimmed.equalsIgnoreCase(stays)) return;
         if (exNames.existsByVesselIdAndNameIgnoreCase(vessel.getId(), trimmed)) return;
         VesselExName ex = new VesselExName();
         ex.setVessel(vessel);

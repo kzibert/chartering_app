@@ -422,6 +422,95 @@ class IntakeServiceTest {
         assertThat(newVessel.getKind()).isEqualTo(IntakeItemKind.NEW_VESSEL);
     }
 
+    /**
+     * Accepting a rename has to keep the name she is losing. It is the name this database has
+     * been finding her under, and a circular arriving next week still uses it — FWN SOLIDE
+     * became LADY VIOLETTA with the rename in the change log and no former name anywhere,
+     * because the guard compared the name being filed against itself.
+     */
+    @Test
+    void filesTheNameSheIsLosingWhenARenameIsAccepted() {
+        Vessel solide = new Vessel();
+        solide.setId(2692L);
+        solide.setName("FWN SOLIDE");
+        when(vessels.findById(2692L)).thenReturn(java.util.Optional.of(solide));
+
+        IntakeItem item = new IntakeItem();
+        item.setId(165L);
+        item.setKind(IntakeItemKind.VESSEL_FIELDS);
+        item.setStatus(IntakeItemStatus.PENDING);
+        item.setParsedEmail(parsed);
+        item.setPayload("""
+                {"vesselId":2692,"vesselName":"FWN SOLIDE","matchedBy":"LOOKUP_IMO",
+                 "vessel":{"name":"LADY VIOLETTA"},
+                 "diffs":[{"field":"name","label":"Name","current":"FWN SOLIDE",
+                           "incoming":"LADY VIOLETTA"}],
+                 "filled":[]}""");
+        when(items.findWithEmailById(165L)).thenReturn(java.util.Optional.of(item));
+
+        service.resolve(165L, IntakeService.Action.ACCEPT, List.of("name"), null, null, "me");
+
+        ArgumentCaptor<VesselExName> filed = ArgumentCaptor.forClass(VesselExName.class);
+        verify(exNames).save(filed.capture());
+        assertThat(filed.getValue().getName()).isEqualTo("FWN SOLIDE");
+        assertThat(solide.getName()).isEqualTo("LADY VIOLETTA");
+    }
+
+    /** Accepting every field is what "Accept all" sends as an empty list, and it renames too. */
+    @Test
+    void filesTheNameSheIsLosingWhenEveryFieldIsAccepted() {
+        Vessel solide = new Vessel();
+        solide.setId(2692L);
+        solide.setName("FWN SOLIDE");
+        when(vessels.findById(2692L)).thenReturn(java.util.Optional.of(solide));
+
+        IntakeItem item = new IntakeItem();
+        item.setId(165L);
+        item.setKind(IntakeItemKind.VESSEL_FIELDS);
+        item.setStatus(IntakeItemStatus.PENDING);
+        item.setParsedEmail(parsed);
+        item.setPayload("""
+                {"vesselId":2692,"vesselName":"FWN SOLIDE","matchedBy":"LOOKUP_IMO",
+                 "vessel":{"name":"LADY VIOLETTA"},
+                 "diffs":[{"field":"name","label":"Name","current":"FWN SOLIDE",
+                           "incoming":"LADY VIOLETTA"}],
+                 "filled":[]}""");
+        when(items.findWithEmailById(165L)).thenReturn(java.util.Optional.of(item));
+
+        service.resolve(165L, IntakeService.Action.ACCEPT, List.of(), null, null, "me");
+
+        verify(exNames).save(any());
+    }
+
+    /**
+     * A spelling correction is not a rename. Filing the old spelling would leave a former name
+     * nobody ever called her, and the name search would match it for ever.
+     */
+    @Test
+    void doesNotFileAFormerNameWhenOnlyTheSpellingChanged() {
+        Vessel hull = new Vessel();
+        hull.setId(1424L);
+        hull.setName("HACI HILMI II");
+        when(vessels.findById(1424L)).thenReturn(java.util.Optional.of(hull));
+
+        IntakeItem item = new IntakeItem();
+        item.setId(96L);
+        item.setKind(IntakeItemKind.VESSEL_FIELDS);
+        item.setStatus(IntakeItemStatus.PENDING);
+        item.setParsedEmail(parsed);
+        item.setPayload("""
+                {"vesselId":1424,"vesselName":"HACI HILMI II","matchedBy":"LOOKUP_IMO",
+                 "vessel":{"name":"haci hilmi ii"},
+                 "diffs":[{"field":"name","label":"Name","current":"HACI HILMI II",
+                           "incoming":"haci hilmi ii"}],
+                 "filled":[]}""");
+        when(items.findWithEmailById(96L)).thenReturn(java.util.Optional.of(item));
+
+        service.resolve(96L, IntakeService.Action.ACCEPT, List.of("name"), null, null, "me");
+
+        verify(exNames, never()).save(any());
+    }
+
     @Test
     void ignoresAVesselTheModelReturnedWithNoName() {
         IntakeService.ApplyOutcome outcome = service.apply(parsed,

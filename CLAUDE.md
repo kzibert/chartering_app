@@ -96,7 +96,8 @@ Three things bite here:
   `V16__add_email_parsing.sql`, `V17__add_vessel_lookups.sql`,
   `V18__add_port_geography_and_sea_routes.sql` and
   `V19__seed_sea_routes_and_port_geography.sql`, `V20__add_intake_item_sources.sql` and
-  `V21__collapse_duplicate_pending_vessel_items.sql` exist; the next one is V22.
+  `V21__collapse_duplicate_pending_vessel_items.sql` and
+  `V22__recover_former_names_from_change_log.sql` exist; the next one is V23.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
