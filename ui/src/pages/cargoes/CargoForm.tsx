@@ -275,8 +275,12 @@ export default function CargoForm({
               </Form.Item>
             </Col>
             <Col xs={12} md={4}>
-              <Form.Item name="maxDraft" label="Max draft" tooltip="Deepest draft the berths can take.">
-                <InputNumber style={{ width: '100%' }} min={0} step={0.1} />
+              <Form.Item
+                name="maxDraft"
+                label="Max draft"
+                tooltip="Deepest draft the berths can take. A hull that draws more is ruled out of Match — it cannot load there — and the row says which two figures decided it."
+              >
+                <InputNumber style={{ width: '100%' }} min={0} step={0.1} addonAfter="m" />
               </Form.Item>
             </Col>
             <Col xs={12} md={4}>

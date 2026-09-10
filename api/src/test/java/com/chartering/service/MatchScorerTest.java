@@ -134,6 +134,53 @@ class MatchScorerTest {
         assertThat(r.ruledOut()).isFalse();
     }
 
+    // ----------------------------------------------------------------- draft
+
+    @Test
+    void rulesOutAShipThatDrawsMoreThanTheBerthTakes() {
+        // The cargo states the deepest draft its berths can take, and a hull deeper than
+        // that cannot load there. This is a fact we hold about her, so it is a FAIL and the
+        // pairing is dropped from the list rather than merely scored down.
+        Cargo c = cargo();
+        c.setMaxDraft(new BigDecimal("7.0"));
+
+        MatchScorer.Result r = score(c, position(vessel(v ->
+                v.setMaximumDraft(new BigDecimal("7.9")))));
+
+        assertThat(r.ruledOut()).isTrue();
+        assertThat(check(r, "draft").verdict()).isEqualTo(MatchScorer.Verdict.FAIL);
+        assertThat(check(r, "draft").detail()).isEqualTo("Draws 7.9m, berth takes 7.0m");
+    }
+
+    @Test
+    void keepsAShipThatFitsTheBerth() {
+        Cargo c = cargo();
+        c.setMaxDraft(new BigDecimal("7.0"));
+
+        MatchScorer.Result r = score(c, position(vessel(v ->
+                v.setMaximumDraft(new BigDecimal("6.2")))));
+
+        assertThat(r.ruledOut()).isFalse();
+        assertThat(check(r, "draft").verdict()).isEqualTo(MatchScorer.Verdict.PASS);
+    }
+
+    @Test
+    void keepsAShipWhoseDraftIsSimplyNotRecorded() {
+        // Why a deep-looking ship can still appear under a draft-limited cargo: her own
+        // figure is missing, and "not on file" is not "does not fit". She costs the pairing
+        // the draft weight and stays on the list with the gap showing, which is what marks
+        // her as a hull worth going and finding the figure for.
+        Cargo c = cargo();
+        c.setMaxDraft(new BigDecimal("7.0"));
+
+        MatchScorer.Result r = score(c, position(vessel(v ->
+                v.setMaximumDraft(BigDecimal.ZERO))));
+
+        assertThat(r.ruledOut()).isFalse();
+        assertThat(check(r, "draft").verdict()).isEqualTo(MatchScorer.Verdict.UNKNOWN);
+        assertThat(r.unknownCount()).isEqualTo(1);
+    }
+
     // -------------------------------------------------------------- position
 
     @Test
