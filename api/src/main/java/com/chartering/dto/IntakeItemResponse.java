@@ -51,6 +51,17 @@ public record IntakeItemResponse(
          */
         VesselLookupResponse lookup,
         /**
+         * The shortlist a {@code NEW_VESSEL} item offers, with each hull's record attached —
+         * detail call only, and null on every other kind.
+         *
+         * <p>The payload carries the same shortlist as bare names and reasons, and still
+         * does: it is the record of what the search found. This is that list joined to the
+         * fleet as it stands now, so the drawer can print who owns her and what she is
+         * without a request per row. The queue row needs neither — it prints a count — which
+         * is why this rides on the detail call, the rule {@code lookup} above it follows.
+         */
+        List<IntakeSuggestionResponse> suggestions,
+        /**
          * Every email that raised this item, newest first — detail call only.
          *
          * <p>A question about a hull is asked by however many emails mention her, and they

@@ -28,7 +28,12 @@ import LinkSender from './LinkSender';
 import CreateHerModal from './CreateHerModal';
 import { ROLE_WORDS } from './capacities';
 import { kindMeta } from './labels';
-import type { FieldDiff, IntakeAction, IntakeItemResponse } from '../../api/intake';
+import type {
+  FieldDiff,
+  IntakeAction,
+  IntakeItemResponse,
+  IntakeSuggestion,
+} from '../../api/intake';
 import type { VesselResponse } from '../../api/types';
 
 interface Props {
@@ -69,7 +74,9 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
   // And her own record, for the same reason. The block above the table shows the particulars
   // that are in dispute; deciding whether this is even the right ship often needs the rest of
   // them - her positions, her former names, who is on her - and that is a whole screen.
-  const [vesselOpen, setVesselOpen] = useState(false);
+  // The id rather than a flag, because a NEW_VESSEL item has no one ship: its shortlist offers
+  // several, and the question a reader has about each of them is the same one.
+  const [vesselOpen, setVesselOpen] = useState<number>();
   // The web card's ticks, held here so one button can answer both halves of the screen.
   // Still two writes with two change sets - see FromTheWeb for why that must not change.
   const [webChosen, setWebChosen] = useState<string[]>([]);
@@ -86,7 +93,7 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
 
   useEffect(() => {
     setLinkTo(undefined);
-    setVesselOpen(false);
+    setVesselOpen(undefined);
   }, [itemId]);
 
   if (!itemId) return null;
@@ -267,12 +274,18 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
               onChange={setChosen}
               editable={pending}
               onOpenCompany={setCompanyId}
-              onOpenVessel={() => setVesselOpen(true)}
+              onOpenVessel={() => setVesselOpen(item.payload?.vesselId)}
               webChosen={webChosen}
               onWebChange={setWebChosen}
             />
           ) : item.kind === 'NEW_VESSEL' ? (
-            <NewVesselBody item={item} linkTo={linkTo} onLink={setLinkTo} editable={pending} />
+            <NewVesselBody
+              item={item}
+              linkTo={linkTo}
+              onLink={setLinkTo}
+              onOpenVessel={setVesselOpen}
+              editable={pending}
+            />
           ) : (
             <CargoMergeBody item={item} />
           )}
@@ -300,8 +313,8 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
               the answer would be two half-finished jobs at once. Omitting onEdit hides the
               Edit button rather than leaving a dead one. */}
           <VesselDrawer
-            vesselId={vesselOpen ? item.payload?.vesselId : undefined}
-            onClose={() => setVesselOpen(false)}
+            vesselId={vesselOpen}
+            onClose={() => setVesselOpen(undefined)}
             onEdit={() => undefined}
           />
           {/* The capacity question, asked while creating her rather than left to a card the
@@ -513,6 +526,23 @@ const MATCH_META: Record<string, { label: string; colour: string; hint: string }
 };
 
 /**
+ * One particular, as every card on this screen prints it.
+ *
+ * Shared rather than repeated because two cards here show a hull's figures — the matched
+ * record and each hull on a shortlist — and they are read against each other. A dash in one
+ * and a blank in the other for the same missing draft would look like a difference between
+ * the ships rather than between two bits of rendering.
+ *
+ * A boolean is spelled out: `false` printed as "false" beside "6,977 t" reads as a figure
+ * nobody recognises, and these columns are three-valued anyway — null is "not on file".
+ */
+function particular(value: unknown, unit?: string): string {
+  if (value === null || value === undefined || value === '') return '—';
+  const shown = typeof value === 'boolean' ? (value ? 'yes' : 'no') : String(value);
+  return unit ? `${shown} ${unit}` : shown;
+}
+
+/**
  * The ship as she stands, before anything is written to her.
  *
  * <b>Why this is here at all.</b> The table underneath lists only what disagrees, which is
@@ -543,10 +573,7 @@ function OnFile({
   const row = (field: string, label: string, value: unknown, unit?: string) => ({
     key: field,
     label,
-    value:
-      value === null || value === undefined || value === ''
-        ? '—'
-        : `${typeof value === 'boolean' ? (value ? 'yes' : 'no') : value}${unit ? ` ${unit}` : ''}`,
+    value: particular(value, unit),
     disputed: disputed.has(field),
   });
 
@@ -663,15 +690,22 @@ function NewVesselBody({
   item,
   linkTo,
   onLink,
+  onOpenVessel,
   editable,
 }: {
   item: IntakeItemResponse;
   linkTo?: number;
   onLink: (id?: number) => void;
+  /** One suggested hull's whole record, over this drawer. */
+  onOpenVessel: (id?: number) => void;
   editable: boolean;
 }) {
   const v = (item.payload?.vessel ?? {}) as Record<string, unknown>;
-  const suggestions = item.payload?.suggestions ?? [];
+  // The hydrated shortlist where the server sent one, the payload's bare names where it did
+  // not. The fallback is not dead code: an item raised before the payload was joined to the
+  // fleet still reviews, with its name, its IMO and the reason it was offered — which is the
+  // list this screen showed for its first year.
+  const suggestions = item.suggestions ?? item.payload?.suggestions ?? [];
   const show = (key: string) => {
     const value = v[key];
     return value === null || value === undefined || value === '' ? '—' : String(value);
@@ -707,25 +741,25 @@ function NewVesselBody({
 
       {suggestions.length > 0 && (
         <>
-          <Typography.Title level={5} style={{ marginBottom: 8 }}>
+          <Typography.Title level={5} style={{ marginBottom: 4 }}>
             Could she be one of these?
           </Typography.Title>
-          <Space direction="vertical" size={4} style={{ width: '100%', marginBottom: 12 }}>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
+            Each name opens her record — her positions, her former names and who is on her,
+            which is usually what settles it. The button points this email&rsquo;s position at
+            her instead of creating a ship.
+          </Typography.Paragraph>
+          <Space direction="vertical" size={8} style={{ width: '100%', marginBottom: 12 }}>
             {suggestions.map((s) => (
-              <Space key={s.vesselId} wrap>
-                <Button
-                  size="small"
-                  type={linkTo === s.vesselId ? 'primary' : 'default'}
-                  disabled={!editable}
-                  onClick={() => onLink(linkTo === s.vesselId ? undefined : s.vesselId)}
-                >
-                  {s.name}
-                </Button>
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  {s.imoNumber ? `IMO ${s.imoNumber} · ` : ''}
-                  {s.reason}
-                </Typography.Text>
-              </Space>
+              <SuggestionCard
+                key={s.vesselId}
+                suggestion={s}
+                selected={linkTo === s.vesselId}
+                editable={editable}
+                hydrated={item.suggestions != null}
+                onToggle={() => onLink(linkTo === s.vesselId ? undefined : s.vesselId)}
+                onOpen={() => onOpenVessel(s.vesselId)}
+              />
             ))}
           </Space>
         </>
@@ -742,6 +776,133 @@ function NewVesselBody({
         </>
       )}
     </>
+  );
+}
+
+/**
+ * One hull on the shortlist, with enough of her record to answer "is that her".
+ *
+ * <b>The old row was a name and a reason, and a name is not something a broker can decide
+ * on.</b> The reason said "DWT 6,977 against 6,950, built 2003" — the two facts the scorer
+ * happened to weigh — and left out the ones a person actually recognises a ship by: who owns
+ * her, what she is, what she used to be called. Deciding meant leaving the review for the
+ * vessel screen and coming back, five times over, which is how a shortlist ends up being
+ * answered by creating the ship instead.
+ *
+ * So the card carries her particulars, her owner and her former names, and her name opens the
+ * whole record over this drawer — the same move the matched-vessel block above makes, and for
+ * the same reason: her positions and who works her are a screen, not three numbers.
+ *
+ * <b>Reading and choosing are two separate controls, deliberately.</b> The name reads; the
+ * button writes, in the sense that it is what the footer will act on. One control doing both
+ * would mean a click meant to check a ship silently aimed this email’s position at her.
+ */
+function SuggestionCard({
+  suggestion,
+  selected,
+  editable,
+  hydrated,
+  onToggle,
+  onOpen,
+}: {
+  suggestion: IntakeSuggestion;
+  selected: boolean;
+  editable: boolean;
+  /**
+   * Whether the server joined this shortlist to the fleet. False for an item raised by an
+   * older build, where a missing record means "not sent" rather than "not there" — and saying
+   * the wrong one of those would either invent a deleted ship or offer a link that 404s.
+   */
+  hydrated: boolean;
+  onToggle: () => void;
+  onOpen: () => void;
+}) {
+  const v = suggestion.vessel;
+  const gone = hydrated && v == null;
+  // What a list says when it quotes her gear: the words, where a list has given them, and
+  // otherwise the bare fact. "Gear: yes" answers a question nobody asked in those terms.
+  const gear =
+    v?.gearDescription ?? (v?.geared == null ? undefined : v.geared ? 'geared' : 'gearless');
+
+  const rows = v
+    ? [
+        { key: 'dwt', label: 'DWT', children: particular(v.deadweightTonnage, 't') },
+        { key: 'dwcc', label: 'DWCC', children: particular(v.deadweightCargoCapacity, 't') },
+        { key: 'draft', label: 'Draft', children: particular(v.maximumDraft, 'm') },
+        { key: 'built', label: 'Built', children: particular(v.yearBuilt) },
+        { key: 'type', label: 'Type', children: particular(v.vesselType) },
+        { key: 'flag', label: 'Flag', children: particular(v.flag) },
+        { key: 'gear', label: 'Gear', children: particular(gear) },
+      ]
+    : [];
+
+  return (
+    <Card size="small" style={{ width: '100%' }}>
+      <Space direction="vertical" size={6} style={{ width: '100%' }}>
+        {/* A plain flex row rather than an antd Space: a Space is sized by its own items,
+            so justifying against the card's width inside one is the same mistake index.css
+            warns about for control widths. */}
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 8,
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
+          <Space wrap size={8} align="center">
+            <Typography.Link strong style={{ fontSize: 15 }} onClick={onOpen}>
+              {v?.name ?? suggestion.name ?? '—'}
+            </Typography.Link>
+            {(v?.imoNumber ?? suggestion.imoNumber) ? (
+              <Tag>IMO {v?.imoNumber ?? suggestion.imoNumber}</Tag>
+            ) : (
+              <Tooltip title="No IMO on this record either, so nothing but her particulars can confirm this is the same hull.">
+                <Tag color="default">no IMO on file</Tag>
+              </Tooltip>
+            )}
+            {gone && (
+              <Tooltip title="She was on file when this email was read and has been deleted since. Nothing can be linked to her; the row is kept so the shortlist still explains itself.">
+                <Tag color="red">no longer on file</Tag>
+              </Tooltip>
+            )}
+          </Space>
+          <Button
+            size="small"
+            type={selected ? 'primary' : 'default'}
+            disabled={!editable || gone}
+            onClick={onToggle}
+          >
+            {selected ? 'Linking to her' : 'Link to her'}
+          </Button>
+        </div>
+
+        {/* Who owns her, which is the fact a broker recognises a ship by before any figure. */}
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          Owner: {v?.ownerName ?? '—'}
+        </Typography.Text>
+
+        {/* The whole reason this queue exists: a hull already on file under the name she
+            carried three owners ago. Printed rather than left to the record screen, because
+            it is the evidence for the case the shortlist was built to catch. */}
+        {v?.exNames && v.exNames.length > 0 && (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Formerly: {v.exNames.map((e) => e.name).join(', ')}
+          </Typography.Text>
+        )}
+
+        {rows.length > 0 && (
+          <Descriptions size="small" column={{ xs: 1, sm: 2, md: 3 }} items={rows} />
+        )}
+
+        {suggestion.reason && (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Offered because: {suggestion.reason}
+          </Typography.Text>
+        )}
+      </Space>
+    </Card>
   );
 }
 

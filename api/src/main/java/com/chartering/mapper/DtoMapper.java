@@ -362,16 +362,20 @@ public class DtoMapper {
      */
     public IntakeItemResponse toIntakeItemResponse(IntakeItem item, JsonNode payload,
                                                    String summary, VesselLookupResponse lookup) {
-        return toIntakeItemResponse(item, payload, summary, lookup, null);
+        return toIntakeItemResponse(item, payload, summary, lookup, null, null);
     }
 
     /**
-     * @param sources every arrival behind the item, newest first. Null on the list, where the
-     *                row prints one line and a join per row would buy nothing.
+     * @param sources     every arrival behind the item, newest first. Null on the list, where
+     *                    the row prints one line and a join per row would buy nothing.
+     * @param suggestions the {@code NEW_VESSEL} shortlist with each hull's record attached,
+     *                    assembled by the caller because it is a query rather than a mapping.
+     *                    Null on the list and on the other two kinds
      */
     public IntakeItemResponse toIntakeItemResponse(IntakeItem item, JsonNode payload,
                                                    String summary, VesselLookupResponse lookup,
-                                                   List<IntakeItemSource> sources) {
+                                                   List<IntakeItemSource> sources,
+                                                   List<IntakeSuggestionResponse> suggestions) {
         MailMessage m = item.getParsedEmail() != null
                 ? item.getParsedEmail().getMailMessage() : null;
         // The sender's company is read off the message's own link, which the mail sync
@@ -391,6 +395,7 @@ public class DtoMapper {
                 m != null ? m.getReceivedAt() : null,
                 payload,
                 lookup,
+                suggestions,
                 sources == null ? null : toIntakeItemSources(sources),
                 item.getCreatedAt(), item.getResolvedAt(), item.getResolvedBy(),
                 item.getResolutionNote());
