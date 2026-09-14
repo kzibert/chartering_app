@@ -1,5 +1,10 @@
 import { client, cleanParams } from './client';
-import type { IntakeItemSourceResponse, PageResponse, VesselLookupResponse } from './types';
+import type {
+  IntakeItemSourceResponse,
+  PageResponse,
+  VesselLookupResponse,
+  VesselResponse,
+} from './types';
 
 // The lookup shapes live in types.ts, because the vessel's own record shows the same card.
 // Re-exported here so the Intake screens keep importing them from the module they read as
@@ -56,6 +61,18 @@ export interface VesselSuggestion {
 }
 
 /**
+ * The same shortlist with each hull's record attached, as the detail call sends it.
+ *
+ * The identity half comes out of the payload — it is a record of the search that ran, and the
+ * figures the comparison weighed on the day it weighed them. `vessel` is read from the fleet
+ * now, so a deadweight filled in while the item waited is the one on screen. Absent where she
+ * has been deleted since, which leaves the row explaining itself rather than vanishing.
+ */
+export interface IntakeSuggestion extends VesselSuggestion {
+  vessel?: VesselResponse;
+}
+
+/**
  * The kind-specific half of an item.
  *
  * One optional-everything interface rather than a discriminated union: the payload is stored
@@ -105,6 +122,14 @@ export interface IntakeItemResponse {
   payload?: IntakePayload;
   /** What an outside source found. Detail call only — the list never carries it. */
   lookup?: VesselLookupResponse;
+  /**
+   * The NEW_VESSEL shortlist with each hull's record attached. Detail call only.
+   *
+   * `payload.suggestions` carries the same hulls as bare names and reasons and is what an
+   * item raised by an older build has; this is that list joined to the fleet. Read this and
+   * fall back to the payload — the fallback is what keeps such an item reviewable.
+   */
+  suggestions?: IntakeSuggestion[];
   /**
    * Every email that raised this item, newest first. Detail call only.
    *

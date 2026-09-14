@@ -259,12 +259,26 @@ public class MatchService {
      *
      * <p>A ship already declined for this cargo is not a suggestion, and it would otherwise
      * sit at the top of the list every morning being scrolled past.
+     *
+     * <p><b>The nearer ship breaks a tie, and only breaks a tie.</b> How far she has to come
+     * is already inside the score - the ballast check is graded, so a hull two days off the
+     * berth outranks one nine days off with everything else equal, which is the ordering this
+     * screen most obviously wanted and did not have. Sorting on distance ahead of the score
+     * would be the overcorrection: it would put a nearby ship that answers half of what the
+     * charterer asked above a documented one across the water, and "closest" is not the
+     * question the list is answering. Below the score it settles the pairs the score cannot,
+     * which at a hundred points spread over eight checks is a great many of them.
+     *
+     * <p>A pairing with no leg at all sorts last of its score. It is not near - it is a
+     * position nobody could resolve, and the unknown behind it is the next tiebreak anyway.
      */
     private static Comparator<MatchResponse> bestFirst() {
         return Comparator
                 .comparing((MatchResponse m) -> m.ruledOut() ? 1 : 0)
                 .thenComparing(m -> isClosed(m.outcome()) ? 1 : 0)
                 .thenComparing(Comparator.comparingInt(MatchResponse::score).reversed())
+                .thenComparing(MatchResponse::ballastDays,
+                        Comparator.nullsLast(Comparator.naturalOrder()))
                 .thenComparing(MatchResponse::unknowns);
     }
 

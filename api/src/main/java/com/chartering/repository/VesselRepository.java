@@ -11,6 +11,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -22,6 +23,17 @@ public interface VesselRepository
 
     @EntityGraph(attributePaths = "owner")
     Optional<Vessel> findWithOwnerById(Long id);
+
+    /**
+     * A handful of hulls by id, with their owners, in one query.
+     *
+     * <p>For the review queue's suggestions, where the owner's name is half of what makes a
+     * shortlist decidable — "that is Interscan's ship" settles it faster than any figure. The
+     * entity graph is the point: without it the mapper walks a lazy {@code owner} per row and
+     * a five-row shortlist costs six round trips.
+     */
+    @EntityGraph(attributePaths = "owner")
+    List<Vessel> findWithOwnerByIdIn(Collection<Long> ids);
 
     List<Vessel> findByOwnerId(Long ownerId);
 

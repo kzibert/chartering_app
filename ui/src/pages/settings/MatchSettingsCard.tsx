@@ -20,6 +20,8 @@ interface FormValues {
   portAllowanceHours: number;
   minUtilisationPercent: number;
   idealUtilisationPercent: number;
+  idealBallastDays: number;
+  maxBallastDays: number;
 }
 
 /**
@@ -52,6 +54,8 @@ export default function MatchSettingsCard() {
         portAllowanceHours: settings.portAllowanceHours,
         minUtilisationPercent: settings.minUtilisationPercent,
         idealUtilisationPercent: settings.idealUtilisationPercent,
+        idealBallastDays: settings.idealBallastDays,
+        maxBallastDays: settings.maxBallastDays,
       });
     }
   }, [settings, form]);
@@ -61,7 +65,9 @@ export default function MatchSettingsCard() {
     (settings.ballastSpeedKnots !== settings.defaultBallastSpeedKnots ||
       settings.portAllowanceHours !== settings.defaultPortAllowanceHours ||
       settings.minUtilisationPercent !== settings.defaultMinUtilisationPercent ||
-      settings.idealUtilisationPercent !== settings.defaultIdealUtilisationPercent);
+      settings.idealUtilisationPercent !== settings.defaultIdealUtilisationPercent ||
+      settings.idealBallastDays !== settings.defaultIdealBallastDays ||
+      settings.maxBallastDays !== settings.defaultMaxBallastDays);
 
   return (
     <Card
@@ -80,7 +86,11 @@ export default function MatchSettingsCard() {
               settings?.defaultPortAllowanceHours ?? 12
             }h at the ends, ruled out below ${
               settings?.defaultMinUtilisationPercent ?? 55
-            }% full, full marks at ${settings?.defaultIdealUtilisationPercent ?? 85}%.`}
+            }% full, full marks at ${
+              settings?.defaultIdealUtilisationPercent ?? 85
+            }%, ballast free to ${settings?.defaultIdealBallastDays ?? 3}d and ruled out past ${
+              settings?.defaultMaxBallastDays ?? 15
+            }d.`}
             onConfirm={() =>
               reset.mutate(undefined, { onSuccess: () => toast.success('Back to the defaults') })
             }
@@ -181,6 +191,44 @@ export default function MatchSettingsCard() {
             </Form.Item>
           </Col>
         </Row>
+        <Row gutter={16}>
+          <Col xs={24} md={12}>
+            <Form.Item
+              name="idealBallastDays"
+              label="Near enough to cost nothing"
+              rules={[{ required: true, message: 'A number of days is required' }]}
+              extra={
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Under this the leg is inside the noise of a laycan quoted as a spread, and
+                  scoring her down for it would be splitting hairs with an estimate built on
+                  an assumed speed. Above it the ballast costs the owner real money and the
+                  score starts saying so.
+                </Typography.Text>
+              }
+            >
+              <InputNumber min={0} max={120} addonAfter="days" style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} md={12}>
+            <Form.Item
+              name="maxBallastDays"
+              label="Rule her out past"
+              rules={[{ required: true, message: 'A number of days is required' }]}
+              extra={
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  <b>How far this desk will send a ship, and the default only.</b> A cargo can
+                  carry its own figure on its record, which wins for that enquiry — the parcel
+                  worth crossing an ocean for and the one nobody would cross the Med for are
+                  both an ordinary week. Between the two figures a pairing passes and earns the
+                  share of the distance it has come, which is what puts a ship two days off the
+                  berth above one nine days off that also makes the laycan.
+                </Typography.Text>
+              }
+            >
+              <InputNumber min={0} max={120} addonAfter="days" style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
+        </Row>
       </Form>
 
       <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
@@ -188,8 +236,11 @@ export default function MatchSettingsCard() {
         measured across the sea network — miles, and the straits on the way, with the wait for
         a Bosphorus convoy in the total. Where either end is only a water, which is how most
         circulars write a position, it falls back to the round number of days between two
-        trade areas. Nothing here is stored against a pairing: every score is computed on the
-        request, because one goes stale the moment a position or a cargo moves.
+        trade areas. Either way the leg is counted from today where her open dates have
+        already passed — a position stays LIVE after its dates run out, and a ballast counted
+        from a day in August would present her on one too. Nothing here is stored against a
+        pairing: every score is computed on the request, because one goes stale the moment a
+        position or a cargo moves.
       </Typography.Paragraph>
     </Card>
   );

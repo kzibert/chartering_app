@@ -38,10 +38,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { campaignsApi } from '../../api/campaigns';
 import { circulationsApi } from '../../api/circulations';
 import { emailFootersApi, emailTemplatesApi } from '../../api/emailLibrary';
-import { useCurrentList } from '../../circulations/store';
+import { useCirculationList, useCurrentList, useSavedLists } from '../../circulations/store';
 import RichTextEditor from '../../components/RichTextEditor';
 import FooterManagerModal from './FooterManagerModal';
-import HistoryModal from './HistoryModal';
+import HistoryModal, { type ReusedCircular } from './HistoryModal';
 import { SendingTodayTags } from '../../components/SendingToday';
 import type {
   CampaignRecipient,
@@ -131,6 +131,9 @@ function renderPreview(html: string, r?: CampaignRecipient): string {
   });
 }
 
+/** The "Send to" picker's value for the current list, which is addressed by role, not id. */
+const CURRENT = 'current';
+
 function humanDuration(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
   const m = Math.floor(seconds / 60);
@@ -150,9 +153,35 @@ function clockTime(iso: string): string {
 
 export default function CircularsPage() {
   const currentList = useCurrentList();
-  const entries = currentList.entries;
+  const savedLists = useSavedLists();
   const { message } = App.useApp();
   const qc = useQueryClient();
+
+  /**
+   * Which list the circular goes to: the current list unless a saved one is picked. A
+   * campaign prepared as numbered day-sized lists is sent a part a day, and copying each
+   * part over the current list first would throw away whatever is being collected there.
+   * A saved list is sent as it stands, and the run records its name, which is how History
+   * tells a send to a saved list apart from an ordinary one.
+   */
+  const [sendTo, setSendTo] = useState<number | typeof CURRENT>(CURRENT);
+  const sendingSaved = sendTo !== CURRENT;
+  const savedSendList = useCirculationList(sendingSaved ? sendTo : undefined);
+  const sendListName = sendingSaved
+    ? (savedLists.data?.find((l) => l.id === sendTo)?.name ?? savedSendList.data?.name)
+    : undefined;
+  const entries = useMemo(
+    () => (sendingSaved ? (savedSendList.data?.entries ?? []) : currentList.entries),
+    [sendingSaved, savedSendList.data, currentList.entries],
+  );
+
+  // A list deleted on another tab must not leave the picker pointing at nothing, which
+  // would read as a list of 0 with Send greyed out and no reason given.
+  useEffect(() => {
+    if (sendingSaved && savedLists.data && !savedLists.data.some((l) => l.id === sendTo)) {
+      setSendTo(CURRENT);
+    }
+  }, [savedLists.data, sendTo, sendingSaved]);
 
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState(DEFAULT_BODY);
@@ -337,6 +366,21 @@ export default function CircularsPage() {
     setBody(t.bodyHtml);
   };
 
+  /**
+   * A past circular back in the composer, from History. The template selection is cleared
+   * because the text is no longer that template, and the footer counts as picked so the
+   * default-footer effect cannot swap it for another. The list is left as it is: reusing
+   * the words for a different set of addresses is the point.
+   */
+  const loadIntoComposer = (c: ReusedCircular) => {
+    setSubject(c.subject);
+    setBody(c.bodyHtml);
+    setFooterId(c.footerId);
+    setFooterPicked(true);
+    setTemplateId(null);
+    message.success('Circular loaded into the composer — edit it and pick a list before sending');
+  };
+
   const promptSaveTemplate = () => {
     const current = templatesQ.data?.find((t) => t.id === templateId);
     const name = window.prompt(
@@ -356,7 +400,7 @@ export default function CircularsPage() {
         htmlBody: body,
         recipients,
         footerId,
-        listId: currentList.listId,
+        listId: sendingSaved ? sendTo : currentList.listId,
       }),
     onSuccess: () => {
       message.success('Campaign started');
@@ -561,7 +605,7 @@ export default function CircularsPage() {
                         {h.sent}/{h.total} sent
                       </Tag>
                       {h.failed > 0 && <Tag color="error">{h.failed} failed</Tag>}
-                      {h.listName && <Tag>{h.listName}</Tag>}
+                      {h.listName && <Tag color="purple">list: {h.listName}</Tag>}
                     </Space>
                   </Space>
                 );
@@ -578,14 +622,44 @@ export default function CircularsPage() {
               </Descriptions.Item>
               {cfg.replyTo && <Descriptions.Item label="Reply-To">{cfg.replyTo}</Descriptions.Item>}
               <Descriptions.Item label="Recipients">
-                {recipients.length} on the current list
+                {recipients.length} on {sendingSaved ? `"${sendListName ?? '…'}"` : 'the current list'}
               </Descriptions.Item>
             </Descriptions>
           )}
 
-          {/* Everything to do with the recipient list — building it, saving it, loading a
-              saved one — lives on the Circulation lists tab. This tab reads the current
-              list and sends it, so there is exactly one place that decides who gets mailed. */}
+          {/* Building a list — collecting, editing, saving — still lives on the Circulation
+              lists tab, so there is one place that decides who is on a list. This only picks
+              which list the circular goes to. A plain div rather than a Space: the picker's
+              percentage width needs a parent with a width of its own to bite on a phone. */}
+          <div>
+            <Typography.Text strong>Send to</Typography.Text>
+            <Select<number | typeof CURRENT>
+              showSearch
+              optionFilterProp="label"
+              style={{ display: 'block', width: '100%', maxWidth: 460, marginTop: 4 }}
+              listHeight={400}
+              value={sendTo}
+              onChange={(v) => setSendTo(v)}
+              loading={savedLists.isLoading || (sendingSaved && savedSendList.isLoading)}
+              disabled={composeDisabled}
+              options={[
+                {
+                  value: CURRENT as number | typeof CURRENT,
+                  label: `Current list (${currentList.entries.length})`,
+                },
+                ...(savedLists.data ?? []).map((l) => ({
+                  value: l.id as number | typeof CURRENT,
+                  label: `${l.name} (${l.entryCount})`,
+                })),
+              ]}
+            />
+            {sendingSaved && (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Sent to this saved list as it stands — the current list is left alone, and
+                History records which list was used.
+              </Typography.Text>
+            )}
+          </div>
 
           <Row gutter={[8, 8]} align="middle">
             <Col flex="auto">
@@ -689,7 +763,7 @@ export default function CircularsPage() {
                 description={
                   <div style={{ maxWidth: 340 }}>
                     {recipients.length} separate message{recipients.length === 1 ? '' : 's'}, one per
-                    recipient — no CC or BCC. Sent at a random {delayRange} apart
+                    recipient{sendingSaved && <> on <b>{sendListName}</b></>} — no CC or BCC. Sent at a random {delayRange} apart
                     {split && (
                       <>
                         , in <b>{batchCount} runs</b> of up to {perRun} with {pauseLabel} between them
@@ -738,8 +812,14 @@ export default function CircularsPage() {
               }
             />
           )}
-          {recipients.length === 0 && (
-            <Empty description="No recipients. Build the current list on the Circulation lists tab, or add contacts from the Companies, Vessels or People tabs." />
+          {recipients.length === 0 && !(sendingSaved && savedSendList.isLoading) && (
+            <Empty
+              description={
+                sendingSaved
+                  ? `"${sendListName}" has no addresses. Pick another list, or add to this one on the Circulation lists tab.`
+                  : 'No recipients. Build the current list on the Circulation lists tab, or add contacts from the Companies, Vessels or People tabs.'
+              }
+            />
           )}
         </Space>
       </Card>
@@ -965,7 +1045,11 @@ export default function CircularsPage() {
       </Modal>
 
       <FooterManagerModal open={footersOpen} onClose={() => setFootersOpen(false)} />
-      <HistoryModal runId={historyRunId} onClose={() => setHistoryRunId(undefined)} />
+      <HistoryModal
+        runId={historyRunId}
+        onClose={() => setHistoryRunId(undefined)}
+        onUseContent={loadIntoComposer}
+      />
     </Space>
   );
 }

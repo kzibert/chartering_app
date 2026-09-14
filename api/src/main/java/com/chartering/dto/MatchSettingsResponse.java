@@ -15,8 +15,12 @@ public record MatchSettingsResponse(
         int portAllowanceHours,
         int minUtilisationPercent,
         int idealUtilisationPercent,
+        int idealBallastDays,
+        int maxBallastDays,
         double defaultBallastSpeedKnots,
         int defaultPortAllowanceHours,
         int defaultMinUtilisationPercent,
-        int defaultIdealUtilisationPercent) {
+        int defaultIdealUtilisationPercent,
+        int defaultIdealBallastDays,
+        int defaultMaxBallastDays) {
 }

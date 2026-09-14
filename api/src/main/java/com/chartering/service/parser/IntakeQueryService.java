@@ -5,6 +5,7 @@ import com.chartering.config.ParserProperties;
 import com.chartering.dto.CargoSourceResponse;
 import com.chartering.dto.IntakeItemResponse;
 import com.chartering.dto.IntakeStatusResponse;
+import com.chartering.dto.IntakeSuggestionResponse;
 import com.chartering.dto.PageResponse;
 import com.chartering.dto.ParsedEmailResponse;
 import com.chartering.exception.FeatureDisabledException;
@@ -19,6 +20,8 @@ import com.chartering.repository.CargoSourceRepository;
 import com.chartering.repository.IntakeItemRepository;
 import com.chartering.repository.IntakeItemSourceRepository;
 import com.chartering.repository.ParsedEmailRepository;
+import com.chartering.repository.VesselExNameRepository;
+import com.chartering.dto.VesselExNameResponse;
 import com.chartering.dto.VesselLookupResponse;
 import com.chartering.model.Vessel;
 import com.chartering.model.VesselLookup;
@@ -38,7 +41,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Everything the Intake tab reads.
@@ -65,6 +71,7 @@ public class IntakeQueryService {
     private final IntakeService intake;
     private final VesselLookupService lookups;
     private final VesselRepository vessels;
+    private final VesselExNameRepository exNames;
     private final IntakeItemSourceRepository itemSources;
     private final DtoMapper mapper;
     private final ObjectMapper json;
@@ -166,10 +173,65 @@ public class IntakeQueryService {
     public IntakeItemResponse get(Long id) {
         requireEnabled();
         IntakeItem item = load(id);
+        JsonNode payload = payloadOf(item);
         // Sources on the detail call only: the list row prints one line, and a join per row
-        // would buy it nothing. Same rule the lookup follows.
-        return mapper.toIntakeItemResponse(item, payloadOf(item), summarise(item, payloadOf(item)),
-                lookupFor(item), itemSources.forItem(id));
+        // would buy it nothing. Same rule the lookup and the shortlist follow.
+        return mapper.toIntakeItemResponse(item, payload, summarise(item, payload),
+                lookupFor(item), itemSources.forItem(id), suggestionsFor(payload));
+    }
+
+    /**
+     * The {@code NEW_VESSEL} shortlist, joined to the fleet as it stands.
+     *
+     * <p><b>The particulars are fetched rather than stored, and that is the whole reason this
+     * method exists.</b> The payload holds what the search compared and why, which is a record
+     * of an event and must not move. The hull's own figures are not: an item can sit in this
+     * queue for weeks while somebody fills in her deadweight or attaches her owner, and a
+     * shortlist quoting the fleet as it was when the email landed would disagree with the
+     * vessel screen the reviewer has open in the other tab. Fetching also means the forty-odd
+     * items already waiting gain the detail without a migration or a re-parse.
+     *
+     * <p>Two queries for the whole shortlist, never one per row: the owner comes down the
+     * entity graph and the former names in one {@code in} clause. Those names are here because
+     * this queue's most valuable answer is "she is on file under the name she carried three
+     * owners ago", and a shortlist that does not print them hides the evidence for the very
+     * case it was built to catch.
+     */
+    private List<IntakeSuggestionResponse> suggestionsFor(JsonNode payload) {
+        if (payload == null) return null;
+        JsonNode listed = payload.path("suggestions");
+        if (!listed.isArray() || listed.isEmpty()) return null;
+
+        List<Long> ids = new ArrayList<>();
+        listed.forEach(s -> {
+            long vesselId = s.path("vesselId").asLong();
+            if (vesselId > 0) ids.add(vesselId);
+        });
+        Map<Long, Vessel> onFile = ids.isEmpty() ? Map.of()
+                : vessels.findWithOwnerByIdIn(ids).stream()
+                        .collect(Collectors.toMap(Vessel::getId, v -> v));
+        Map<Long, List<VesselExNameResponse>> formerNames = ids.isEmpty() ? Map.of()
+                : exNames.findByVesselIds(ids).stream()
+                        .collect(Collectors.groupingBy(e -> e.getVessel().getId(),
+                                LinkedHashMap::new,
+                                Collectors.mapping(mapper::toVesselExNameResponse,
+                                        Collectors.toList())));
+
+        List<IntakeSuggestionResponse> out = new ArrayList<>(listed.size());
+        listed.forEach(s -> {
+            Long vesselId = s.path("vesselId").asLong() > 0 ? s.path("vesselId").asLong() : null;
+            // Deleted since the item was raised: the row stays, without a record behind it.
+            // Dropping it would leave the drawer showing fewer hulls than the queue counted.
+            Vessel v = vesselId == null ? null : onFile.get(vesselId);
+            out.add(new IntakeSuggestionResponse(
+                    vesselId,
+                    s.path("name").asText(null),
+                    s.path("imoNumber").asText(null),
+                    s.path("reason").asText(null),
+                    v == null ? null : mapper.toVesselResponse(
+                            v, formerNames.getOrDefault(v.getId(), List.of()))));
+        });
+        return List.copyOf(out);
     }
 
     /** What the source said about this item's hull, assembled for the drawer. */

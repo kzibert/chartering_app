@@ -139,11 +139,16 @@ export default function CargoDrawer({ cargoId, onClose, onEdit }: Props) {
                 <span>
                   DWT {data.minDwt?.toLocaleString() ?? '—'} to {data.maxDwt?.toLocaleString() ?? '—'}
                 </span>
-                <span>Max draft {data.maxDraft ?? '—'}</span>
+                <span>Max draft {data.maxDraft != null ? `${data.maxDraft}m` : '—'}</span>
                 <span>Max age {data.maxAgeYears ?? '—'}</span>
                 <span>Gear {requirement(data.requiresGeared)}</span>
                 <span>Grain fitted {requirement(data.requiresGrainFitted)}</span>
                 <span>IMO fitted {requirement(data.requiresImoFitted)}</span>
+                {/* Only when it disagrees with the desk. Printing the setting's own figure
+                    here would read as a decision somebody made about this cargo. */}
+                {data.maxBallastDays != null && (
+                  <span>Ballast limit {data.maxBallastDays}d</span>
+                )}
               </Space>
             </Descriptions.Item>
             {(data.freightIdea || data.commission || data.terms) && (

@@ -156,6 +156,7 @@ public class CargoService {
         c.setRequiresGeared(r.getRequiresGeared());
         c.setRequiresGrainFitted(r.getRequiresGrainFitted());
         c.setRequiresImoFitted(r.getRequiresImoFitted());
+        c.setMaxBallastDays(r.getMaxBallastDays());
 
         c.setFreightIdea(blankToNull(r.getFreightIdea()));
         c.setCommission(blankToNull(r.getCommission()));

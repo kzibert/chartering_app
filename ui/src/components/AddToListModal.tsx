@@ -184,23 +184,28 @@ export default function AddToListModal({
             value={target}
             onChange={(e) => setTarget(e.target.value)}
           >
-            <Space direction="vertical" size={4}>
-              <Radio value={current.listId ?? null} disabled={current.listId == null}>
-                Current list{' '}
-                <Typography.Text type="secondary">
-                  ({current.entries.length} address{current.entries.length === 1 ? '' : 'es'})
-                </Typography.Text>
-              </Radio>
-              {(savedLists.data ?? []).map((l) => (
-                <Radio key={l.id} value={l.id}>
-                  {l.name}{' '}
+            {/* The lists scroll inside the modal rather than stretching it: one radio per
+                saved list, and a campaign split into forty parts pushed the OK button off
+                the bottom of the window. New list stays outside, always in reach. */}
+            <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+              <Space direction="vertical" size={4}>
+                <Radio value={current.listId ?? null} disabled={current.listId == null}>
+                  Current list{' '}
                   <Typography.Text type="secondary">
-                    ({l.entryCount} address{l.entryCount === 1 ? '' : 'es'})
+                    ({current.entries.length} address{current.entries.length === 1 ? '' : 'es'})
                   </Typography.Text>
                 </Radio>
-              ))}
-              <Radio value={NEW_LIST}>New list…</Radio>
-            </Space>
+                {(savedLists.data ?? []).map((l) => (
+                  <Radio key={l.id} value={l.id}>
+                    {l.name}{' '}
+                    <Typography.Text type="secondary">
+                      ({l.entryCount} address{l.entryCount === 1 ? '' : 'es'})
+                    </Typography.Text>
+                  </Radio>
+                ))}
+              </Space>
+            </div>
+            <Radio value={NEW_LIST} style={{ marginTop: 4 }}>New list…</Radio>
           </Radio.Group>
           {creatingNew && (
             <Input
