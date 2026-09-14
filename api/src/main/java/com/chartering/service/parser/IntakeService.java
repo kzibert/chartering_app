@@ -389,7 +389,12 @@ public class IntakeService {
                            IntakeResolver.VesselMatch how, Extraction.ExtractedVessel v,
                            VesselFieldDiff.Result diff) {
         Map<String, FieldDiff> byField = new LinkedHashMap<>();
-        for (FieldDiff d : existing.diffs()) byField.put(d.field(), d);
+        // A stored row for a field no longer compared (the vessel type was, until the column
+        // became a list of categories) is dropped rather than carried into the merged question.
+        Map<String, String> compared = VesselFieldDiff.fields();
+        for (FieldDiff d : existing.diffs()) {
+            if (compared.containsKey(d.field())) byField.put(d.field(), d);
+        }
         for (FieldDiff d : diff.conflicts()) byField.put(d.field(), d);
 
         List<String> filled = new ArrayList<>(existing.filled() == null
@@ -546,8 +551,12 @@ public class IntakeService {
         // An empty list means all of them, which is what the "Accept all" button sends. A
         // list that names nothing and meant nothing would be an accept that quietly did
         // nothing, so the UI never sends one.
+        // "All" is what the screen showed, and the screen shows the comparison made now rather
+        // than the one stored when the email arrived — see VesselFieldDiff.preview.
         List<String> chosen = fields == null || fields.isEmpty()
-                ? payload.diffs().stream().map(FieldDiff::field).toList()
+                ? (payload.vessel() == null ? payload.diffs()
+                        : VesselFieldDiff.preview(vessel, payload.vessel()).conflicts())
+                        .stream().map(FieldDiff::field).toList()
                 : fields;
 
         // A rename is the one accepted field that has a second effect: the name she is
@@ -741,6 +750,9 @@ public class IntakeService {
         Vessel vessel = new Vessel();
         vessel.setName(Extraction.text(v.name()));
         VesselFieldDiff.compare(vessel, v);
+        // A category, never the circular's own description: see VesselTypes. Null when the
+        // wording names none, which the vessel form shows as a type still to be chosen.
+        vessel.setVesselType(com.chartering.service.VesselTypes.canonical(v.vesselType()));
         vessel.setNotes(Extraction.text(v.notes()));
         return vessels.save(vessel);
     }

@@ -79,6 +79,13 @@ public final class VesselFieldDiff {
      * than facts a circular reports, and a parser that wrote to them would be overwriting
      * the desk's own bookkeeping with a broker's advertising copy.
      *
+     * <p>{@code vesselType} is left out for the same reason, and it used to be in. The column
+     * holds one of {@link com.chartering.service.VesselTypes#CANONICAL}; a circular describes
+     * the hull in its own words ("GENERAL-DRY CARGO VESSEL / DOUBLE SKIN/BOX"), so comparing the
+     * two raised a question on every list and gap-filling wrote a new one-off type into the
+     * dropdown. A new hull gets a category mapped from the wording instead — see
+     * {@code IntakeService#createVessel} — and a hull on file keeps the one somebody chose.
+     *
      * <p>{@code name} is in the list, and it can only ever appear when the hull was matched
      * by IMO — a name match cannot disagree about the name. That case is a rename, which is
      * exactly what {@code vessel_ex_names} exists for, so accepting it is handled specially
@@ -106,9 +113,6 @@ public final class VesselFieldDiff {
         s.add(new Spec("yearBuilt", "Built", null,
                 Vessel::getYearBuilt, Extraction.ExtractedVessel::built,
                 (v, o) -> v.setYearBuilt((Integer) o)));
-        s.add(new Spec("vesselType", "Type", null,
-                Vessel::getVesselType, v -> Extraction.text(v.vesselType()),
-                (v, o) -> v.setVesselType((String) o)));
         s.add(new Spec("flag", "Flag", null,
                 Vessel::getFlag, v -> Extraction.text(v.flag()),
                 (v, o) -> v.setFlag((String) o)));
@@ -187,6 +191,37 @@ public final class VesselFieldDiff {
     }
 
     /**
+     * What a reading would change on her record as it stands now, writing nothing.
+     *
+     * <p><b>For a question that has been waiting.</b> An item's rows used to be the comparison
+     * made the day the email arrived, stored with it. That goes stale two ways: the record moves
+     * (somebody fills in her deadweight), and the rules move — a capacity read before its unit
+     * was judged by her size was dropped or read thirty-five times wrong, and a stored row keeps
+     * saying so. So the review screen asks this each time it opens the item, and "accept all"
+     * accepts what this says rather than what was stored.
+     *
+     * <p>Unlike {@link #compare}, a field empty on her record is a row here, with nothing on
+     * file beside it, rather than a gap already filled: nothing is written by looking, so the
+     * only way such a field reaches her record is a person ticking it.
+     */
+    public static Result preview(Vessel vessel, Extraction.ExtractedVessel reading) {
+        Extraction.ExtractedVessel parsed = withCapacityUnit(reading, vessel);
+        List<FieldDiff> rows = new ArrayList<>();
+        for (Spec spec : SPECS) {
+            Object incoming = spec.incoming().apply(parsed);
+            if (isAbsent(incoming)) continue;
+            Object current = spec.current().apply(vessel);
+            if (isAbsent(current)) {
+                rows.add(new FieldDiff(spec.field(), spec.label(), null, print(incoming, spec.unit())));
+            } else if (!same(current, incoming)) {
+                rows.add(new FieldDiff(spec.field(), spec.label(),
+                        print(current, spec.unit()), print(incoming, spec.unit())));
+            }
+        }
+        return new Result(List.copyOf(rows), List.of());
+    }
+
+    /**
      * Write the fields a person ticked, and only those.
      *
      * <p>Re-derived from the extraction rather than from the {@link FieldDiff} strings, so what
@@ -204,7 +239,10 @@ public final class VesselFieldDiff {
             if (!fields.contains(spec.field())) continue;
             Object incoming = spec.incoming().apply(parsed);
             if (isAbsent(incoming)) continue;
-            if (same(spec.current().apply(vessel), incoming)) continue;
+            // An empty column is written like any other ticked field; comparing against it
+            // would dereference nothing.
+            Object current = spec.current().apply(vessel);
+            if (!isAbsent(current) && same(current, incoming)) continue;
             spec.write().accept(vessel, incoming);
             written.add(spec.field());
         }

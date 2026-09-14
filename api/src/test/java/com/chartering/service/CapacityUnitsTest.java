@@ -53,7 +53,8 @@ class CapacityUnitsTest {
 
     @Test
     void convertsCubicFeetToCubicMetres() {
-        assertThat(CapacityUnits.toCubicMetres(d("1306000"), CapacityUnits.Unit.CBFT).intValue()).isEqualTo(36981);
+        // 36,981.6 m³, rounded to whole cubic metres.
+        assertThat(CapacityUnits.toCubicMetres(d("1306000"), CapacityUnits.Unit.CBFT)).isEqualByComparingTo("36982");
         assertThat(CapacityUnits.toCubicMetres(d("37000"), CapacityUnits.Unit.CBM)).isEqualByComparingTo("37000");
         assertThat(CapacityUnits.toCubicMetres(d("37000"), null)).isNull();
     }

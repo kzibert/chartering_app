@@ -397,6 +397,10 @@ function VesselFieldsBody({
   onWebChange: (fields: string[]) => void;
 }) {
   const filled = item.payload?.filled ?? [];
+  // The email's own description of the hull, shown and never offered: the record holds one of
+  // the type categories, and a broker's wording is not one. Change it on her record if it is wrong.
+  const typeAsWritten = (item.payload as { vessel?: { vesselType?: string } } | undefined)?.vessel
+    ?.vesselType;
   const renamed = diffs.some((d) => d.field === 'name');
   // Live, not the snapshot taken when the item was raised: this is about to overwrite what
   // is on file now, so what is on file now is what should be on screen.
@@ -475,6 +479,14 @@ function VesselFieldsBody({
           },
         ]}
       />
+
+      {typeAsWritten?.trim() && (
+        <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: '8px 0 0' }}>
+          Type as written in the email: <Typography.Text>{typeAsWritten}</Typography.Text> — not
+          compared; her type on file is{' '}
+          <Typography.Text>{vessel?.vesselType ?? 'not set'}</Typography.Text>.
+        </Typography.Paragraph>
+      )}
 
       {filled.length > 0 && (
         <>
