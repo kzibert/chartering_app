@@ -1,11 +1,13 @@
 import { useState } from 'react';
-import { Button, Checkbox, Col, Form, Input, InputNumber, Row, Select, Space, Tag, Tooltip, Typography } from 'antd';
+import { Button, Checkbox, Col, Form, Input, InputNumber, Row, Segmented, Select, Space, Tag, Tooltip, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useVessels, useVesselTypes, useFlags } from '../../api/hooks';
 import { useTableControls } from '../../components/useTableControls';
 import ResponsiveTable from '../../components/ResponsiveTable';
 import FilterPanel, { countActiveFilters } from '../../components/FilterPanel';
+import CapacityInput from '../../components/CapacityInput';
+import type { CapacityUnit } from '../../vessels/capacity';
 import { usePersistedFilters } from '../../components/usePersistedState';
 import { CONFIRMED_OPTIONS } from '../../components/filterOptions';
 import ConfirmTag from '../../components/ConfirmTag';
@@ -36,6 +38,9 @@ export default function VesselsPage() {
   const { data: flags } = useFlags();
   const { confirm } = useVesselMutations();
 
+  // The unit the grain and bale boxes are typed in. Cubic feet by default, because that is how
+  // the circulars this desk searches from write capacity; the filter is sent in m³ either way.
+  const [capacityUnit, setCapacityUnit] = useState<CapacityUnit>('cbft');
   const [selectedId, setSelectedId] = useState<number>();
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<VesselResponse | null>(null);
@@ -187,10 +192,32 @@ export default function VesselsPage() {
             <Col xs={12} md={3}><Form.Item name="maxDwt" label="DWT max" tooltip={DEADWEIGHT_HINT}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
             <Col xs={12} md={3}><Form.Item name="minDwcc" label="DWCC min" tooltip={DEADWEIGHT_HINT}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
             <Col xs={12} md={3}><Form.Item name="maxDwcc" label="DWCC max" tooltip={DEADWEIGHT_HINT}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={12} md={3}><Form.Item name="minGrain" label="Grain min" tooltip={CAPACITY_HINT}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={12} md={3}><Form.Item name="maxGrain" label="Grain max" tooltip={CAPACITY_HINT}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={12} md={3}><Form.Item name="minBale" label="Bale min" tooltip={CAPACITY_HINT}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={12} md={3}><Form.Item name="maxBale" label="Bale max" tooltip={CAPACITY_HINT}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            {/* CapacityInput: typed in the unit the switch below sets (the sign after each number
+                flips it too), so a figure copied from a circular is typed as written. The form
+                value stays in m³ either way, which is what the API filters on. */}
+            <Col xs={12} md={3}><Form.Item name="minGrain" label="Grain min" tooltip={CAPACITY_HINT}><CapacityInput unit={capacityUnit} onUnitChange={setCapacityUnit} /></Form.Item></Col>
+            <Col xs={12} md={3}><Form.Item name="maxGrain" label="Grain max" tooltip={CAPACITY_HINT}><CapacityInput unit={capacityUnit} onUnitChange={setCapacityUnit} /></Form.Item></Col>
+            <Col xs={12} md={3}><Form.Item name="minBale" label="Bale min" tooltip={CAPACITY_HINT}><CapacityInput unit={capacityUnit} onUnitChange={setCapacityUnit} /></Form.Item></Col>
+            <Col xs={12} md={3}><Form.Item name="maxBale" label="Bale max" tooltip={CAPACITY_HINT}><CapacityInput unit={capacityUnit} onUnitChange={setCapacityUnit} /></Form.Item></Col>
+          </Row>
+          <Row gutter={12} style={{ marginBottom: 12 }}>
+            <Col xs={24}>
+              <Space size={8} wrap>
+                <Typography.Text type="secondary">Grain and bale typed in</Typography.Text>
+                <Segmented
+                  size="small"
+                  value={capacityUnit}
+                  onChange={(v) => setCapacityUnit(v as CapacityUnit)}
+                  options={[
+                    { label: 'cbft', value: 'cbft' },
+                    { label: 'm³', value: 'm3' },
+                  ]}
+                />
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Switching converts the figures already in the boxes; the search runs in m³.
+                </Typography.Text>
+              </Space>
+            </Col>
           </Row>
           <Row gutter={12}>
             <Col xs={12} md={3}>

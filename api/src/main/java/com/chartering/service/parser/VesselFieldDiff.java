@@ -1,5 +1,7 @@
 package com.chartering.service.parser;
 
+import com.chartering.service.CapacityUnits;
+
 import com.chartering.model.Vessel;
 
 import java.math.BigDecimal;
@@ -36,20 +38,19 @@ import java.util.function.Function;
  * enough that a real disagreement about a deadweight (they differ by hundreds of tonnes, not
  * by five) still stops, loose enough to absorb the rounding a broker does when typing.
  *
- * <p><b>Capacity is the one field that can be silently wrong, and it is the one this refuses
- * to guess at.</b> The columns are cubic metres; circulars write cbm and cbft in the same
- * week, thirty-five apart, and the model is told never to convert but to report which it saw.
- * So a stated CBFT is converted, a stated CBM is taken as it is, and a capacity with no unit
- * on it is <em>dropped</em> — not gap-filled, not queued. A guess there is a handysize
- * recorded as holding 144,000 m³, and nothing downstream would ever question it.
+ * <p><b>Capacity is the one field that can be silently wrong, so its unit is settled before
+ * anything is compared.</b> The columns are cubic metres; circulars write cbm and cbft in the
+ * same week, thirty-five apart, and often write neither. The unit is read off her size —
+ * the deadweight the email gives, else the one already on her record — by
+ * {@link CapacityUnits}: a figure plausible in exactly one unit is in that unit, whatever label
+ * sat beside it, and only where the size cannot decide is a stated unit taken as written. A
+ * capacity with no unit and no size to judge it by is still <em>dropped</em> — not gap-filled,
+ * not queued — because that one would be a guess.
  */
 public final class VesselFieldDiff {
 
     private VesselFieldDiff() {
     }
-
-    /** Cubic feet in a cubic metre. Exact by definition of the foot; rounded where used. */
-    private static final BigDecimal CBFT_PER_CBM = new BigDecimal("35.3146667");
 
     /** Half a percent: below a broker's rounding, above nothing worth a person's time. */
     private static final BigDecimal NUMERIC_TOLERANCE = new BigDecimal("0.005");
@@ -162,7 +163,8 @@ public final class VesselFieldDiff {
      *
      * @param vessel written to for gap fills only; conflicts are left for a person
      */
-    public static Result compare(Vessel vessel, Extraction.ExtractedVessel parsed) {
+    public static Result compare(Vessel vessel, Extraction.ExtractedVessel reading) {
+        Extraction.ExtractedVessel parsed = withCapacityUnit(reading, vessel);
         List<FieldDiff> conflicts = new ArrayList<>();
         List<String> filled = new ArrayList<>();
 
@@ -194,8 +196,9 @@ public final class VesselFieldDiff {
      *         record moved since the item was raised
      */
     public static List<String> applySelected(Vessel vessel,
-                                             Extraction.ExtractedVessel parsed,
+                                             Extraction.ExtractedVessel reading,
                                              Collection<String> fields) {
+        Extraction.ExtractedVessel parsed = withCapacityUnit(reading, vessel);
         List<String> written = new ArrayList<>();
         for (Spec spec : SPECS) {
             if (!fields.contains(spec.field())) continue;
@@ -217,22 +220,39 @@ public final class VesselFieldDiff {
     // --------------------------------------------------------------- internals
 
     /**
+     * The reading with its capacity unit settled — see the class comment.
+     *
+     * <p>Grain and bale share one unit on a position list, so the unit is judged on grain,
+     * or on bale when grain is not given. Her size is the email's when it gives one and her
+     * record's otherwise: a list repeating a ship's capacities often leaves out the deadweight
+     * the record already holds. Returns the reading itself when nothing changes, which is
+     * every reading with no capacity in it.
+     */
+    static Extraction.ExtractedVessel withCapacityUnit(Extraction.ExtractedVessel p, Vessel vessel) {
+        BigDecimal sample = p.grainCapacity() != null && p.grainCapacity().signum() > 0
+                ? p.grainCapacity() : p.baleCapacity();
+        if (sample == null || sample.signum() <= 0) return p;
+        BigDecimal dwt = p.dwt() != null && p.dwt().signum() > 0 ? p.dwt() : vessel.getDeadweightTonnage();
+        BigDecimal dwcc = p.dwcc() != null && p.dwcc().signum() > 0 ? p.dwcc() : vessel.getDeadweightCargoCapacity();
+        CapacityUnits.Unit unit = CapacityUnits.resolve(p.capacityUnit(), sample, dwt, dwcc);
+        String resolved = unit == null ? "" : unit.name();
+        if (resolved.equals(p.capacityUnit())) return p;
+        return new Extraction.ExtractedVessel(p.name(), p.imo(), p.vesselType(), p.dwt(), p.dwcc(),
+                p.draft(), p.built(), p.flag(), p.grainCapacity(), p.baleCapacity(), resolved,
+                p.geared(), p.gearDescription(), p.holds(), p.hatches(), p.grainFitted(),
+                p.timberFitted(), p.imoFitted(), p.iceClass(), p.openPort(), p.openArea(),
+                p.openFrom(), p.openTo(), p.openText(), p.lastCargo(), p.cargoPreferences(), p.notes());
+    }
+
+    /**
      * A capacity in cubic metres, or null when it cannot be known.
      *
-     * <p>Null on a missing unit is the whole point — see the class comment. It is also null
-     * on a unit nobody recognises, which is the same situation wearing a different word.
+     * <p>Read after {@link #withCapacityUnit} has settled the unit, so null here means there
+     * was no size to judge by and no unit stated either — the one case the class comment says
+     * is not guessed at.
      */
     private static BigDecimal cubicMetres(BigDecimal value, String unit) {
-        if (value == null) return null;
-        String u = Extraction.text(unit);
-        if (u == null) return null;
-        String normalised = u.replaceAll("[^A-Za-z]", "").toUpperCase();
-        return switch (normalised) {
-            case "CBM", "M3", "CBMS", "CUM" -> value;
-            case "CBFT", "CFT", "CBF", "FT3", "CUFT" ->
-                    value.divide(CBFT_PER_CBM, new MathContext(9, RoundingMode.HALF_UP));
-            default -> null;
-        };
+        return CapacityUnits.toCubicMetres(value, CapacityUnits.stated(unit));
     }
 
     /**

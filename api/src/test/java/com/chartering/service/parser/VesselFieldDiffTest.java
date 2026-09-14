@@ -186,6 +186,28 @@ class VesselFieldDiffTest {
     }
 
     @Test
+    void readsAnUnlabelledCapacityOffTheShipsSize() {
+        // 144,000 on a 3,400-tonner is 42 per tonne: cubic feet, though nothing said so.
+        Vessel fromTheEmail = new Vessel();
+        VesselFieldDiff.compare(fromTheEmail, with(reading(), b -> b.dwt("3400").grain("144000", "")));
+        assertThat(fromTheEmail.getGrainCapacityM3().doubleValue()).isBetween(4070.0, 4085.0);
+
+        // The email gives no size, but her record does.
+        Vessel onFile = new Vessel();
+        onFile.setDeadweightTonnage(new BigDecimal("3400"));
+        VesselFieldDiff.compare(onFile, with(reading(), b -> b.grain("4200", "")));
+        assertThat(onFile.getGrainCapacityM3()).isEqualByComparingTo("4200");
+    }
+
+    @Test
+    void theShipsSizeOverridesAUnitLabelItContradicts() {
+        // "GRAIN 144,000 CBM" on a 3,400-tonner: forty times what the hull could hold.
+        Vessel v = new Vessel();
+        VesselFieldDiff.compare(v, with(reading(), b -> b.dwt("3400").grain("144000", "cbm")));
+        assertThat(v.getGrainCapacityM3().doubleValue()).isBetween(4070.0, 4085.0);
+    }
+
+    @Test
     void readsAStoredZeroAsAnEmptyColumnRatherThanAFigure() {
         Vessel v = new Vessel();
         v.setName("PACIFIC DAWN");

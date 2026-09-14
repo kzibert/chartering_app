@@ -593,6 +593,27 @@ The vessel record also gained `geared`, `gear_description`, `holds`, `hatches`,
 the position lists this mailbox already receives, and every one nullable, because null is
 "not on file" and false would be a claim about four thousand rows nobody has checked.
 
+**Grain and bale are stored in m³, and the unit of a figure is read off the ship's size.**
+Circulars write cbm and cbft in the same week, thirty-five apart, and often write neither. A
+hold carries about 0.7–2.6 m³ per tonne of deadweight (this fleet: 3,072 of 3,221 grain figures
+between 1.0 and 1.7), which is 25–92 in cubic feet, and nothing real falls between the bands —
+so `CapacityUnits.bySize` says which unit a figure is in, DWT first and DWCC when that is all
+there is. **The size outranks the label**: a figure plausible in only one unit is in that unit
+whatever the text wrote beside it; only where the size cannot decide is a stated unit taken,
+and a figure with neither is still dropped rather than guessed. `VesselFieldDiff` settles the
+unit before comparing — the email's deadweight, else the vessel's own — so the sweep, the review
+queue and the paste read one rule.
+
+The storage unit stayed m³ on purpose. Match's cubic check, the parser and the columns'
+names all read m³, and converting every figure would bury the handful of real corrections in
+History. Cubic feet are an entry concern instead: the Vessels search types grain and bale in
+cbft by default (`CapacityInput`, one switch for all four boxes, always sent as m³), and the
+vessel form warns when a figure is cubic feet for her size and recalculates grain, bale or both
+either way. `GET /vessels/capacity-units` lists figures that are cbft by size and figures that
+fit neither unit; `POST /vessels/capacity-units/fix` converts the first kind under one named
+change set and never touches the second. It was run on 2026-09-14 (21 figures on 13 vessels;
+the log is in `local/data-fixes/`), and running it again converts nothing.
+
 ### Intake: mail read into cargoes and positions
 
 The other half of the Analysis tab, and what the corpus was collected for. A model reads an
