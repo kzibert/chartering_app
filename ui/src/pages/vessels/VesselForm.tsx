@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Col, Form, Input, InputNumber, Modal, Row, Select, Typography } from 'antd';
 import { useVesselMutations, useVesselTypes, useFlags } from '../../api/hooks';
 import CompanySelect from '../../components/CompanySelect';
+import FormWithReference from '../../components/FormWithReference';
 import RecordActions from '../../components/RecordActions';
 import ExNamesEditor from './ExNamesEditor';
 import type { VesselRequest, VesselResponse } from '../../api/types';
@@ -24,7 +26,14 @@ interface Props {
    * drawer. Ignored when editing. Keep the object referentially stable (useMemo).
    */
   defaults?: Partial<VesselRequest>;
+  /**
+   * Text to keep beside the fields — the pasted description her particulars are being read
+   * out of. See {@link FormWithReference}; absent, the dialog is unchanged.
+   */
+  reference?: ReactNode;
   onClose: () => void;
+  /** Saved, with the server's answer — `onClose` alone cannot tell a save from a cancel. */
+  onSaved?: (saved: VesselResponse) => void;
   /**
    * The vessel was deleted from in here. The form closes itself either way; this is for a
    * caller that also has a drawer open on the same vessel, which would otherwise be left
@@ -33,7 +42,15 @@ interface Props {
   onDeleted?: () => void;
 }
 
-export default function VesselForm({ open, editing, defaults, onClose, onDeleted }: Props) {
+export default function VesselForm({
+  open,
+  editing,
+  defaults,
+  reference,
+  onClose,
+  onSaved,
+  onDeleted,
+}: Props) {
   const [form] = Form.useForm<VesselRequest>();
   const { create, update, remove, confirm, ban } = useVesselMutations();
   const { data: types } = useVesselTypes();
@@ -85,7 +102,12 @@ export default function VesselForm({ open, editing, defaults, onClose, onDeleted
   }, [open, editing, defaults, form]);
 
   const submit = (values: VesselRequest) => {
-    const done = { onSuccess: onClose };
+    const done = {
+      onSuccess: (saved: VesselResponse) => {
+        onSaved?.(saved);
+        onClose();
+      },
+    };
     if (editing) update.mutate({ id: editing.id, body: values }, done);
     else create.mutate(values, done);
   };
@@ -95,12 +117,13 @@ export default function VesselForm({ open, editing, defaults, onClose, onDeleted
       open={open}
       title={editing ? `Edit vessel — ${editing.name}` : 'New vessel'}
       okText="Save"
-      width={680}
+      width={reference ? 1100 : 680}
       confirmLoading={create.isPending || update.isPending}
       onCancel={onClose}
       onOk={() => form.submit()}
       destroyOnClose
     >
+      <FormWithReference reference={reference}>
       <Form form={form} layout="vertical" onFinish={submit}>
         {/* xs/md throughout, like the fittings rows below: `span` alone is every
             breakpoint at once, and a third of a phone screen is not a field, it is a
@@ -228,6 +251,7 @@ export default function VesselForm({ open, editing, defaults, onClose, onDeleted
           <Input.TextArea rows={2} />
         </Form.Item>
       </Form>
+      </FormWithReference>
 
       {/* Former names, and the actions, both only for a vessel that exists: there is
           nothing to rename, confirm, ban or delete about one not yet saved. */}

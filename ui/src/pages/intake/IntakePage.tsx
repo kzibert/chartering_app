@@ -17,6 +17,7 @@ import {
   CheckCircleOutlined,
   InboxOutlined,
   ReloadOutlined,
+  SnippetsOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
@@ -32,6 +33,7 @@ import {
 } from '../../intake/store';
 import IntakeItemDrawer from './IntakeItemDrawer';
 import ParsedEmailDrawer from './ParsedEmailDrawer';
+import PasteModal from './PasteModal';
 import { EMAIL_TYPES, KINDS, PARSE_STATUSES, kindMeta, parseStatusMeta } from './labels';
 import type {
   IntakeItemKind,
@@ -66,6 +68,7 @@ export default function IntakePage() {
   const [parseStatus, setParseStatus] = useState<ParseStatus>();
   const [openItem, setOpenItem] = useState<number>();
   const [openParsed, setOpenParsed] = useState<number>();
+  const [pasteOpen, setPasteOpen] = useState(false);
 
   const enabled = status.data?.enabled === true;
   const tc = useTableControls({ size: 25 }, 'intake');
@@ -127,6 +130,7 @@ export default function IntakePage() {
         warnings={status.data?.warnings ?? []}
         running={running}
         onSweep={() => startSweep.mutate()}
+        onPaste={() => setPasteOpen(true)}
         onShowFailed={() => {
           setView('log');
           setParseStatus('FAILED');
@@ -211,6 +215,11 @@ export default function IntakePage() {
 
       <IntakeItemDrawer itemId={openItem} onClose={() => setOpenItem(undefined)} />
       <ParsedEmailDrawer parsedId={openParsed} onClose={() => setOpenParsed(undefined)} />
+      <PasteModal
+        open={pasteOpen}
+        modelUp={status.data?.reachable === true}
+        onClose={() => setPasteOpen(false)}
+      />
     </>
   );
 }
@@ -237,6 +246,7 @@ function IntakeHeader({
   warnings,
   running,
   onSweep,
+  onPaste,
   onShowFailed,
 }: {
   pending: number;
@@ -253,6 +263,8 @@ function IntakeHeader({
   warnings: string[];
   running: boolean;
   onSweep: () => void;
+  /** Read text pasted by hand rather than mail from the mailbox. */
+  onPaste: () => void;
   /** The way from the count to the emails it counts. */
   onShowFailed: () => void;
 }) {
@@ -334,6 +346,13 @@ function IntakeHeader({
               >
                 {running ? 'Reading…' : 'Parse now'}
               </Button>
+              {/* Not gated on the model being up: the company block is read without it, and
+                  the dialog says what is missing rather than the button refusing to open. */}
+              <Tooltip title="Paste a cargo offer, a position, a vessel description or a company's full style, and review what was read before anything is saved">
+                <Button icon={<SnippetsOutlined />} onClick={onPaste}>
+                  Paste text
+                </Button>
+              </Tooltip>
               {lastSummary && (
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   {lastSummary}
