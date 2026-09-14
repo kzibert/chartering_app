@@ -1151,6 +1151,13 @@ export interface CirculationRunDetail {
   run: CirculationRun;
   /** the circular before the merge — still carrying its {{placeholders}} */
   composedHtml: string;
+  /** the same circular with its footer taken back off, for reuse in the composer */
+  bodyHtml: string;
+  /**
+   * the footer to pick beside bodyHtml — absent when the run had none, or when that footer
+   * has changed since and so is still inside bodyHtml
+   */
+  footerId?: number;
   fromAddress?: string;
   fromName?: string;
   replyTo?: string;

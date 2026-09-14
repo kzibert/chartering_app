@@ -233,10 +233,20 @@ list still cannot be mailed.
 
 ### Circulation lists and sending
 
-Recipients live in **circulation lists** in Postgres: one unnamed *current list* (what the
-Circulars tab sends to) plus any number of saved lists. A list is a **prepared document** —
-editing a row edits the list, never the contact record, and mail-merge fields are snapshotted
-when the row is added.
+Recipients live in **circulation lists** in Postgres: one unnamed *current list* plus any
+number of saved lists. A list is a **prepared document** — editing a row edits the list, never
+the contact record, and mail-merge fields are snapshotted when the row is added.
+
+The Circulars tab sends to the current list by default, or to a saved list picked there, sent
+as it stands without being copied over the current list first. The run records the saved
+list's *name* (`circulation_runs.list_name`) and the current list has none, so a name in
+History is exactly "this went to a saved list", and it survives the list being deleted.
+
+History can load a past circular back into the composer to send elsewhere. A run stores body
+and footer already joined, so the run detail takes the footer back off the end (`bodyHtml`,
+`footerId`) — possible only while that footer is unchanged. If it was edited or deleted since,
+the whole text comes back with no footer picked, rather than a body still ending in the old
+footer beside a newly picked one.
 
 A circular is sent **individually to every address, never CC/BCC**. There are two send routes
 — Mailbox SMTP and the Brevo API — and the choice is a *runtime* setting stored in
