@@ -16,6 +16,7 @@ import {
   Typography,
 } from 'antd';
 import {
+  CopyOutlined,
   EyeOutlined,
   PlusOutlined,
   PlayCircleOutlined,
@@ -64,6 +65,13 @@ function stamp(iso?: string) {
   return iso ? iso.replace('T', ' ').slice(0, 19) : '—';
 }
 
+/** A past circular's content, handed back to the composer to be sent again or reworked. */
+export interface ReusedCircular {
+  subject: string;
+  bodyHtml: string;
+  footerId: number | null;
+}
+
 /**
  * One past circulation: the circular that was composed, every address it touched, and —
  * on demand — the exact message any one of them received.
@@ -71,9 +79,12 @@ function stamp(iso?: string) {
 export default function HistoryModal({
   runId,
   onClose,
+  onUseContent,
 }: {
   runId: number | undefined;
   onClose: () => void;
+  /** Load this run's subject, text and footer into the composer. Sends nothing. */
+  onUseContent?: (content: ReusedCircular) => void;
 }) {
   const { message } = App.useApp();
   const qc = useQueryClient();
@@ -247,7 +258,18 @@ export default function HistoryModal({
               {detail.replyTo && (
                 <Descriptions.Item label="Reply-To">{detail.replyTo}</Descriptions.Item>
               )}
-              <Descriptions.Item label="List">{run.listName ?? '—'}</Descriptions.Item>
+              {/* Only a send to a saved list stores a name — the current list has none — so
+                  a blank here means the current list, and a name means the circular went to
+                  that saved list directly. Kept by name, so it survives the list's deletion. */}
+              <Descriptions.Item label="List">
+                {run.listName ? (
+                  <Tooltip title="Sent to this saved list rather than the current list">
+                    <Tag color="purple">{run.listName}</Tag>
+                  </Tooltip>
+                ) : (
+                  'Current list'
+                )}
+              </Descriptions.Item>
               <Descriptions.Item label="Footer">{run.footerName ?? 'none'}</Descriptions.Item>
             </Descriptions>
 
@@ -305,6 +327,38 @@ export default function HistoryModal({
                   Restart
                 </Button>
               </Popconfirm>
+              {/* Restart repeats the circular to the same people; this is the other half —
+                  the same words, to whoever the composer is pointed at, edited first if
+                  need be. It only fills the composer: sending is still Send. */}
+              {onUseContent && (
+                <Popconfirm
+                  title="Use this circular in the composer?"
+                  description={
+                    <div style={{ maxWidth: 340 }}>
+                      Its subject and text replace whatever is being composed now. Nothing is
+                      sent — edit it, pick a list, then Send.
+                      {run.footerName && detail.footerId == null && (
+                        <div style={{ marginTop: 8 }}>
+                          The footer "{run.footerName}" has been changed or deleted since, so
+                          the one this run sent comes in as part of the text, with no footer
+                          picked.
+                        </div>
+                      )}
+                    </div>
+                  }
+                  okText="Use it"
+                  onConfirm={() => {
+                    onUseContent({
+                      subject: run.subject,
+                      bodyHtml: detail.bodyHtml ?? detail.composedHtml,
+                      footerId: detail.footerId ?? null,
+                    });
+                    onClose();
+                  }}
+                >
+                  <Button icon={<CopyOutlined />}>Use this content</Button>
+                </Popconfirm>
+              )}
               {busy && (
                 <Typography.Text type="secondary">
                   Another campaign is sending — one runs at a time.

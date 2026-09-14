@@ -51,6 +51,8 @@ public class CirculationHistoryService {
     private final CirculationRunRepository runs;
     private final CirculationRunRecipientRepository recipients;
     private final MailTemplateService templates;
+    private final EmailFooterService footers;
+    private final HtmlSanitizer sanitizer;
     private final MailCampaignProperties props;
     // Reporting only: the day counter pairs what this app sent with what Brevo says the
     // account has spent, and the second half is knowable only by asking Brevo.
@@ -370,8 +372,42 @@ public class CirculationHistoryService {
         List<CirculationRunRecipientResponse> rows = run.getRecipients().stream()
                 .map(CirculationHistoryService::toRecipientResponse)
                 .toList();
+        ReusableContent reusable = reusableContent(run);
         return new CirculationRunDetailResponse(toRunResponse(run), run.getComposedHtml(),
+                reusable.bodyHtml(), reusable.footerId(),
                 run.getFromAddress(), run.getFromName(), run.getReplyTo(), run.getLastError(), rows);
+    }
+
+    private record ReusableContent(String bodyHtml, Long footerId) {
+    }
+
+    /**
+     * The circular as the composer holds it: the body on its own, and the footer to pick
+     * beside it. A run stores the two already joined — {@code EmailCampaignService#composeBody}
+     * appends the cleaned footer with nothing in between — so the body comes back by taking
+     * that footer off the end again. No column holds the body alone, and none is needed while
+     * the footer is still the one that was sent.
+     *
+     * <p>When it is not — edited or deleted since — the stored text comes back whole and no
+     * footer is picked. The old footer then arrives as part of the text, where it can be
+     * edited like the rest; the alternative, picking today's footer beside a body that
+     * still ends in last month's, sends the signature twice.
+     */
+    private ReusableContent reusableContent(CirculationRun run) {
+        String composed = run.getComposedHtml();
+        if (run.getFooterId() == null) {
+            return new ReusableContent(composed, null);
+        }
+        try {
+            String footer = sanitizer.clean(footers.get(run.getFooterId()).html());
+            if (!footer.isEmpty() && composed.endsWith(footer)) {
+                return new ReusableContent(
+                        composed.substring(0, composed.length() - footer.length()), run.getFooterId());
+            }
+        } catch (ResourceNotFoundException e) {
+            // Deleted since: nothing to take off, so the whole text comes back below.
+        }
+        return new ReusableContent(composed, null);
     }
 
     /**
