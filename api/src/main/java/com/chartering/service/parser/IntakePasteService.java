@@ -36,6 +36,7 @@ import com.chartering.service.CompanyService;
 import com.chartering.service.ContactService;
 import com.chartering.service.PersonService;
 import com.chartering.service.QuantityTolerance;
+import com.chartering.service.VesselTypes;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -216,7 +217,7 @@ public class IntakePasteService {
         vessel.setBaleCapacityM3(blank.getBaleCapacityM3());
         vessel.setMaximumDraft(blank.getMaximumDraft());
         vessel.setYearBuilt(blank.getYearBuilt());
-        vessel.setVesselType(blank.getVesselType());
+        vessel.setVesselType(VesselTypes.canonical(v.vesselType()));
         vessel.setFlag(blank.getFlag());
         vessel.setGeared(blank.getGeared());
         vessel.setGearDescription(blank.getGearDescription());

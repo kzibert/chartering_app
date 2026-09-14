@@ -173,7 +173,7 @@ public class IntakeQueryService {
     public IntakeItemResponse get(Long id) {
         requireEnabled();
         IntakeItem item = load(id);
-        JsonNode payload = payloadOf(item);
+        JsonNode payload = refreshed(item, payloadOf(item));
         // Sources on the detail call only: the list row prints one line, and a join per row
         // would buy it nothing. Same rule the lookup and the shortlist follow.
         return mapper.toIntakeItemResponse(item, payload, summarise(item, payload),
@@ -323,7 +323,35 @@ public class IntakeQueryService {
             log.warn("Intake item {} has an unreadable payload: {}", item.getId(), e.getMessage());
             payload = null;
         }
+        payload = refreshed(item, payload);
         return mapper.toIntakeItemResponse(item, payload, summarise(item, payload), lookup);
+    }
+
+    /**
+     * A waiting {@code VESSEL_FIELDS} item with its rows worked out again against her record as
+     * it stands — see {@link VesselFieldDiff#preview}. The stored rows are the comparison made
+     * the day the email arrived, under that day's rules; a question still waiting should be
+     * asked about today's record, in today's terms. Answered items keep their stored rows,
+     * which are the record of what was decided.
+     *
+     * <p>Only the response changes: the payload in the table is left as it was.
+     */
+    private JsonNode refreshed(IntakeItem item, JsonNode payload) {
+        if (payload == null || item.getKind() != IntakeItemKind.VESSEL_FIELDS
+                || item.getStatus() != IntakeItemStatus.PENDING
+                || !(payload instanceof com.fasterxml.jackson.databind.node.ObjectNode obj)) {
+            return payload;
+        }
+        try {
+            IntakePayloads.VesselFields stored = json.treeToValue(payload, IntakePayloads.VesselFields.class);
+            if (stored.vessel() == null || stored.vesselId() == null) return payload;
+            Vessel vessel = vessels.findById(stored.vesselId()).orElse(null);
+            if (vessel == null) return payload;
+            obj.set("diffs", json.valueToTree(VesselFieldDiff.preview(vessel, stored.vessel()).conflicts()));
+        } catch (Exception e) {
+            log.warn("Intake item {}: could not recompare with the record: {}", item.getId(), e.getMessage());
+        }
+        return payload;
     }
 
     /**

@@ -2,6 +2,7 @@ package com.chartering.controller;
 
 import com.chartering.dto.*;
 import com.chartering.service.VesselCapacityService;
+import com.chartering.service.VesselTypeService;
 import com.chartering.service.VesselService;
 import com.chartering.service.lookup.VesselLookupService;
 import com.chartering.service.VesselService.VesselFilter;
@@ -28,6 +29,24 @@ public class VesselController {
     private final VesselService vesselService;
     private final VesselLookupService vesselLookups;
     private final VesselCapacityService capacities;
+    private final VesselTypeService vesselTypes;
+
+    @GetMapping("/types")
+    @Operation(summary = "List vessel types that are not one of the categories, writing nothing",
+            description = "Each with the category its wording maps to (see VesselTypes), and the "
+                    + "wordings that name no category.")
+    public ResponseEntity<VesselTypeCheckResponse> checkVesselTypes() {
+        return ResponseEntity.ok(vesselTypes.check());
+    }
+
+    @PostMapping("/types/fix")
+    @Operation(summary = "Map one-off vessel type wordings to their categories",
+            description = "One transaction and one named change set, revertable per vessel from "
+                    + "the History tab. The original wording is added to the vessel's notes. "
+                    + "Wordings that name no category are reported and left alone.")
+    public ResponseEntity<VesselTypeCheckResponse> fixVesselTypes() {
+        return ResponseEntity.ok(vesselTypes.fix());
+    }
 
     @GetMapping("/capacity-units")
     @Operation(summary = "Check the fleet's grain and bale figures against each ship's size, writing nothing",
