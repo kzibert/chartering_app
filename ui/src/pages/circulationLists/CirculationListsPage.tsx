@@ -8,7 +8,6 @@ import {
   Input,
   Modal,
   Popconfirm,
-  Segmented,
   Select,
   Space,
   Tag,
@@ -338,16 +337,19 @@ export default function CirculationListsPage() {
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
       <Card size="small">
         {/*
-          A Segmented is one non-wrapping row that sizes itself to its options, and a desk
-          with a handful of saved lists — "temp current introduction list (2174)" among them
-          — is already wider than a phone. It does not scroll and it does not wrap: the far
-          end of it is simply off the screen, along with the New list button, which is the
-          bug. A Select says the same thing in one line of any width, so on a phone the
-          lists are picked rather than tabbed through.
+          A picker, not a row of tabs, on every screen. A Segmented is one non-wrapping row
+          that sizes itself to its options: it was off the edge of a phone at five lists, and
+          once a campaign put thirty-six "Intro …" parts beside them it was off the edge of a
+          desktop too, New list button included. It does not scroll and it does not wrap.
+          A Select holds any number in one line, and typing "intro 2" is how a list is found
+          among forty — hence the search, matched against the label so the count is
+          searchable too.
         */}
         {isMobile ? (
           <Space direction="vertical" size="small" style={{ width: '100%' }}>
             <Select
+              showSearch
+              optionFilterProp="label"
               value={selected}
               onChange={(v) => setSelected(v)}
               options={listOptions}
@@ -359,12 +361,16 @@ export default function CirculationListsPage() {
           </Space>
         ) : (
           <Space wrap align="center">
-            <Segmented
+            <Select
+              showSearch
+              optionFilterProp="label"
               value={selected}
-              onChange={(v) => setSelected(v as string | number)}
+              onChange={(v) => setSelected(v)}
               options={listOptions}
+              listHeight={400}
+              style={{ width: 460 }}
             />
-            <Button size="small" icon={<PlusOutlined />} onClick={() => openNameModal('new')}>
+            <Button icon={<PlusOutlined />} onClick={() => openNameModal('new')}>
               New list
             </Button>
           </Space>
@@ -401,6 +407,9 @@ export default function CirculationListsPage() {
                       trigger={['click']}
                       disabled={picked.length === 0 || !savedLists.data?.length}
                       menu={{
+                        // antd does not cap a dropdown menu's height: forty saved lists
+                        // run past the bottom of the window with no way to reach them.
+                        style: { maxHeight: 400, overflowY: 'auto' },
                         items: (savedLists.data ?? []).map((l) => ({
                           key: String(l.id),
                           label: `${l.name} (${l.entryCount})`,
