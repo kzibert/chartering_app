@@ -71,10 +71,16 @@ public final class CapacityUnits {
         return fromSize != null ? fromSize : stated(statedUnit);
     }
 
-    /** A figure in cubic metres, or null when there is no figure or no unit to read it in. */
+    /**
+     * A figure in cubic metres, or null when there is no figure or no unit to read it in.
+     *
+     * <p>A converted figure is rounded to whole cubic metres. Capacities are quoted whole in
+     * either unit, and nine significant digits of a division ("6937.62742 m³") would be offered
+     * on the review screen and written to the record as if somebody had measured them.
+     */
     public static BigDecimal toCubicMetres(BigDecimal value, Unit unit) {
         if (value == null || unit == null) return null;
-        return unit == Unit.CBM ? value : value.divide(CBFT_PER_CBM, MC);
+        return unit == Unit.CBM ? value : value.divide(CBFT_PER_CBM, 0, RoundingMode.HALF_UP);
     }
 
     private static boolean plausible(double m3PerTonne) {

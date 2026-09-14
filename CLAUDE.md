@@ -614,6 +614,26 @@ fit neither unit; `POST /vessels/capacity-units/fix` converts the first kind und
 change set and never touches the second. It was run on 2026-09-14 (21 figures on 13 vessels;
 the log is in `local/data-fixes/`), and running it again converts nothing.
 
+**Vessel type is a category from a fixed list, and a reading never compares or writes it.**
+`VesselTypes.CANONICAL` holds the twelve (SEA TYPE, SEA TYPE BOX SHAPE, SEA+RIVER TYPE, RIVER
+TYPE ONLY, TWEENDECKER, TANKER, BARGE, RO-RO, NRV, REFRIGERATOR, TUG, LIVESTOCK) and
+`/lookups/vessel-types` serves that list, not the distinct values in the column — which had
+become the categories plus every circular's own description a gap-fill had written in. So
+`VesselFieldDiff` has no type field: a broker's "GENERAL-DRY CARGO VESSEL / DOUBLE SKIN/BOX"
+against SEA TYPE BOX SHAPE is not a disagreement, raises nothing and fills nothing, and the
+review drawer shows the wording as information only. A hull *created* from a reading or a paste
+gets `VesselTypes.canonical(wording)` — tanker, ro-ro, reefer, livestock, tug, barge, tweendeck,
+river, box, then the general dry-cargo wordings as SEA TYPE — or no type when the words name
+none. `GET /vessels/types` / `POST /vessels/types/fix` map existing one-offs the same way under
+one named change set, keeping the wording in the vessel's notes as "Type as written".
+
+**A waiting vessel-fields question is compared again each time it is opened.**
+`IntakeQueryService` replaces a pending item's stored rows with `VesselFieldDiff.preview` against
+her record as it stands, and "accept all" accepts those rows. The stored ones were the day the
+email arrived under that day's rules — a capacity dropped or read in the wrong unit, a type row
+— and the record may have moved since. A preview writes nothing, so a field still empty on her
+record is a row to tick rather than a gap already filled. Answered items keep their stored rows.
+
 ### Intake: mail read into cargoes and positions
 
 The other half of the Analysis tab, and what the corpus was collected for. A model reads an

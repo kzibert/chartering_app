@@ -305,13 +305,16 @@ class IntakeServiceTest {
 
     /**
      * The case that made this necessary. FOX arrived twice from one broker, every figure
-     * identical except a reworded type - "GENERAL-DRY CARGO VESSEL / DOUBLE SKIN/BOX" against
-     * "GENERAL-DRY CARGO VESSEL" - and the exact suppression that used to guard this let the
-     * second one through as a separate question about the same hull.
+     * identical except one reworded description, and the exact suppression that used to guard
+     * this let the second one through as a separate question about the same hull. The field
+     * was her type then; type is no longer compared, so the same shape is tested on the gear.
+     *
+     * <p>The stored question also carries a type row from before that change, and the merge
+     * drops it rather than carrying a field nobody is asked about into the merged question.
      */
     @Test
     void mergesEvenWhenTheSecondEmailWordsAFigureDifferently() {
-        pacificDawn.setVesselType("SEA TYPE BOX SHAPE");
+        pacificDawn.setGearDescription("2x30T CRANES");
         when(resolver.resolveVessel(any()))
                 .thenReturn(new IntakeResolver.ResolvedVessel(pacificDawn, IntakeResolver.VesselMatch.NAME));
 
@@ -320,6 +323,8 @@ class IntakeServiceTest {
         alreadyAsked.setKind(IntakeItemKind.VESSEL_FIELDS);
         alreadyAsked.setPayload("""
                 {"vesselId":42,"vesselName":"PACIFIC DAWN","diffs":[
+                  {"field":"gearDescription","label":"Gear","current":"2x30T CRANES",
+                   "incoming":"2 X 25T CRANES, GRABS 2X6CBM"},
                   {"field":"vesselType","label":"Type","current":"SEA TYPE BOX SHAPE",
                    "incoming":"GENERAL-DRY CARGO VESSEL / DOUBLE SKIN/BOX"}],
                  "filled":[]}""");
@@ -328,7 +333,7 @@ class IntakeServiceTest {
 
         Extraction.ExtractedVessel v = new Extraction.ExtractedVessel(
                 "PACIFIC DAWN", "", "GENERAL-DRY CARGO VESSEL", null, null, null, null, "",
-                null, null, "", null, "", null, null, null, null, null, "",
+                null, null, "", null, "2 X 25 T CRANES", null, null, null, null, null, "",
                 "MARMARA", "", "2026-09-01", "2026-09-03", "1/3 SEPT", "", "", "");
 
         IntakeService.ApplyOutcome outcome = service.apply(parsed, positionEmail(v));
@@ -337,7 +342,9 @@ class IntakeServiceTest {
         verify(items, never()).save(argThat(i -> i.getId() == null));
         // The newer wording wins the figure: the later list is the later statement, and both
         // emails stay readable from the item for anybody who wants to compare them.
-        assertThat(alreadyAsked.getPayload()).contains("GENERAL-DRY CARGO VESSEL");
+        assertThat(alreadyAsked.getPayload()).contains("2 X 25 T CRANES");
+        assertThat(alreadyAsked.getPayload()).doesNotContain("GRABS");
+        // The type row from before type stopped being compared is gone.
         assertThat(alreadyAsked.getPayload()).doesNotContain("DOUBLE SKIN");
     }
 

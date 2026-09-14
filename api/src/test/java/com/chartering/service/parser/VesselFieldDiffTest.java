@@ -43,6 +43,7 @@ class VesselFieldDiffTest {
         private BigDecimal grainCapacity;
         private String capacityUnit = "";
         private String imo = "";
+        private String vesselType = "";
         private String name;
 
         private Builder(Extraction.ExtractedVessel v) {
@@ -100,9 +101,14 @@ class VesselFieldDiffTest {
             return this;
         }
 
+        Builder type(String v) {
+            vesselType = v;
+            return this;
+        }
+
         Extraction.ExtractedVessel build() {
             return new Extraction.ExtractedVessel(
-                    name, imo, "", dwt, dwcc, draft, built, "",
+                    name, imo, vesselType, dwt, dwcc, draft, built, "",
                     grainCapacity, null, capacityUnit, geared, gearDescription, holds, null,
                     null, null, null, "", "", "", "", "", "", "", "", "");
         }
@@ -204,6 +210,43 @@ class VesselFieldDiffTest {
         // "GRAIN 144,000 CBM" on a 3,400-tonner: forty times what the hull could hold.
         Vessel v = new Vessel();
         VesselFieldDiff.compare(v, with(reading(), b -> b.dwt("3400").grain("144000", "cbm")));
+        assertThat(v.getGrainCapacityM3().doubleValue()).isBetween(4070.0, 4085.0);
+    }
+
+    @Test
+    void neverComparesOrFillsTheVesselType() {
+        Vessel onFile = new Vessel();
+        onFile.setVesselType("SEA TYPE BOX SHAPE");
+        VesselFieldDiff.Result result = VesselFieldDiff.compare(onFile,
+                with(reading(), b -> b.type("GENERAL-DRY CARGO VESSEL / DOUBLE SKIN/BOX")));
+        assertThat(result.hasConflicts()).isFalse();
+        assertThat(onFile.getVesselType()).isEqualTo("SEA TYPE BOX SHAPE");
+
+        Vessel blank = new Vessel();
+        VesselFieldDiff.compare(blank, with(reading(), b -> b.type("GENERAL CARGO")));
+        assertThat(blank.getVesselType()).isNull();
+    }
+
+    @Test
+    void previewWritesNothingAndOffersEmptyColumnsAsRows() {
+        Vessel v = new Vessel();
+        v.setName("PACIFIC DAWN");
+        v.setDeadweightTonnage(new BigDecimal("3400"));
+        v.setHolds((short) 2);
+
+        // A waiting item raised before capacities were judged by size: no unit stated.
+        VesselFieldDiff.Result rows = VesselFieldDiff.preview(v,
+                with(reading(), b -> b.holds(3).grain("144000", "")));
+
+        assertThat(rows.conflicts()).extracting(FieldDiff::field).containsExactly("grainCapacityM3", "holds");
+        assertThat(rows.conflicts().get(0).current()).isNull();
+        assertThat(rows.conflicts().get(0).incoming()).startsWith("407");
+        // Looking wrote nothing.
+        assertThat(v.getGrainCapacityM3()).isNull();
+        assertThat(v.getHolds()).isEqualTo((short) 2);
+
+        // And ticking an empty column writes it.
+        VesselFieldDiff.applySelected(v, with(reading(), b -> b.grain("144000", "")), java.util.List.of("grainCapacityM3"));
         assertThat(v.getGrainCapacityM3().doubleValue()).isBetween(4070.0, 4085.0);
     }
 

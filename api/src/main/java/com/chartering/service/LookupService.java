@@ -24,9 +24,13 @@ public class LookupService {
     private final TonnageCategoryRepository tonnageCategoryRepository;
     private final TradeAreaGraph tradeAreas;
 
-    @Transactional(readOnly = true)
+    /**
+     * The type categories — fixed, not read off the table. The distinct values in the column
+     * were the categories plus every circular's own description of a hull that a parse had
+     * written there; see {@link VesselTypes}.
+     */
     public List<String> vesselTypes() {
-        return vesselRepository.findDistinctVesselTypes();
+        return VesselTypes.CANONICAL;
     }
 
     @Transactional(readOnly = true)
