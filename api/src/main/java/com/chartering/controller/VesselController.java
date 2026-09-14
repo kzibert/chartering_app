@@ -1,6 +1,7 @@
 package com.chartering.controller;
 
 import com.chartering.dto.*;
+import com.chartering.service.VesselCapacityService;
 import com.chartering.service.VesselService;
 import com.chartering.service.lookup.VesselLookupService;
 import com.chartering.service.VesselService.VesselFilter;
@@ -26,6 +27,26 @@ public class VesselController {
 
     private final VesselService vesselService;
     private final VesselLookupService vesselLookups;
+    private final VesselCapacityService capacities;
+
+    @GetMapping("/capacity-units")
+    @Operation(summary = "Check the fleet's grain and bale figures against each ship's size, writing nothing",
+            description = "Lists figures stored in the m³ columns that are only plausible as cubic "
+                    + "feet (with the m³ they would become), and figures that fit neither unit. A "
+                    + "hold carries about 0.7-2.6 m³ per tonne of deadweight; see CapacityUnits.")
+    public ResponseEntity<VesselCapacityCheckResponse> checkCapacityUnits() {
+        return ResponseEntity.ok(capacities.check());
+    }
+
+    @PostMapping("/capacity-units/fix")
+    @Operation(summary = "Convert the figures that are cubic feet into cubic metres",
+            description = "One transaction and one named change set, so the History tab shows the "
+                    + "operation and any single figure can be reverted there. Figures that fit "
+                    + "neither unit are reported and left alone. Safe to repeat: a converted figure "
+                    + "is plausible in m³ and is not touched again.")
+    public ResponseEntity<VesselCapacityCheckResponse> fixCapacityUnits() {
+        return ResponseEntity.ok(capacities.fix());
+    }
 
     @GetMapping
     @Operation(summary = "Search vessels",

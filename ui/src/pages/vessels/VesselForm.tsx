@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Col, Form, Input, InputNumber, Modal, Row, Select, Typography } from 'antd';
+import { Alert, Button, Col, Form, Input, InputNumber, Modal, Row, Segmented, Select, Space, Tooltip, Typography } from 'antd';
 import { useVesselMutations, useVesselTypes, useFlags } from '../../api/hooks';
 import CompanySelect from '../../components/CompanySelect';
 import RecordActions from '../../components/RecordActions';
 import ExNamesEditor from './ExNamesEditor';
+import { toCbft, toM3, unitBySize } from '../../vessels/capacity';
 import type { VesselRequest, VesselResponse } from '../../api/types';
+
+type CapacityField = 'grainCapacityM3' | 'baleCapacityM3';
 
 /**
  * Two options, never three. "Not on file" is the absence of a choice, reached by clearing
@@ -84,6 +87,34 @@ export default function VesselForm({ open, editing, defaults, onClose, onDeleted
     }
   }, [open, editing, defaults, form]);
 
+  /*
+   * Recalculating grain and bale. The columns are cubic metres, and a figure copied from a
+   * circular in cubic feet is thirty-five times too large — which her deadweight shows at a
+   * glance, so the form says so and offers the division rather than leaving it to be noticed.
+   * The reverse direction is there to undo a conversion pressed by mistake.
+   */
+  const [direction, setDirection] = useState<'toM3' | 'toCbft'>('toM3');
+  const grain = Form.useWatch('grainCapacityM3', form);
+  const bale = Form.useWatch('baleCapacityM3', form);
+  const dwt = Form.useWatch('deadweightTonnage', form);
+  const dwcc = Form.useWatch('deadweightCargoCapacity', form);
+  const looksLikeCbft = (
+    [
+      ['grainCapacityM3', 'Grain', grain],
+      ['baleCapacityM3', 'Bale', bale],
+    ] as const
+  ).filter(([, , v]) => unitBySize(v, dwt, dwcc) === 'cbft');
+
+  const recalculate = (fields: CapacityField[], dir = direction) => {
+    const patch: Partial<VesselRequest> = {};
+    for (const f of fields) {
+      const v = form.getFieldValue(f) as number | undefined;
+      if (v == null || v <= 0) continue;
+      patch[f] = Math.round(dir === 'toM3' ? toM3(v) : toCbft(v));
+    }
+    form.setFieldsValue(patch);
+  };
+
   const submit = (values: VesselRequest) => {
     const done = { onSuccess: onClose };
     if (editing) update.mutate({ id: editing.id, body: values }, done);
@@ -151,6 +182,44 @@ export default function VesselForm({ open, editing, defaults, onClose, onDeleted
             </Form.Item>
           </Col>
         </Row>
+        {looksLikeCbft.length > 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message={looksLikeCbft
+              .map(([, label, v]) => `${label} ${Number(v).toLocaleString()} is about ${Math.round(Number(v) / (dwt || dwcc || 1)).toLocaleString()} per tonne of her deadweight — that is cubic feet (≈ ${Math.round(toM3(Number(v))).toLocaleString()} m³).`)
+              .join(' ')}
+            action={
+              <Button size="small" onClick={() => recalculate(looksLikeCbft.map(([f]) => f), 'toM3')}>
+                Convert to m³
+              </Button>
+            }
+          />
+        )}
+        <Space wrap size={6} style={{ marginTop: -8, marginBottom: 16 }}>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Recalculate
+          </Typography.Text>
+          <Segmented
+            size="small"
+            value={direction}
+            onChange={(v) => setDirection(v as 'toM3' | 'toCbft')}
+            options={[
+              { label: 'cbft → m³', value: 'toM3' },
+              { label: <Tooltip title="To undo a conversion pressed by mistake — the fields themselves are always m³">m³ → cbft</Tooltip>, value: 'toCbft' },
+            ]}
+          />
+          <Button size="small" disabled={!grain} onClick={() => recalculate(['grainCapacityM3'])}>
+            Grain
+          </Button>
+          <Button size="small" disabled={!bale} onClick={() => recalculate(['baleCapacityM3'])}>
+            Bale
+          </Button>
+          <Button size="small" disabled={!grain && !bale} onClick={() => recalculate(['grainCapacityM3', 'baleCapacityM3'])}>
+            Both
+          </Button>
+        </Space>
         <Row gutter={12}>
           <Col xs={24} md={12}>
             <Form.Item name="vesselType" label="Type">
