@@ -5,6 +5,11 @@ import com.chartering.dto.CargoSourceResponse;
 import com.chartering.dto.LinkSenderRequest;
 import com.chartering.dto.IgnoreRequest;
 import com.chartering.dto.IntakeItemResponse;
+import com.chartering.dto.IntakePasteCompanyComparison;
+import com.chartering.dto.IntakePasteCompanyRequest;
+import com.chartering.dto.IntakePasteCompanyResponse;
+import com.chartering.dto.IntakePasteDraftResponse;
+import com.chartering.dto.IntakePasteRequest;
 import com.chartering.dto.IntakeResolveRequest;
 import com.chartering.dto.IntakeStatusResponse;
 import com.chartering.dto.PageResponse;
@@ -17,6 +22,7 @@ import com.chartering.model.IntakeItemStatus;
 import com.chartering.model.ParseStatus;
 import com.chartering.service.ParserSettings;
 import com.chartering.service.parser.EmailParseRunner;
+import com.chartering.service.parser.IntakePasteService;
 import com.chartering.service.parser.IntakeQueryService;
 import com.chartering.service.parser.IntakeService;
 import com.chartering.service.parser.ParserSweepService;
@@ -67,6 +73,46 @@ public class IntakeController {
     private final EmailParseRunner runner;
     private final ParserSettings settings;
     private final VesselLookupService lookupService;
+    private final IntakePasteService paste;
+
+    // ------------------------------------------------------------------ pasted text
+
+    @PostMapping("/paste")
+    @Operation(summary = "Read pasted text into drafts, writing nothing",
+            description = "A cargo offer, a position, a vessel's description or a company's full "
+                    + "style — or several in one. Cargoes, vessels and positions are read by the "
+                    + "model and returned as the request bodies the ordinary forms send, with the "
+                    + "hull, ports and areas already resolved and any live cargo it duplicates "
+                    + "named. The company block is read without the model and comes back with "
+                    + "every company on file it might be, and why. Nothing is stored: each part "
+                    + "is accepted through its own form. With the model down, only the company "
+                    + "block is returned and modelError says so.")
+    public ResponseEntity<IntakePasteDraftResponse> readPaste(@Valid @RequestBody IntakePasteRequest req) {
+        return ResponseEntity.ok(paste.read(req));
+    }
+
+    @PostMapping("/paste/company/compare")
+    @Operation(summary = "Set a pasted company against the one on file it was matched to",
+            description = "Send companyId with the parsed company, people and contacts. Returns "
+                    + "the fields where the text differs from the record, which person on file "
+                    + "each parsed person appears to be, and which parsed contacts the company "
+                    + "already has — people and contacts index-aligned with the request. Writes "
+                    + "nothing.")
+    public ResponseEntity<IntakePasteCompanyComparison> comparePastedCompany(
+            @RequestBody IntakePasteCompanyRequest req) {
+        return ResponseEntity.ok(paste.compare(req));
+    }
+
+    @PostMapping("/paste/company")
+    @Operation(summary = "Accept a pasted company: create it, or add its people and contacts to one on file",
+            description = "One transaction and one change set. A company on file is only added "
+                    + "to — never renamed or re-described — and people already on it are reused "
+                    + "by name, addresses and numbers already on it skipped and listed. Nothing "
+                    + "is flagged main or for circulation.")
+    public ResponseEntity<IntakePasteCompanyResponse> acceptPastedCompany(
+            @Valid @RequestBody IntakePasteCompanyRequest req) {
+        return ResponseEntity.ok(paste.acceptCompany(req));
+    }
 
     // ------------------------------------------------------------------ status
 

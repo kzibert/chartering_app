@@ -1,8 +1,12 @@
 import { client, cleanParams } from './client';
 import type {
+  CargoRequest,
+  CompanyRequest,
   IntakeItemSourceResponse,
   PageResponse,
   VesselLookupResponse,
+  VesselPositionRequest,
+  VesselRequest,
   VesselResponse,
 } from './types';
 
@@ -262,6 +266,171 @@ export interface CargoSourceResponse {
   notes?: string;
 }
 
+/* ---------------- pasted text ---------------- */
+
+/**
+ * Text pasted into Intake to be read. Reading writes nothing: every part comes back as a
+ * draft in the shape the ordinary forms send, and is accepted through one of them.
+ */
+export interface IntakePasteRequest {
+  text: string;
+  subject?: string;
+  receivedAt?: string;
+}
+
+export interface PasteDuplicateHint {
+  cargoId: number;
+  commodity: string;
+  reasons: string[];
+}
+
+export interface PasteCargoDraft {
+  cargo: CargoRequest;
+  /** The charterer's name when it named no company on file. */
+  chartererAsWritten?: string;
+  /** A live cargo this looks like — saving would make a second record of it. */
+  duplicate?: PasteDuplicateHint;
+}
+
+export interface PasteVesselMatch {
+  vesselId: number;
+  name: string;
+  imoNumber?: string;
+  /** IMO, NAME or EX_NAME */
+  how: string;
+}
+
+export interface PasteVesselSuggestion {
+  vesselId: number;
+  name: string;
+  imoNumber?: string;
+  reason: string;
+}
+
+export interface PasteVesselDraft {
+  vessel: VesselRequest;
+  match?: PasteVesselMatch;
+  suggestions?: PasteVesselSuggestion[];
+  /** Absent when the text did not say where she opens. vesselId is the match's, if any. */
+  position?: VesselPositionRequest;
+}
+
+/** Strongest first: an address, the name, a phone are identity; a domain or a likeness is not. */
+export type PasteMatchHow = 'email' | 'name' | 'phone' | 'domain' | 'similar';
+
+export interface PasteCompanyMatch {
+  companyId: number;
+  name: string;
+  city?: string;
+  country?: string;
+  how: PasteMatchHow;
+  reasons: string[];
+}
+
+export interface PastePersonDraft {
+  fullName: string;
+  title?: string;
+  jobTitle?: string;
+  /** On an accept: the person on file this is, whose details become these. */
+  existingPersonId?: number;
+}
+
+export interface PasteContactDraft {
+  kind: 'email' | 'phone';
+  value: string;
+  label?: string;
+  /** Which person, by fullName; absent for a company-wide address. */
+  personName?: string;
+  /** On an accept: the contact on file this is, whose label and owner become these. */
+  existingContactId?: number;
+}
+
+export interface PasteCompanyDraft {
+  company: CompanyRequest;
+  address?: string;
+  people: PastePersonDraft[];
+  contacts: PasteContactDraft[];
+  matches: PasteCompanyMatch[];
+}
+
+export interface IntakePasteDraft {
+  type?: string;
+  summary?: string;
+  /** False when the model is off or not answering — then only `company` was read. */
+  modelRead: boolean;
+  modelError?: string;
+  cargoes: PasteCargoDraft[];
+  vessels: PasteVesselDraft[];
+  company?: PasteCompanyDraft;
+}
+
+/** Fields to overwrite on a company on file; absent leaves one alone. Notes are appended. */
+export interface PasteCompanyChanges {
+  name?: string;
+  cityName?: string;
+  country?: string;
+  website?: string;
+  notes?: string;
+}
+
+export interface IntakePasteCompanyRequest {
+  companyId?: number;
+  company?: CompanyRequest;
+  companyChanges?: PasteCompanyChanges;
+  people: PastePersonDraft[];
+  contacts: PasteContactDraft[];
+}
+
+export interface IntakePasteCompanyResponse {
+  companyId: number;
+  companyName: string;
+  created: boolean;
+  companyFieldsUpdated: number;
+  peopleAdded: number;
+  peopleUpdated: number;
+  contactsAdded: number;
+  contactsUpdated: number;
+  /** Addresses and numbers the company already had, by value. */
+  skipped?: string[];
+}
+
+export interface PasteComparisonField {
+  field: keyof PasteCompanyChanges;
+  label: string;
+  current?: string;
+  parsed: string;
+}
+
+export interface PastePersonOnFile {
+  personId: number;
+  fullName: string;
+  title?: string;
+  jobTitle?: string;
+}
+
+/** Index-aligned with the people sent. */
+export interface PastePersonRow {
+  existingPersonId?: number;
+  /** `surname` is surname and first initial — a suggestion, and the screen says so. */
+  matchedBy?: 'name' | 'surname';
+}
+
+/** Index-aligned with the contacts sent. */
+export interface PasteContactRow {
+  existingContactId?: number;
+  currentLabel?: string;
+  currentPersonName?: string;
+}
+
+export interface IntakePasteCompanyComparison {
+  companyId: number;
+  companyName: string;
+  fields: PasteComparisonField[];
+  peopleOnFile: PastePersonOnFile[];
+  people: PastePersonRow[];
+  contacts: PasteContactRow[];
+}
+
 export interface IntakeItemFilter {
   kind?: IntakeItemKind;
   status?: IntakeItemStatus;
@@ -272,6 +441,25 @@ export interface IntakeItemFilter {
 
 export const intakeApi = {
   status: () => client.get<IntakeStatusResponse>('/intake/status').then((r) => r.data),
+
+  /**
+   * Read pasted text into drafts. Writes nothing. A model read of a long text takes a while,
+   * so this waits longer than an ordinary call before giving up.
+   */
+  paste: (body: IntakePasteRequest) =>
+    client
+      .post<IntakePasteDraft>('/intake/paste', body, { timeout: 180_000 })
+      .then((r) => r.data),
+
+  /** Set a pasted company against the one on file it was matched to. Writes nothing. */
+  comparePastedCompany: (body: IntakePasteCompanyRequest) =>
+    client
+      .post<IntakePasteCompanyComparison>('/intake/paste/company/compare', body)
+      .then((r) => r.data),
+
+  /** Create the company, or add to and update the one on file — one transaction. */
+  pasteCompany: (body: IntakePasteCompanyRequest) =>
+    client.post<IntakePasteCompanyResponse>('/intake/paste/company', body).then((r) => r.data),
 
   items: (filter: IntakeItemFilter) =>
     client

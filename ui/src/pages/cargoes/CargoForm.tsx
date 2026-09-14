@@ -23,6 +23,12 @@ interface Props {
    */
   reference?: ReactNode;
   onClose: () => void;
+  /**
+   * The cargo was saved, with what the server returned. `onClose` fires on a cancel too, so a
+   * caller that has to know the difference — the pasted-text review, marking a draft done —
+   * listens here.
+   */
+  onSaved?: (saved: CargoResponse) => void;
   /** The cargo was deleted from in here, for a caller with a drawer open on the same row. */
   onDeleted?: () => void;
 }
@@ -59,6 +65,7 @@ export default function CargoForm({
   defaults,
   reference,
   onClose,
+  onSaved,
   onDeleted,
 }: Props) {
   const [form] = Form.useForm();
@@ -110,7 +117,12 @@ export default function CargoForm({
       sourceMailMessageId: editing ? undefined : defaults?.sourceMailMessageId,
       receivedAt: editing ? undefined : defaults?.receivedAt,
     };
-    const done = { onSuccess: onClose };
+    const done = {
+      onSuccess: (saved: CargoResponse) => {
+        onSaved?.(saved);
+        onClose();
+      },
+    };
     if (editing) update.mutate({ id: editing.id, body }, done);
     else create.mutate(body, done);
   };

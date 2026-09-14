@@ -711,6 +711,38 @@ who to ring about her. Its own endpoint, delegating to `VesselService.setLink` s
 tab and the vessel screen cannot drift into two notions of what a link is, and the capacity is
 chosen rather than assumed because `owner` displaces whoever is on the record.
 
+**Pasted text is read the same way and written the opposite way.** "Paste text" on the Intake
+tab (`POST /intake/paste`) sends a cargo offer, position, vessel description or company style
+through the same client, prompt, resolver, duplicate test and vessel gap-fill as the sweep —
+and writes nothing. The sweep files what only adds because nobody is watching; here somebody
+pasted the text a moment ago, so every part comes back as a draft in the shape the ordinary
+forms send (`CargoRequest`, `VesselRequest`, `VesselPositionRequest`) and is saved through
+those forms with the text beside it (`FormWithReference`). The importer's arrangement again:
+nothing stored between reading and saving, and an abandoned paste costs nothing.
+
+- **The company block is not the model's.** The model was trained on cargoes and positions and
+  knows a sender only as company, person and email, so `CompanyStyleReader` reads addresses,
+  phones and websites by their shape, without it — which is also why it still works with the
+  model server down. A run of digits is a phone only behind a label or written with `+`/`00`,
+  or every IMO and dotted date would be one. A mobile or direct line is a person's; the office
+  line and the fax are the firm's even inside one person's signature.
+- **`CompanyMatcher` proposes and never picks:** same email, same name, same phone (last nine
+  digits), same mail domain or website — never a webmail domain — then a similar name. The
+  resemblance test strips trade words as well as legal forms, because "Shipping & Chartering
+  GmbH" reduces to "chartering" otherwise and every chartering firm on file contains that.
+- **A company on file changes only where ticked.** `POST /intake/paste/company/compare` sets
+  the text against the record — differing fields, which person on file each parsed person
+  appears to be (full name, or surname and initial as a flagged suggestion), which addresses
+  it already has — and the accept (`POST /intake/paste/company`) overwrites only what comes
+  back explicitly: a field in `companyChanges`, an `existingPersonId`, an `existingContactId`.
+  Everything else only adds, addresses already on the company are skipped, notes are appended
+  rather than replaced, and nothing is flagged main or `circ`. Those updates are written onto
+  the managed entities rather than through the services' whole-record `update`, which would
+  clear every field the paste did not send; the audit listener records them all the same.
+- **Tests carry no correspondent's details.** The reader's samples copy the layout of real
+  signatures and nothing else — invented firms, people and `.example` domains — because a test
+  file is published with the repository.
+
 ### Looking a hull up on the open web
 
 `V17`/`vessel_lookups`. When a circular names a ship and no IMO — which is nearly always — and

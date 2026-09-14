@@ -61,19 +61,6 @@ public class ContactImportService {
     private final PersonRepository personRepository;
     private final ContactRepository contactRepository;
 
-    /**
-     * Legal-form suffixes, stripped only when looking for a <em>similar</em> company.
-     *
-     * <p>Never used to decide an exact match. "Fednav Ltd" and "Fednav" are probably the
-     * same firm and the user should be shown that; deciding it for them is how an import
-     * quietly merges two companies that a broker keeps apart on purpose.
-     */
-    private static final Set<String> LEGAL_SUFFIXES = Set.of(
-            "ltd", "limited", "llc", "lc", "inc", "incorporated", "corp", "corporation",
-            "co", "company", "gmbh", "ag", "sa", "sas", "srl", "spa", "bv", "nv", "as",
-            "asa", "oy", "ab", "aps", "plc", "pte", "pty", "kg", "sarl", "sl", "sti",
-            "ltdsti", "lp", "llp", "group", "holding", "holdings", "shipping");
-
     // ---- preview ------------------------------------------------------------------
 
     @Transactional(readOnly = true)
@@ -525,20 +512,9 @@ public class ContactImportService {
         return s == null ? "" : s.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
     }
 
-    /**
-     * Comparison key that also drops punctuation and legal-form suffixes, so "Fednav Ltd."
-     * and "FEDNAV" collide. Only ever used to <em>suggest</em> a match — see
-     * {@link #LEGAL_SUFFIXES}.
-     */
+    /** Only ever used to <em>suggest</em> a match — see {@link CompanyNames}. */
     private static String similarityKey(String s) {
-        if (s == null) return "";
-        String[] words = s.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9\\s]", " ").split("\\s+");
-        StringBuilder out = new StringBuilder();
-        for (String word : words) {
-            if (word.isEmpty() || LEGAL_SUFFIXES.contains(word)) continue;
-            out.append(word);
-        }
-        return out.toString();
+        return CompanyNames.similarityKey(s);
     }
 
     /**
