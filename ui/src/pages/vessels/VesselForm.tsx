@@ -1,10 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Col, Form, Input, InputNumber, Modal, Row, Select, Typography } from 'antd';
+import type { ReactNode } from 'react';
+import { Alert, Button, Col, Form, Input, InputNumber, Modal, Row, Segmented, Select, Space, Tooltip, Typography } from 'antd';
 import { useVesselMutations, useVesselTypes, useFlags } from '../../api/hooks';
 import CompanySelect from '../../components/CompanySelect';
+import FormWithReference from '../../components/FormWithReference';
 import RecordActions from '../../components/RecordActions';
 import ExNamesEditor from './ExNamesEditor';
+import { toCbft, toM3, unitBySize } from '../../vessels/capacity';
 import type { VesselRequest, VesselResponse } from '../../api/types';
+
+type CapacityField = 'grainCapacityM3' | 'baleCapacityM3';
 
 /**
  * Two options, never three. "Not on file" is the absence of a choice, reached by clearing
@@ -24,7 +29,14 @@ interface Props {
    * drawer. Ignored when editing. Keep the object referentially stable (useMemo).
    */
   defaults?: Partial<VesselRequest>;
+  /**
+   * Text to keep beside the fields — the pasted description her particulars are being read
+   * out of. See {@link FormWithReference}; absent, the dialog is unchanged.
+   */
+  reference?: ReactNode;
   onClose: () => void;
+  /** Saved, with the server's answer — `onClose` alone cannot tell a save from a cancel. */
+  onSaved?: (saved: VesselResponse) => void;
   /**
    * The vessel was deleted from in here. The form closes itself either way; this is for a
    * caller that also has a drawer open on the same vessel, which would otherwise be left
@@ -33,7 +45,15 @@ interface Props {
   onDeleted?: () => void;
 }
 
-export default function VesselForm({ open, editing, defaults, onClose, onDeleted }: Props) {
+export default function VesselForm({
+  open,
+  editing,
+  defaults,
+  reference,
+  onClose,
+  onSaved,
+  onDeleted,
+}: Props) {
   const [form] = Form.useForm<VesselRequest>();
   const { create, update, remove, confirm, ban } = useVesselMutations();
   const { data: types } = useVesselTypes();
@@ -84,8 +104,41 @@ export default function VesselForm({ open, editing, defaults, onClose, onDeleted
     }
   }, [open, editing, defaults, form]);
 
+  /*
+   * Recalculating grain and bale. The columns are cubic metres, and a figure copied from a
+   * circular in cubic feet is thirty-five times too large — which her deadweight shows at a
+   * glance, so the form says so and offers the division rather than leaving it to be noticed.
+   * The reverse direction is there to undo a conversion pressed by mistake.
+   */
+  const [direction, setDirection] = useState<'toM3' | 'toCbft'>('toM3');
+  const grain = Form.useWatch('grainCapacityM3', form);
+  const bale = Form.useWatch('baleCapacityM3', form);
+  const dwt = Form.useWatch('deadweightTonnage', form);
+  const dwcc = Form.useWatch('deadweightCargoCapacity', form);
+  const looksLikeCbft = (
+    [
+      ['grainCapacityM3', 'Grain', grain],
+      ['baleCapacityM3', 'Bale', bale],
+    ] as const
+  ).filter(([, , v]) => unitBySize(v, dwt, dwcc) === 'cbft');
+
+  const recalculate = (fields: CapacityField[], dir = direction) => {
+    const patch: Partial<VesselRequest> = {};
+    for (const f of fields) {
+      const v = form.getFieldValue(f) as number | undefined;
+      if (v == null || v <= 0) continue;
+      patch[f] = Math.round(dir === 'toM3' ? toM3(v) : toCbft(v));
+    }
+    form.setFieldsValue(patch);
+  };
+
   const submit = (values: VesselRequest) => {
-    const done = { onSuccess: onClose };
+    const done = {
+      onSuccess: (saved: VesselResponse) => {
+        onSaved?.(saved);
+        onClose();
+      },
+    };
     if (editing) update.mutate({ id: editing.id, body: values }, done);
     else create.mutate(values, done);
   };
@@ -95,12 +148,13 @@ export default function VesselForm({ open, editing, defaults, onClose, onDeleted
       open={open}
       title={editing ? `Edit vessel — ${editing.name}` : 'New vessel'}
       okText="Save"
-      width={680}
+      width={reference ? 1100 : 680}
       confirmLoading={create.isPending || update.isPending}
       onCancel={onClose}
       onOk={() => form.submit()}
       destroyOnClose
     >
+      <FormWithReference reference={reference}>
       <Form form={form} layout="vertical" onFinish={submit}>
         {/* xs/md throughout, like the fittings rows below: `span` alone is every
             breakpoint at once, and a third of a phone screen is not a field, it is a
@@ -151,6 +205,44 @@ export default function VesselForm({ open, editing, defaults, onClose, onDeleted
             </Form.Item>
           </Col>
         </Row>
+        {looksLikeCbft.length > 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message={looksLikeCbft
+              .map(([, label, v]) => `${label} ${Number(v).toLocaleString()} is about ${Math.round(Number(v) / (dwt || dwcc || 1)).toLocaleString()} per tonne of her deadweight — that is cubic feet (≈ ${Math.round(toM3(Number(v))).toLocaleString()} m³).`)
+              .join(' ')}
+            action={
+              <Button size="small" onClick={() => recalculate(looksLikeCbft.map(([f]) => f), 'toM3')}>
+                Convert to m³
+              </Button>
+            }
+          />
+        )}
+        <Space wrap size={6} style={{ marginTop: -8, marginBottom: 16 }}>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Recalculate
+          </Typography.Text>
+          <Segmented
+            size="small"
+            value={direction}
+            onChange={(v) => setDirection(v as 'toM3' | 'toCbft')}
+            options={[
+              { label: 'cbft → m³', value: 'toM3' },
+              { label: <Tooltip title="To undo a conversion pressed by mistake — the fields themselves are always m³">m³ → cbft</Tooltip>, value: 'toCbft' },
+            ]}
+          />
+          <Button size="small" disabled={!grain} onClick={() => recalculate(['grainCapacityM3'])}>
+            Grain
+          </Button>
+          <Button size="small" disabled={!bale} onClick={() => recalculate(['baleCapacityM3'])}>
+            Bale
+          </Button>
+          <Button size="small" disabled={!grain && !bale} onClick={() => recalculate(['grainCapacityM3', 'baleCapacityM3'])}>
+            Both
+          </Button>
+        </Space>
         <Row gutter={12}>
           <Col xs={24} md={12}>
             <Form.Item name="vesselType" label="Type">
@@ -228,6 +320,7 @@ export default function VesselForm({ open, editing, defaults, onClose, onDeleted
           <Input.TextArea rows={2} />
         </Form.Item>
       </Form>
+      </FormWithReference>
 
       {/* Former names, and the actions, both only for a vessel that exists: there is
           nothing to rename, confirm, ban or delete about one not yet saved. */}

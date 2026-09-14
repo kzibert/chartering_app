@@ -593,6 +593,27 @@ The vessel record also gained `geared`, `gear_description`, `holds`, `hatches`,
 the position lists this mailbox already receives, and every one nullable, because null is
 "not on file" and false would be a claim about four thousand rows nobody has checked.
 
+**Grain and bale are stored in m³, and the unit of a figure is read off the ship's size.**
+Circulars write cbm and cbft in the same week, thirty-five apart, and often write neither. A
+hold carries about 0.7–2.6 m³ per tonne of deadweight (this fleet: 3,072 of 3,221 grain figures
+between 1.0 and 1.7), which is 25–92 in cubic feet, and nothing real falls between the bands —
+so `CapacityUnits.bySize` says which unit a figure is in, DWT first and DWCC when that is all
+there is. **The size outranks the label**: a figure plausible in only one unit is in that unit
+whatever the text wrote beside it; only where the size cannot decide is a stated unit taken,
+and a figure with neither is still dropped rather than guessed. `VesselFieldDiff` settles the
+unit before comparing — the email's deadweight, else the vessel's own — so the sweep, the review
+queue and the paste read one rule.
+
+The storage unit stayed m³ on purpose. Match's cubic check, the parser and the columns'
+names all read m³, and converting every figure would bury the handful of real corrections in
+History. Cubic feet are an entry concern instead: the Vessels search types grain and bale in
+cbft by default (`CapacityInput`, one switch for all four boxes, always sent as m³), and the
+vessel form warns when a figure is cubic feet for her size and recalculates grain, bale or both
+either way. `GET /vessels/capacity-units` lists figures that are cbft by size and figures that
+fit neither unit; `POST /vessels/capacity-units/fix` converts the first kind under one named
+change set and never touches the second. It was run on 2026-09-14 (21 figures on 13 vessels;
+the log is in `local/data-fixes/`), and running it again converts nothing.
+
 ### Intake: mail read into cargoes and positions
 
 The other half of the Analysis tab, and what the corpus was collected for. A model reads an
@@ -710,6 +731,38 @@ broker who is not the owner on file, and that the broker works her is worth keep
 who to ring about her. Its own endpoint, delegating to `VesselService.setLink` so the Intake
 tab and the vessel screen cannot drift into two notions of what a link is, and the capacity is
 chosen rather than assumed because `owner` displaces whoever is on the record.
+
+**Pasted text is read the same way and written the opposite way.** "Paste text" on the Intake
+tab (`POST /intake/paste`) sends a cargo offer, position, vessel description or company style
+through the same client, prompt, resolver, duplicate test and vessel gap-fill as the sweep —
+and writes nothing. The sweep files what only adds because nobody is watching; here somebody
+pasted the text a moment ago, so every part comes back as a draft in the shape the ordinary
+forms send (`CargoRequest`, `VesselRequest`, `VesselPositionRequest`) and is saved through
+those forms with the text beside it (`FormWithReference`). The importer's arrangement again:
+nothing stored between reading and saving, and an abandoned paste costs nothing.
+
+- **The company block is not the model's.** The model was trained on cargoes and positions and
+  knows a sender only as company, person and email, so `CompanyStyleReader` reads addresses,
+  phones and websites by their shape, without it — which is also why it still works with the
+  model server down. A run of digits is a phone only behind a label or written with `+`/`00`,
+  or every IMO and dotted date would be one. A mobile or direct line is a person's; the office
+  line and the fax are the firm's even inside one person's signature.
+- **`CompanyMatcher` proposes and never picks:** same email, same name, same phone (last nine
+  digits), same mail domain or website — never a webmail domain — then a similar name. The
+  resemblance test strips trade words as well as legal forms, because "Shipping & Chartering
+  GmbH" reduces to "chartering" otherwise and every chartering firm on file contains that.
+- **A company on file changes only where ticked.** `POST /intake/paste/company/compare` sets
+  the text against the record — differing fields, which person on file each parsed person
+  appears to be (full name, or surname and initial as a flagged suggestion), which addresses
+  it already has — and the accept (`POST /intake/paste/company`) overwrites only what comes
+  back explicitly: a field in `companyChanges`, an `existingPersonId`, an `existingContactId`.
+  Everything else only adds, addresses already on the company are skipped, notes are appended
+  rather than replaced, and nothing is flagged main or `circ`. Those updates are written onto
+  the managed entities rather than through the services' whole-record `update`, which would
+  clear every field the paste did not send; the audit listener records them all the same.
+- **Tests carry no correspondent's details.** The reader's samples copy the layout of real
+  signatures and nothing else — invented firms, people and `.example` domains — because a test
+  file is published with the repository.
 
 ### Looking a hull up on the open web
 

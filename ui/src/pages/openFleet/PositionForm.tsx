@@ -29,6 +29,8 @@ interface Props {
    */
   reference?: ReactNode;
   onClose: () => void;
+  /** Saved, with the server's answer — `onClose` alone cannot tell a save from a cancel. */
+  onSaved?: (saved: VesselPositionResponse) => void;
 }
 
 /**
@@ -50,6 +52,7 @@ export default function PositionForm({
   lockVessel,
   reference,
   onClose,
+  onSaved,
 }: Props) {
   const [form] = Form.useForm();
   const { create, update } = usePositionMutations();
@@ -95,7 +98,12 @@ export default function PositionForm({
       // fact that survives editing the reading afterwards.
       sourceMailMessageId: editing ? undefined : defaults?.sourceMailMessageId,
     };
-    const done = { onSuccess: onClose };
+    const done = {
+      onSuccess: (saved: VesselPositionResponse) => {
+        onSaved?.(saved);
+        onClose();
+      },
+    };
     if (editing) update.mutate({ id: editing.id, body }, done);
     else create.mutate(body, done);
   };
