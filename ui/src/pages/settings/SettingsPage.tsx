@@ -24,6 +24,7 @@ import type { CirculationSettings, CirculationSettingsRequest } from '../../api/
 import WhatsappSettingsCard from './WhatsappSettingsCard';
 import ParserSettingsCard from './ParserSettingsCard';
 import MatchSettingsCard from './MatchSettingsCard';
+import OwnAddressesCard from './OwnAddressesCard';
 
 /**
  * Delays are stored in milliseconds but shown in seconds — nobody reasons about a send
@@ -395,6 +396,8 @@ export default function SettingsPage() {
           }
         />
       </Card>
+
+      <OwnAddressesCard />
 
       <ParserSettingsCard />
 

@@ -2,6 +2,7 @@ import { client } from './client';
 import type {
   CirculationSettings,
   CirculationSettingsRequest,
+  OwnAddresses,
   WhatsappSettings,
   WhatsappSettingsRequest,
 } from './types';
@@ -47,4 +48,10 @@ export const settingsApi = {
 
   resetWhatsapp: () =>
     client.delete<WhatsappSettings>('/settings/whatsapp').then((r) => r.data),
+
+  /** The desk's own addresses — left out of who sent a cargo. The whole list, replaced. */
+  ownAddresses: () => client.get<OwnAddresses>('/settings/own-addresses').then((r) => r.data),
+
+  updateOwnAddresses: (body: OwnAddresses) =>
+    client.put<OwnAddresses>('/settings/own-addresses', body).then((r) => r.data),
 };

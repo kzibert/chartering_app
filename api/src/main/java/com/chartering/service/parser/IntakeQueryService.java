@@ -27,6 +27,7 @@ import com.chartering.model.Vessel;
 import com.chartering.model.VesselLookup;
 import com.chartering.repository.VesselRepository;
 import com.chartering.service.ParserSettings;
+import com.chartering.service.SettingsService;
 import com.chartering.service.lookup.LookupMatcher;
 import com.chartering.service.lookup.VesselLookupService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -44,6 +45,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -68,6 +70,7 @@ public class IntakeQueryService {
     private final IntakeItemRepository items;
     private final ParsedEmailRepository parsedEmails;
     private final CargoSourceRepository cargoSources;
+    private final SettingsService settingsService;
     private final IntakeService intake;
     private final VesselLookupService lookups;
     private final VesselRepository vessels;
@@ -288,10 +291,18 @@ public class IntakeQueryService {
      * and are shown on its own drawer; a deployment that has turned the parser off still has
      * whatever rows were written while it was on, and hiding them would make a merged cargo
      * look like one somebody typed.
+     *
+     * <p>Arrivals from the desk's own addresses are left out. The sweep reads the Sent folder
+     * as well as the inbox, so a reply of ours quoting a cargo is recorded as an arrival, and
+     * listing the desk among the people who sent it the cargo answers nothing. Filtered here
+     * rather than refused at intake, so the setting covers rows already stored and a changed
+     * list applies at once.
      */
     @Transactional(readOnly = true)
     public List<CargoSourceResponse> cargoSources(Long cargoId) {
+        Set<String> own = settingsService.ownAddresses();
         return cargoSources.findByCargoIdOrderByReportedAtDesc(cargoId).stream()
+                .filter(s -> !SettingsService.isOwn(s.getFromAddress(), own))
                 .map(mapper::toCargoSourceResponse)
                 .toList();
     }

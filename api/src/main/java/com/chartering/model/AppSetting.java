@@ -20,6 +20,13 @@ import java.time.LocalDateTime;
 @Table(name = "app_settings")
 public class AppSetting {
 
+    /**
+     * The desk's own email addresses, lower-cased and comma-joined. Declared here rather than
+     * beside the other keys in {@code SettingsService} because a SQL formula on {@link Cargo}
+     * reads it too, and an entity should not import a service to spell a constant.
+     */
+    public static final String OWN_ADDRESSES = "mail.ownAddresses";
+
     @Id
     @Column(name = "key", nullable = false, length = 100)
     private String key;

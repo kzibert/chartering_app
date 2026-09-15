@@ -570,7 +570,8 @@ export type CargoStatus =
   | 'FIXED'
   | 'FAILED'
   | 'EXPIRED'
-  | 'WITHDRAWN';
+  | 'WITHDRAWN'
+  | 'NOT_WORKABLE';
 
 /** The statuses still worth showing tonnage against — mirrors CargoStatus.isLive() on the API. */
 export const LIVE_CARGO_STATUSES: CargoStatus[] = ['OPEN', 'QUOTED', 'FIRM'];
@@ -651,6 +652,15 @@ export interface CargoResponse {
   notes?: string;
   createdAt?: string;
   updatedAt?: string;
+  /**
+   * When it last reached the desk: the newest arrival, else its received date, else when it
+   * was entered — so on a typed cargo this is the day somebody typed it, not a send.
+   */
+  lastSentAt?: string;
+  /** The firm (else person, else address) behind the newest arrival. List rows only. */
+  lastSentBy?: string;
+  /** Different senders it has come from. List rows only; 0 on a cargo somebody typed. */
+  senderCount?: number;
 }
 
 /**
@@ -814,6 +824,11 @@ export interface CargoFilter extends PageParams {
   loadAreaId?: number;
   dischargeAreaId?: number;
   loadPortId?: number;
+  /** Text: the port on file, the words the email used, or either area's name or code. */
+  loadPlace?: string;
+  dischargePlace?: string;
+  /** A day (YYYY-MM-DD); cargoes whose lastSentAt is on or after it. */
+  sentSince?: string;
   /**
    * Matches cargoes whose laycan OVERLAPS this window rather than sits inside it, and
    * returns cargoes with no laycan on file whatever the window: "the charterer has not
@@ -1211,6 +1226,14 @@ export interface CirculationSettings extends CirculationSettingsRequest {
    * protecting different things.
    */
   defaults?: CirculationSettings;
+}
+
+/**
+ * The desk's own email addresses. Arrivals from them are left out of a cargo's senders and
+ * its last-sent date — the sweep reads our replies too. Lower-cased by the API.
+ */
+export interface OwnAddresses {
+  addresses: string[];
 }
 
 export interface WhatsappSettingsRequest {

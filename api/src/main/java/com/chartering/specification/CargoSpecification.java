@@ -2,12 +2,15 @@ package com.chartering.specification;
 
 import com.chartering.model.Cargo;
 import com.chartering.model.CargoStatus;
+import jakarta.persistence.criteria.Join;
 import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.jpa.domain.Specification;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -64,6 +67,51 @@ public final class CargoSpecification {
     public static Specification<Cargo> loadPortEquals(Long portId) {
         return (root, query, cb) -> portId == null ? null
                 : cb.equal(root.get("loadPort").get("id"), portId);
+    }
+
+    /**
+     * Cargoes loading somewhere whose name contains the text, however the place was recorded.
+     *
+     * <p>Every one of the three ways a place is held is searched, and both areas: the port on
+     * file, the words the email used, the area typed by hand and the area the port sits in. A
+     * box labelled "Load" that found "Chornomorsk" but not a cargo entered as "Chornomorsk
+     * port" in free text - or found "Black Sea" only where nobody had picked a port - would be
+     * a box that answers a question about how the row was typed.
+     */
+    public static Specification<Cargo> loadPlaceContains(String text) {
+        return placeContains("loadPort", "loadPortText", "loadArea", text);
+    }
+
+    public static Specification<Cargo> dischargePlaceContains(String text) {
+        return placeContains("dischargePort", "dischargePortText", "dischargeArea", text);
+    }
+
+    private static Specification<Cargo> placeContains(String portAttr, String textAttr,
+                                                      String areaAttr, String text) {
+        return (root, query, cb) -> {
+            if (text == null || text.isBlank()) return null;
+            String like = "%" + text.trim().toLowerCase() + "%";
+            Join<?, ?> port = root.join(portAttr, JoinType.LEFT);
+            Join<?, ?> portArea = port.join("tradeArea", JoinType.LEFT);
+            Join<?, ?> area = root.join(areaAttr, JoinType.LEFT);
+            return cb.or(
+                    cb.like(cb.lower(port.get("name")), like),
+                    cb.like(cb.lower(root.get(textAttr)), like),
+                    cb.like(cb.lower(area.get("name")), like),
+                    cb.like(cb.lower(area.get("code")), like),
+                    cb.like(cb.lower(portArea.get("name")), like),
+                    cb.like(cb.lower(portArea.get("code")), like));
+        };
+    }
+
+    /**
+     * Cargoes that last reached the desk on or after this day — "what has been sent this week".
+     * Reads the same derived date the list prints, so the filter and the column cannot disagree.
+     */
+    public static Specification<Cargo> lastSentSince(LocalDate since) {
+        return (root, query, cb) -> since == null ? null
+                : cb.greaterThanOrEqualTo(root.<OffsetDateTime>get("lastSentAt"),
+                        since.atStartOfDay(ZoneId.systemDefault()).toOffsetDateTime());
     }
 
     /**

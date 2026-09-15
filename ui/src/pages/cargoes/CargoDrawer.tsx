@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button, Descriptions, Drawer, Empty, Select, Space, Spin, Tag, Tooltip, Typography } from 'antd';
 import { EditOutlined, MailOutlined } from '@ant-design/icons';
+import dayjs from 'dayjs';
 import { useCargo, useCargoMutations } from '../../api/hooks';
 import { useCargoSources } from '../../intake/store';
 import OriginalEmail from '../../components/OriginalEmail';
@@ -38,6 +39,9 @@ export default function CargoDrawer({ cargoId, onClose, onEdit }: Props) {
   // rather than part of the feature that created it.
   const { data: sources } = useCargoSources(cargoId);
   const [emailOpen, setEmailOpen] = useState(false);
+  // Set when an arrival's own Read button opened the modal, so it opens on that email rather
+  // than on the newest. Cleared by the header button, which means "the emails", not one.
+  const [readingId, setReadingId] = useState<number>();
 
   // Only the ones the mailbox still holds can be opened. A cargo somebody typed has none,
   // and the button is absent rather than present and dead.
@@ -78,7 +82,13 @@ export default function CargoDrawer({ cargoId, onClose, onEdit }: Props) {
             />
             {readable.length > 0 && (
               <Tooltip title="What a broker actually wrote. The only thing that settles whether a figure on this screen is right.">
-                <Button icon={<MailOutlined />} onClick={() => setEmailOpen(true)}>
+                <Button
+                  icon={<MailOutlined />}
+                  onClick={() => {
+                    setReadingId(undefined);
+                    setEmailOpen(true);
+                  }}
+                >
                   Original email{readable.length > 1 ? `s (${readable.length})` : ''}
                 </Button>
               </Tooltip>
@@ -105,6 +115,11 @@ export default function CargoDrawer({ cargoId, onClose, onEdit }: Props) {
           )}
 
           <Descriptions column={1} size="small" bordered>
+            {data.lastSentAt && (
+              <Descriptions.Item label={data.fromMail || sources?.length ? 'Last sent' : 'Entered'}>
+                {dayjs(data.lastSentAt).format('D MMM YYYY HH:mm')}
+              </Descriptions.Item>
+            )}
             <Descriptions.Item label="Quantity">
               {formatQuantity(data.quantity, data.quantityUnit, data.quantityTolerance)}
               {/* The matching range is shown separately and only when it exists. Its absence
@@ -183,12 +198,19 @@ export default function CargoDrawer({ cargoId, onClose, onEdit }: Props) {
             </>
           )}
 
-          <CargoSources cargoId={data.id} />
+          <CargoSources
+            sources={sources ?? []}
+            onRead={(id) => {
+              setReadingId(id);
+              setEmailOpen(true);
+            }}
+          />
 
           {/* Every arrival, with a picker when there is more than one: a cargo three brokers
               sent is one record, and which of them said what is settled by reading them. */}
           <OriginalEmail
             sources={readable}
+            initialMailMessageId={readingId}
             open={emailOpen}
             onClose={() => setEmailOpen(false)}
           />

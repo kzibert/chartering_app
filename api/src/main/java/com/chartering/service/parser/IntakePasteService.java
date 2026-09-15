@@ -119,7 +119,7 @@ public class IntakePasteService {
         List<CargoDraft> cargoDrafts = new ArrayList<>();
         List<VesselDraft> vesselDrafts = new ArrayList<>();
         if (extraction != null) {
-            List<Cargo> live = cargoes.findLive(CargoService.LIVE_STATUSES);
+            List<Cargo> live = cargoes.findDuplicateCandidates(CargoService.RECOGNISED_ON_ARRIVAL_STATUSES);
             for (Extraction.ExtractedCargo c : extraction.cargoesOrEmpty()) {
                 if (c.isUsable()) cargoDrafts.add(cargoDraft(c, live, sender));
             }

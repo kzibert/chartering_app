@@ -37,17 +37,25 @@ public class CargoController {
                     + "and returns cargoes with no laycan on file whatever the window - "
                     + "\"the charterer has not said\" is not the same as \"not in September\". "
                     + "loadAreaId matches the area entered by hand or the area the load port "
-                    + "sits in, exactly, without widening to nested areas.")
+                    + "sits in, exactly, without widening to nested areas. loadPlace and "
+                    + "dischargePlace are text, matched against the port on file, the words the "
+                    + "email used and both areas. sentSince reads lastSentAt: the newest arrival "
+                    + "of the cargo, else its received date, else when it was entered. Besides "
+                    + "the columns, sort accepts lastSentAt, statusRank (lifecycle order), "
+                    + "loadPlace and dischargePlace.")
     public ResponseEntity<PageResponse<CargoResponse>> search(
             @RequestParam(required = false) String commodity,
             @RequestParam(required = false) List<String> status,
             @RequestParam(required = false) Long loadAreaId,
             @RequestParam(required = false) Long dischargeAreaId,
             @RequestParam(required = false) Long loadPortId,
+            @RequestParam(required = false) String loadPlace,
+            @RequestParam(required = false) String dischargePlace,
             @RequestParam(required = false) LocalDate laycanFrom,
             @RequestParam(required = false) LocalDate laycanTo,
             @RequestParam(required = false) BigDecimal minQuantity,
             @RequestParam(required = false) BigDecimal maxQuantity,
+            @RequestParam(required = false) LocalDate sentSince,
             @RequestParam(required = false) Long companyId,
             @RequestParam(required = false) Boolean fromMail,
             @PageableDefault(size = 20, sort = "id", direction = org.springframework.data.domain.Sort.Direction.DESC)
@@ -56,7 +64,8 @@ public class CargoController {
         List<CargoStatus> statuses = status == null ? null
                 : status.stream().map(CargoService::parseStatus).toList();
         CargoFilter filter = new CargoFilter(commodity, statuses, loadAreaId, dischargeAreaId,
-                loadPortId, laycanFrom, laycanTo, minQuantity, maxQuantity, companyId, fromMail);
+                loadPortId, loadPlace, dischargePlace, laycanFrom, laycanTo, minQuantity,
+                maxQuantity, sentSince, companyId, fromMail);
         return ResponseEntity.ok(cargoService.search(filter, pageable));
     }
 

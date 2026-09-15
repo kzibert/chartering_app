@@ -1,9 +1,11 @@
 package com.chartering.model;
 
 import jakarta.persistence.*;
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.Formula;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.math.BigDecimal;
@@ -209,4 +211,64 @@ public class Cargo {
     @UpdateTimestamp
     @Column(name = "updated_at")
     private OffsetDateTime updatedAt;
+
+    // ---- read, never written: what the Cargoes tab sorts and filters on ----
+    // Formulas rather than columns. Each is a fact already held elsewhere in the row or in
+    // cargo_sources, and a stored copy would be a second version of it to keep in step - on an
+    // audited entity, where every rewrite is also a change-log row saying nothing happened.
+    // None is null-safe to write, so none has a setter.
+
+    /** The order the status column sorts in. Kept in step with the enum by CargoStatusRankTest. */
+    public static final String STATUS_RANK_SQL = "case status"
+            + " when 'OPEN' then 0 when 'QUOTED' then 1 when 'FIRM' then 2"
+            + " when 'FIXED' then 3 when 'FAILED' then 4 when 'EXPIRED' then 5"
+            + " when 'WITHDRAWN' then 6 when 'NOT_WORKABLE' then 7 else 99 end";
+
+    /**
+     * When this cargo last reached the desk: the newest arrival in {@code cargo_sources}, else
+     * the received date on the row itself, else when it was entered.
+     *
+     * <p>Not a column, because a re-send would then rewrite the cargo and every rewrite would
+     * log a broker repeating himself, while the fact is one indexed max away
+     * ({@code ix_cargo_sources_cargo}). The two fallbacks keep it from ever being null:
+     * cargoes predating that table carry only {@code received_at}, a typed one has neither, and
+     * a newest-first sort that put every typed cargo above this morning's mail would read as
+     * broken.
+     *
+     * <p>Arrivals from the desk's own addresses ({@link AppSetting#OWN_ADDRESSES}) do not
+     * count: the sweep reads our replies too, and a reply quoting a cargo is not the cargo
+     * being sent to us. Read from the setting in the query, so a change to the list applies to
+     * rows already stored.
+     */
+    @Formula("coalesce((select max(s.reported_at) from cargo_sources s where s.cargo_id = id"
+            + " and not exists (select 1 from app_settings o where o.key = '"
+            + AppSetting.OWN_ADDRESSES + "'"
+            + " and lower(s.from_address) = any(string_to_array(o.value, ',')))),"
+            + " received_at, created_at)")
+    @Setter(AccessLevel.NONE)
+    private OffsetDateTime lastSentAt;
+
+    /**
+     * Lifecycle order rather than alphabetical. Sorted by name the column would read EXPIRED,
+     * FAILED, FIRM, FIXED - which puts the live ones nowhere in particular.
+     */
+    @Formula(STATUS_RANK_SQL)
+    @Setter(AccessLevel.NONE)
+    private Integer statusRank;
+
+    /**
+     * The load place as the list prints it - the port on file, else what was written, else the
+     * area - lower-cased so a port typed in capitals does not sort ahead of everything else.
+     * A sort key only: sorting on {@code loadPort.name} would lump every cargo that names an
+     * area or a port not on file into one block of nulls.
+     */
+    @Formula("lower(coalesce((select p.name from ports p where p.id = load_port_id),"
+            + " load_port_text, (select a.name from trade_areas a where a.id = load_area_id)))")
+    @Setter(AccessLevel.NONE)
+    private String loadPlace;
+
+    @Formula("lower(coalesce((select p.name from ports p where p.id = discharge_port_id),"
+            + " discharge_port_text, (select a.name from trade_areas a where a.id = discharge_area_id)))")
+    @Setter(AccessLevel.NONE)
+    private String dischargePlace;
 }
