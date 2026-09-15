@@ -221,7 +221,7 @@ public class IntakeService {
                                     Extraction.ExtractedCargo c) {
         ResolvedCargo resolved = resolve(c);
 
-        List<Cargo> candidates = cargoes.findLive(CargoService.LIVE_STATUSES);
+        List<Cargo> candidates = cargoes.findDuplicateCandidates(CargoService.RECOGNISED_ON_ARRIVAL_STATUSES);
         Optional<CargoMatcher.Candidate> duplicate =
                 CargoMatcher.findDuplicate(c, candidates, resolved.loadPort(), resolved.loadArea());
 
@@ -975,6 +975,9 @@ public class IntakeService {
         }
         if (c.getLoadPortText() != null) sb.append(" from ").append(c.getLoadPortText());
         else if (c.getLoadPort() != null) sb.append(" from ").append(c.getLoadPort().getName());
+        // The question reads differently about a cargo already turned down: merging is then
+        // how the repeat stays off the desk, and the reviewer should know that is what it is.
+        if (c.getStatus() == CargoStatus.NOT_WORKABLE) sb.append(" (marked not workable)");
         return sb.toString();
     }
 

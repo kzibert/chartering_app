@@ -75,6 +75,7 @@ class IntakeSuggestionsTest {
                 items,
                 mock(ParsedEmailRepository.class),
                 mock(CargoSourceRepository.class),
+                mock(com.chartering.service.SettingsService.class),
                 mock(IntakeService.class),
                 lookups,
                 vessels,

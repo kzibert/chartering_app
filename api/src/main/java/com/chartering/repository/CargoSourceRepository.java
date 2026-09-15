@@ -18,6 +18,10 @@ public interface CargoSourceRepository extends JpaRepository<CargoSource, Long> 
     @EntityGraph(attributePaths = {"mailMessage", "reportedByCompany", "reportedByPerson"})
     List<CargoSource> findByCargoIdOrderByReportedAtDesc(Long cargoId);
 
+    /** The same, for a page of cargoes at once - the Cargoes list prints a sender on every row. */
+    @EntityGraph(attributePaths = {"reportedByCompany", "reportedByPerson"})
+    List<CargoSource> findByCargoIdInOrderByReportedAtDesc(List<Long> cargoIds);
+
     boolean existsByCargoIdAndMailMessageId(Long cargoId, Long mailMessageId);
 
     long countByCargoId(Long cargoId);

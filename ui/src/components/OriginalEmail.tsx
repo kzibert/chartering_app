@@ -49,6 +49,7 @@ export interface EmailSource {
 export default function OriginalEmail({
   mailMessageId,
   sources,
+  initialMailMessageId,
   open,
   onClose,
 }: {
@@ -56,6 +57,8 @@ export default function OriginalEmail({
   mailMessageId?: number;
   /** Every arrival behind the record, newest first. */
   sources?: EmailSource[];
+  /** Which of `sources` to open on, when the reader picked one from a list; else the newest. */
+  initialMailMessageId?: number;
   open: boolean;
   onClose: () => void;
 }) {
@@ -68,14 +71,18 @@ export default function OriginalEmail({
       ? [{ mailMessageId, current: true }]
       : [];
 
-  const [chosen, setChosen] = useState<number | undefined>(choices[0]?.mailMessageId);
+  const opening = choices.some((c) => c.mailMessageId === initialMailMessageId)
+    ? initialMailMessageId
+    : choices[0]?.mailMessageId;
+  const [chosen, setChosen] = useState<number | undefined>(opening);
 
-  // Back to the newest whenever the modal is opened on a different item — a selection left
-  // over from the last hull would show somebody else's email under this one's heading.
+  // Back to the newest (or the one asked for) whenever the modal is opened on a different
+  // item — a selection left over from the last hull would show somebody else's email under
+  // this one's heading.
   useEffect(() => {
-    if (open) setChosen(choices[0]?.mailMessageId);
+    if (open) setChosen(opening);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, choices[0]?.mailMessageId, choices.length]);
+  }, [open, opening, choices.length]);
 
   const showing = chosen ?? choices[0]?.mailMessageId;
 

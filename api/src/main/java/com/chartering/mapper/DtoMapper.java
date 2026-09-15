@@ -25,6 +25,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Entity -> response-DTO mapping. Centralized so services stay thin and mapping is
@@ -307,6 +308,25 @@ public class DtoMapper {
      * so the screen cannot show one thing while the scoring reads another.
      */
     public CargoResponse toCargoResponse(Cargo c) {
+        return toCargoResponse(c, null);
+    }
+
+    /**
+     * A cargo with its senders summarised.
+     *
+     * @param sourcesNewestFirst its {@code cargo_sources} rows, or null where the caller has not
+     *                           read them - which leaves the sender fields absent rather than
+     *                           claiming nobody sent it
+     */
+    public CargoResponse toCargoResponse(Cargo c, List<CargoSource> sourcesNewestFirst) {
+        String lastSentBy = sourcesNewestFirst == null || sourcesNewestFirst.isEmpty() ? null
+                : senderOf(sourcesNewestFirst.get(0));
+        // Counted by address first: the same broker's two emails can resolve differently - one
+        // before his contact existed, one after - and would otherwise count as two senders.
+        Integer senderCount = sourcesNewestFirst == null ? null
+                : (int) sourcesNewestFirst.stream()
+                        .map(s -> s.getFromAddress() != null ? s.getFromAddress() : senderOf(s))
+                        .filter(Objects::nonNull).map(String::toLowerCase).distinct().count();
         TradeArea loadArea = effectiveArea(c.getLoadPort(), c.getLoadArea());
         TradeArea dischargeArea = effectiveArea(c.getDischargePort(), c.getDischargeArea());
         Company charterer = c.getChartererCompany();
@@ -343,7 +363,15 @@ public class DtoMapper {
                 brokerPerson != null ? brokerPerson.getFullName() : null,
                 c.isFromMail(),
                 c.getSourceMailMessage() != null ? c.getSourceMailMessage().getId() : null,
-                c.getReceivedAt(), c.getNotes(), c.getCreatedAt(), c.getUpdatedAt());
+                c.getReceivedAt(), c.getNotes(), c.getCreatedAt(), c.getUpdatedAt(),
+                c.getLastSentAt(), lastSentBy, senderCount);
+    }
+
+    /** The firm, else the person, else the bare address: the most a source row can name. */
+    private static String senderOf(CargoSource s) {
+        if (s.getReportedByCompany() != null) return s.getReportedByCompany().getName();
+        if (s.getReportedByPerson() != null) return s.getReportedByPerson().getFullName();
+        return s.getFromAddress();
     }
 
     /**

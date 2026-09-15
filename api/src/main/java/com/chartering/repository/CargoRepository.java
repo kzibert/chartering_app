@@ -47,8 +47,9 @@ public interface CargoRepository extends JpaRepository<Cargo, Long>, JpaSpecific
     /**
      * Cargoes a freshly read one might be a second sighting of.
      *
-     * <p>Narrowed by the one thing a duplicate can never differ on — it is still worth
-     * working — and by nothing else. Matching the commodity in SQL was the first attempt and
+     * <p>Narrowed by status and by nothing else: the live ones, and the ones marked not
+     * workable, so a cargo already turned down is recognised when it comes round again rather
+     * than filed as a fresh one ({@link CargoStatus#isRecognisedOnArrival()}). Matching the commodity in SQL was the first attempt and
      * it was too brittle against real readings: the same enquiry arrived as "Wheat" from one
      * broker and "wheat moloo" from another, because the model had folded the tolerance into
      * the commodity, and an equality test never brought the two together. So the commodity is
@@ -66,7 +67,7 @@ public interface CargoRepository extends JpaRepository<Cargo, Long>, JpaSpecific
             + "left join fetch c.loadArea "
             + "where c.status in :statuses "
             + "order by c.id desc")
-    List<Cargo> findLive(List<CargoStatus> statuses);
+    List<Cargo> findDuplicateCandidates(List<CargoStatus> statuses);
 
     long countByStatus(CargoStatus status);
 }

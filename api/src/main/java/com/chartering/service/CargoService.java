@@ -6,10 +6,12 @@ import com.chartering.dto.PageResponse;
 import com.chartering.exception.ResourceNotFoundException;
 import com.chartering.mapper.DtoMapper;
 import com.chartering.model.Cargo;
+import com.chartering.model.CargoSource;
 import com.chartering.model.CargoStatus;
 import com.chartering.repository.*;
 import com.chartering.specification.CargoSpecification;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
@@ -19,13 +21,18 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class CargoService {
 
     private final CargoRepository cargoRepository;
+    private final CargoSourceRepository cargoSourceRepository;
+    private final SettingsService settingsService;
     private final PortRepository portRepository;
     private final TradeAreaRepository tradeAreaRepository;
     private final CompanyRepository companyRepository;
@@ -42,23 +49,45 @@ public class CargoService {
     public static final List<CargoStatus> LIVE_STATUSES =
             Arrays.stream(CargoStatus.values()).filter(CargoStatus::isLive).toList();
 
+    /** What a freshly read cargo is tested against as a possible repeat. See the enum. */
+    public static final List<CargoStatus> RECOGNISED_ON_ARRIVAL_STATUSES =
+            Arrays.stream(CargoStatus.values()).filter(CargoStatus::isRecognisedOnArrival).toList();
+
     public record CargoFilter(String commodity,
                               List<CargoStatus> status,
                               Long loadAreaId,
                               Long dischargeAreaId,
                               Long loadPortId,
+                              String loadPlace,
+                              String dischargePlace,
                               LocalDate laycanFrom,
                               LocalDate laycanTo,
                               BigDecimal minQuantity,
                               BigDecimal maxQuantity,
+                              LocalDate sentSince,
                               Long companyId,
                               Boolean fromMail) {
     }
 
+    /**
+     * One page of cargoes, each with who sent it.
+     *
+     * <p>The senders come from one query for the whole page rather than one per row, and only
+     * here: the list is the one screen that prints them on every row, and the drawer reads the
+     * full arrivals list on its own.
+     */
     @Transactional(readOnly = true)
     public PageResponse<CargoResponse> search(CargoFilter f, Pageable pageable) {
-        return PageResponse.from(
-                cargoRepository.findAll(buildSpec(f), pageable).map(mapper::toCargoResponse));
+        Page<Cargo> page = cargoRepository.findAll(buildSpec(f), pageable);
+        List<Long> ids = page.getContent().stream().map(Cargo::getId).toList();
+        // Our own replies are arrivals the sweep read, not senders - see Cargo.lastSentAt.
+        Set<String> own = ids.isEmpty() ? Set.of() : settingsService.ownAddresses();
+        Map<Long, List<CargoSource>> sources = ids.isEmpty() ? Map.of()
+                : cargoSourceRepository.findByCargoIdInOrderByReportedAtDesc(ids).stream()
+                        .filter(s -> !SettingsService.isOwn(s.getFromAddress(), own))
+                        .collect(Collectors.groupingBy(s -> s.getCargo().getId()));
+        return PageResponse.from(page.map(c ->
+                mapper.toCargoResponse(c, sources.getOrDefault(c.getId(), List.of()))));
     }
 
     private Specification<Cargo> buildSpec(CargoFilter f) {
@@ -68,8 +97,11 @@ public class CargoService {
                 CargoSpecification.loadAreaEquals(f.loadAreaId()),
                 CargoSpecification.dischargeAreaEquals(f.dischargeAreaId()),
                 CargoSpecification.loadPortEquals(f.loadPortId()),
+                CargoSpecification.loadPlaceContains(f.loadPlace()),
+                CargoSpecification.dischargePlaceContains(f.dischargePlace()),
                 CargoSpecification.laycanOverlaps(f.laycanFrom(), f.laycanTo()),
                 CargoSpecification.quantityOverlaps(f.minQuantity(), f.maxQuantity()),
+                CargoSpecification.lastSentSince(f.sentSince()),
                 CargoSpecification.companyIdEquals(f.companyId()),
                 CargoSpecification.fromMailEquals(f.fromMail()));
     }

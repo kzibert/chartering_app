@@ -380,6 +380,26 @@ the charter party settles and this email does not state, so it produces **no ran
 rather than a guessed five percent — a guess would exclude ships that fit and nothing on
 screen would ever say it had. See `QuantityTolerance`.
 
+**`NOT_WORKABLE` is the desk turning a cargo down, and it is kept rather than deleted.** It
+is not live, so it is off Match and out of the Cargoes tab's default view like the closed
+statuses — but unlike them it is still a duplicate candidate
+(`CargoStatus.isRecognisedOnArrival`), so the same enquiry re-sent next week becomes a
+`CARGO_MERGE` question about a cargo already declined instead of a fresh OPEN one. A fixed or
+withdrawn cargo turning up again is a new enquiry and is not recognised.
+
+**The list's "last sent", status order and place sort keys are `@Formula`s on `Cargo`, not
+columns** (`lastSentAt`, `statusRank`, `loadPlace`, `dischargePlace`). Last sent is the newest
+`cargo_sources.reported_at`, else `received_at`, else `created_at`; storing it would rewrite an
+audited row on every re-send. **Arrivals from the desk's own addresses do not count** — the
+sweep reads our replies too — and the list of them is `app_settings` key `mail.ownAddresses`
+("My email addresses" on the Settings tab, comma-joined and lower-cased because the formula
+splits it in SQL). The same filter drops them from the list's sender summary and from
+`GET /intake/cargoes/{id}/sources`. It is applied on read, never at intake, so the rows stay
+and the setting covers what was stored before it was set. They are in `AuditedEntities.IGNORED_FIELDS`, and
+`STATUS_RANK_SQL` must name every status — `CargoStatusRankTest` fails when one is added
+without it. The list's sortable columns use these names as their `dataIndex`, because the sort
+is the server's.
+
 **A `VesselPosition` is one row per report, never one per vessel.** A position is a fact with
 a date on it: "SPOT AT MARMARA" was true on Monday and is a lie by Friday. The same hull is
 reported by several brokers who disagree, and both readings are the record. Open Fleet shows
