@@ -8,6 +8,10 @@ import com.chartering.model.Company;
 import com.chartering.model.CargoSource;
 import com.chartering.model.Contact;
 import com.chartering.model.DataChange;
+import com.chartering.model.FeedItem;
+import com.chartering.model.FeedSource;
+import com.chartering.model.FeedSummary;
+import com.chartering.model.FeedTopic;
 import com.chartering.model.IntakeItem;
 import com.chartering.model.IntakeItemSource;
 import com.chartering.model.MailFolder;
@@ -501,6 +505,38 @@ public class DtoMapper {
                 m != null ? m.getId() : null,
                 m != null ? m.getSubject() : null,
                 s.getReportedAt(), s.getNotes());
+    }
+
+    public FeedSourceResponse toFeedSourceResponse(FeedSource s, long itemCount) {
+        return new FeedSourceResponse(s.getId(), s.getName(), s.getKind(), s.getUrl(), s.getParserKey(),
+                s.isEnabled(), s.getLastFetchedAt(), s.getLastError(), s.getLastNewItems(), itemCount);
+    }
+
+    /** The source is read for its name; within one page the few sources load once each. */
+    public FeedItemResponse toFeedItemResponse(FeedItem i) {
+        FeedSource s = i.getSource();
+        return new FeedItemResponse(i.getId(), s.getId(), s.getName(), i.getPublishedAt(), i.getTitle(),
+                i.getText(), i.getUrl(), i.getAuthor(), i.getFetchedAt());
+    }
+
+    public FeedTopicResponse toFeedTopicResponse(FeedTopic t) {
+        return new FeedTopicResponse(t.getId(), t.getName(), t.keywordList(), t.isSelected(), t.getSortOrder());
+    }
+
+    /**
+     * @param withItems the detail view's list of items it was written from; left out of lists,
+     *                  where it would repeat the collection once per summary
+     */
+    public FeedSummaryResponse toFeedSummaryResponse(FeedSummary s, boolean withItems) {
+        List<FeedItemResponse> items = withItems
+                ? s.getItems().stream().map(this::toFeedItemResponse).toList()
+                : null;
+        return new FeedSummaryResponse(s.getId(), s.getRunId(),
+                s.getTopic() != null ? s.getTopic().getId() : null, s.getTopicName(), s.getStatus(),
+                s.getContent(), s.getStrategy(), s.getLevels(), s.getLlmCalls(), s.getItemsConsidered(),
+                s.getItemsUsed(), s.getItemsDropped(), s.getPromptTokens(), s.getCompletionTokens(),
+                s.getContextWindow(), s.getPeriodFrom(), s.getPeriodTo(), s.getSystemPrompt(), s.getModel(),
+                s.getError(), s.getDurationMs(), s.getCreatedAt(), items);
     }
 
     /**

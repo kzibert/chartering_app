@@ -23,6 +23,7 @@ import { SendingTodayPanel } from '../../components/SendingToday';
 import type { CirculationSettings, CirculationSettingsRequest } from '../../api/types';
 import WhatsappSettingsCard from './WhatsappSettingsCard';
 import ParserSettingsCard from './ParserSettingsCard';
+import FeedSettingsCard from './FeedSettingsCard';
 import MatchSettingsCard from './MatchSettingsCard';
 import OwnAddressesCard from './OwnAddressesCard';
 
@@ -400,6 +401,8 @@ export default function SettingsPage() {
       <OwnAddressesCard />
 
       <ParserSettingsCard />
+
+      <FeedSettingsCard />
 
       <MatchSettingsCard />
 
