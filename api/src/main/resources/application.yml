@@ -270,6 +270,34 @@ chartering:
     max-tokens: ${PARSER_MAX_TOKENS:6144}
     max-attempts: ${PARSER_MAX_ATTEMPTS:3}
 
+  # The Feed tab: Telegram channels, RSS feeds and a few websites read on a timer, and summarised
+  # per topic by the same local model the parser uses (PARSER_URL - there is one server to point at).
+  #
+  # THE TAB IS ON EVERYWHERE; ONLY THE ANALYSIS IS SWITCHED. Sources, topics, the prompt and the
+  # summaries are rows in the shared database, so the hosted instance reads and edits them. What
+  # this switch covers is fetching and summarising: the model is on a GPU in the office, and two
+  # instances fetching the same sources would read somebody else's server twice. Off, those
+  # endpoints answer 404 and everything else still works.
+  #
+  # The context window, answer sizes, lookback, call cap, fetch interval and both prompts are NOT
+  # here: they are runtime settings (FeedSettings), turned while reading the output.
+  feed:
+    analysis-enabled: ${FEED_ANALYSIS_ENABLED:false}
+    # The model that writes summaries. Blank means the parser's (PARSER_URL) - which works, but
+    # that model is an extraction finetune: measured on real feed items it missed facts and wrote
+    # rates nobody quoted. A general instruct model on its own port is what this is for.
+    llm-url: ${FEED_LLM_URL:}
+    llm-model: ${FEED_LLM_MODEL:}
+    # Names this application, and every source it was built against answers it. A site that
+    # refuses it has said no to programs; drop the source rather than disguise the reader.
+    user-agent: ${FEED_USER_AGENT:CharteringApp-Feed/1.0 (market feed reader)}
+    connect-timeout-ms: ${FEED_CONNECT_TIMEOUT_MS:10000}
+    read-timeout-ms: ${FEED_READ_TIMEOUT_MS:20000}
+    request-gap-ms: ${FEED_REQUEST_GAP_MS:1500}
+    telegram-max-pages: ${FEED_TELEGRAM_MAX_PAGES:5}
+    max-detail-pages-per-fetch: ${FEED_MAX_DETAIL_PAGES:15}
+    max-item-chars: ${FEED_MAX_ITEM_CHARS:40000}
+
   # Finding a hull on an outside source when the IMO is missing on both sides - the case a
   # position list creates constantly, since a circular names a ship and almost never her
   # number. The only implementation reads a public ship-database search page.

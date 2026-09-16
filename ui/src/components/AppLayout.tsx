@@ -19,6 +19,7 @@ import {
   HistoryOutlined,
   ExperimentOutlined,
   RobotOutlined,
+  ReadOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -34,7 +35,8 @@ const { Sider, Header, Content } = Layout;
 // No '/contacts': contacts live inside People now, grouped under the person who owns them.
 const KEYS = [
   '/', '/cargoes', '/open-fleet', '/match', '/vessels', '/companies', '/people',
-  '/circulation-lists', '/circulars', '/mailbox', '/analysis', '/history', '/settings',
+  '/circulation-lists', '/circulars', '/mailbox', '/feed', '/intake', '/analysis', '/history',
+  '/settings',
 ];
 
 /**
@@ -143,6 +145,10 @@ export default function AppLayout({
     ...(analysis.data?.enabled
       ? [{ key: '/analysis', icon: <ExperimentOutlined />, label: 'Analysis' }]
       : []),
+    // On every deployment, unlike the two above: the summaries, sources and topics are rows in
+    // the shared database and read the same from the hosted instance. Only fetching and
+    // summarising are local, and the page itself leaves those buttons out where they cannot work.
+    { key: '/feed', icon: <ReadOutlined />, label: 'Feed' },
     // Last in the list, and not in the bottom bar on a phone: the change log is where you
     // go when something is already wrong, not somewhere work gets done. It sits above
     // Settings because it is about the data rather than about the application.

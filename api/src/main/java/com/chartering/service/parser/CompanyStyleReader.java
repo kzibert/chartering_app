@@ -67,9 +67,15 @@ public final class CompanyStyleReader {
     private static final Pattern EMAIL =
             Pattern.compile("[A-Za-z0-9._%+'-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}");
 
+    /**
+     * A web address the text actually writes: {@code www.} or a scheme, or a bare host behind a
+     * label ("Web: example.com"). Never an email's domain — see {@link #readWebsite}.
+     */
     private static final Pattern WEBSITE = Pattern.compile(
             "(?i)(?:https?://)?(?:www\\.)([a-z0-9-]+(?:\\.[a-z0-9-]+)*\\.[a-z]{2,})"
-                    + "|(?i)https?://([a-z0-9-]+(?:\\.[a-z0-9-]+)*\\.[a-z]{2,})");
+                    + "|(?i)https?://([a-z0-9-]+(?:\\.[a-z0-9-]+)*\\.[a-z]{2,})"
+                    + "|(?i)\\b(?:web\\s*site|website|web\\s*page|webpage|web|url|homepage|home\\s*page|site)"
+                    + "\\s*[:\\-–]\\s*(?:https?://)?(?:www\\.)?([a-z0-9-]+(?:\\.[a-z0-9-]+)*\\.[a-z]{2,})\\b(?![@.\\w])");
 
     /**
      * A label or a number, in the order they appear on the line. The label list is what
@@ -137,7 +143,7 @@ public final class CompanyStyleReader {
         contacts.addAll(readEmails(text, people));
         contacts.addAll(readPhones(lines, people));
 
-        String website = readWebsite(text, contacts);
+        String website = readWebsite(text);
         String name = firmName(lines, broker);
         CountryLine where = readCountry(lines);
 
@@ -178,18 +184,27 @@ public final class CompanyStyleReader {
         return null;
     }
 
-    private static String readWebsite(String text, List<ContactLine> contacts) {
-        Matcher m = WEBSITE.matcher(text == null ? "" : text);
+    /**
+     * The website, only when the text writes one.
+     *
+     * <p><b>An email's domain is not a website, and is not offered as one.</b> It used to be the
+     * fallback, on the reasoning that a firm's mail domain usually serves its site too — but
+     * "usually" filled the website box on nearly every paste with a guess that looked read, and
+     * brokers mail from group domains, agency domains and hosted desks that have no site at all.
+     * A website the text does not give stays empty. The mail domain still counts where it is
+     * evidence rather than a guess: {@link CompanyMatcher} matches companies on it.
+     *
+     * <p>A host directly after an {@code @} is part of an address and is skipped, so
+     * "info@www.example.com" cannot be read as a site either.
+     */
+    private static String readWebsite(String text) {
+        String t = text == null ? "" : text;
+        Matcher m = WEBSITE.matcher(t);
         while (m.find()) {
-            String host = m.group(1) != null ? m.group(1) : m.group(2);
-            if (host != null && !host.contains("@")) return host.toLowerCase(Locale.ROOT);
-        }
-        // A firm's own mail domain is its website more often than not, and it is the better
-        // guess than nothing — shown on the form, where it is one delete if it is wrong.
-        for (ContactLine c : contacts) {
-            if (!"email".equals(c.kind())) continue;
-            String domain = c.value().substring(c.value().indexOf('@') + 1);
-            if (!isWebmail(domain)) return domain;
+            String host = m.group(1) != null ? m.group(1) : m.group(2) != null ? m.group(2) : m.group(3);
+            if (host == null) continue;
+            if (m.start() > 0 && t.charAt(m.start() - 1) == '@') continue;
+            return host.toLowerCase(Locale.ROOT);
         }
         return null;
     }

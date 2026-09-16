@@ -215,6 +215,15 @@ services:
       - key: LOOKUP_ENABLED
         value: false
 
+      # The Feed tab's fetching and summarising. Pinned false for PARSER_ENABLED's reason - the
+      # summaries are written by the office model, which this instance cannot reach - and one of
+      # its own: the office instance already fetches the sources, and a second fetcher here would
+      # read the same pages twice from somebody else's server. The tab itself is NOT switched off
+      # by this: sources, topics, the prompt and every summary are rows in the shared database,
+      # and this instance shows and edits them.
+      - key: FEED_ANALYSIS_ENABLED
+        value: false
+
   # ---------------------------------------------------------------------------
   # ui - the built SPA on Render's CDN. No container, no instance, no sleep.
   # ---------------------------------------------------------------------------
