@@ -7,7 +7,9 @@ import {
   Drawer,
   Divider,
   Empty,
+  Input,
   Popconfirm,
+  Segmented,
   Space,
   Table,
   Tag,
@@ -28,6 +30,7 @@ import LinkSender from './LinkSender';
 import CreateHerModal from './CreateHerModal';
 import { ROLE_WORDS } from './capacities';
 import { kindMeta } from './labels';
+import { correctionsFrom, isCapacityField, otherReading, readAs } from './corrections';
 import type {
   FieldDiff,
   IntakeAction,
@@ -66,6 +69,9 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
   }, [item]);
 
   const [chosen, setChosen] = useState<string[]>([]);
+  // What the reviewer typed in place of the email's value, by field. Empty means "use what the
+  // email said" - the common answer, and the one that must stay a single click.
+  const [edits, setEdits] = useState<Record<string, string>>({});
   const [linkTo, setLinkTo] = useState<number>();
   const [emailOpen, setEmailOpen] = useState(false);
   // The company the sender resolved to, opened over this drawer rather than navigated to:
@@ -89,11 +95,16 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
   // screen that starts with nothing selected makes the common answer the most clicking.
   useEffect(() => {
     setChosen(diffs.map((d) => d.field));
+    // Cleared with the rows, not merged into them: the rows are recomputed against her record
+    // every time the drawer opens, and a correction held over from a figure that is no longer
+    // in dispute would be written against a row nobody is looking at.
+    setEdits({});
   }, [diffs]);
 
   useEffect(() => {
     setLinkTo(undefined);
     setVesselOpen(undefined);
+    setEdits({});
   }, [itemId]);
 
   if (!itemId) return null;
@@ -133,6 +144,10 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
           body: {
             action,
             fields: item.kind === 'VESSEL_FIELDS' ? chosen : undefined,
+            // Only what actually differs from what the email said, and only for rows being
+            // accepted: a correction on an unticked row would be a write nobody asked for.
+            corrections:
+              item.kind === 'VESSEL_FIELDS' ? correctionsFrom(diffs, chosen, edits) : undefined,
             vesselId: item.kind === 'NEW_VESSEL' ? linkTo : undefined,
           },
         },
@@ -272,6 +287,10 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
               diffs={diffs}
               chosen={chosen}
               onChange={setChosen}
+              edits={edits}
+              onEdit={(field, value) =>
+                setEdits((held) => ({ ...held, [field]: value }))
+              }
               editable={pending}
               onOpenCompany={setCompanyId}
               onOpenVessel={() => setVesselOpen(item.payload?.vesselId)}
@@ -380,6 +399,8 @@ function VesselFieldsBody({
   diffs,
   chosen,
   onChange,
+  edits,
+  onEdit,
   editable,
   onOpenCompany,
   onOpenVessel,
@@ -390,6 +411,8 @@ function VesselFieldsBody({
   diffs: FieldDiff[];
   chosen: string[];
   onChange: (fields: string[]) => void;
+  edits: Record<string, string>;
+  onEdit: (field: string, value: string) => void;
   editable: boolean;
   onOpenCompany: (id: number) => void;
   onOpenVessel: () => void;
@@ -464,18 +487,37 @@ function VesselFieldsBody({
             : undefined
         }
         columns={[
-          { title: 'Field', dataIndex: 'label', key: 'label', width: 150 },
+          { title: 'Field', dataIndex: 'label', key: 'label', width: 110 },
           {
             title: 'On file',
             dataIndex: 'current',
             key: 'current',
+            width: 120,
             render: (v: string) => <Typography.Text delete={false}>{v ?? '—'}</Typography.Text>,
           },
           {
             title: 'The email says',
             dataIndex: 'incoming',
             key: 'incoming',
+            width: 130,
             render: (v: string) => <Typography.Text strong>{v ?? '—'}</Typography.Text>,
+          },
+          {
+            title: (
+              <Tooltip title="Neither side right? Type what the record should say, and that is what is written.">
+                <span>Write instead</span>
+              </Tooltip>
+            ),
+            key: 'correction',
+            render: (_: unknown, row: FieldDiff) =>
+              editable ? (
+                <Correction
+                  row={row}
+                  value={edits[row.field] ?? ''}
+                  reading={item.payload?.vessel}
+                  onChange={(next) => onEdit(row.field, next)}
+                />
+              ) : null,
           },
         ]}
       />
@@ -498,6 +540,77 @@ function VesselFieldsBody({
         </>
       )}
     </>
+  );
+}
+
+/**
+ * One row's third answer, and the unit button for the two rows that need one.
+ *
+ * <b>The box.</b> Empty means "write what the email said", which is the common answer and stays
+ * a single click. Type in it and that is what goes into the column instead - the value is read
+ * into the field's own type on the server, so a draft typed as "7.9" lands as a number and
+ * "abt 7.9" comes back as a sentence rather than being silently skipped.
+ *
+ * <b>The unit button, and why it is only on grain and bale.</b> Circulars write cbm and cbft in
+ * the same week, thirty-five apart, and often write neither, so the API reads the unit off the
+ * ship's size (see CapacityUnits). Where her size cannot decide - no deadweight anywhere, or a
+ * figure absurd in both units - it takes the label the text wrote, and a broker who typed "cbm"
+ * over a column of cubic feet has then put the error in the record. This says which unit the
+ * figure was read in and lets the reviewer say it was the other one; the converted value drops
+ * into the box, so what is written is the same correction any other row would send.
+ *
+ * No unit button on the rest of the table: a deadweight is in tonnes and a draft is in metres,
+ * and there is nothing to disagree about.
+ */
+function Correction({
+  row,
+  value,
+  reading,
+  onChange,
+}: {
+  row: FieldDiff;
+  value: string;
+  reading?: Record<string, unknown>;
+  onChange: (value: string) => void;
+}) {
+  const current = readAs(row, reading);
+  const other = otherReading(row, reading);
+  // What the box would write if it were filled in: the typed value, else the email's.
+  const effective = (value || row.incoming || '').trim();
+  const chosenUnit =
+    current && other ? (effective === other.value ? other.unit : current) : undefined;
+
+  return (
+    <Space direction="vertical" size={4} style={{ width: '100%' }}>
+      <Input
+        size="small"
+        allowClear
+        value={value}
+        placeholder={row.incoming ?? ''}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {isCapacityField(row.field) && current && other && (
+        <Tooltip
+          title={`The email printed this figure without a unit the ship's size could settle. It was read as ${
+            current === 'm3' ? 'cubic metres' : 'cubic feet'
+          } — pick the other one and the converted value goes in the box.`}
+        >
+          <Segmented
+            size="small"
+            value={chosenUnit}
+            options={[
+              { label: 'm³', value: 'm3' },
+              { label: 'cbft', value: 'cbft' },
+            ]}
+            onChange={(unit) =>
+              // Back to the email's own reading when the original unit is picked again, which
+              // clears the correction rather than pinning a re-multiplied figure.
+              onChange(unit === current ? '' : other.value)
+            }
+          />
+        </Tooltip>
+      )}
+    </Space>
   );
 }
 

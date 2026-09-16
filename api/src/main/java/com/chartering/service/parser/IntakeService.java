@@ -17,6 +17,8 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -59,6 +61,8 @@ public class IntakeService {
     private final VesselRepository vessels;
     private final VesselExNameRepository exNames;
     private final IntakeItemSourceRepository itemSources;
+    private final IntakeFieldDecisionRepository decisions;
+    private final IntakeVesselAliasRepository aliases;
     private final VesselPositionRepository positions;
     private final IntakeResolver resolver;
     private final VesselLookupService lookups;
@@ -124,19 +128,68 @@ public class IntakeService {
      */
     private VesselOutcome applyVessel(ParsedEmail parsed, MailMessage message,
                                       Extraction.ExtractedVessel v) {
-        IntakeResolver.ResolvedVessel match = resolver.resolveVessel(v);
+        Long reporter = companyIdOf(message);
+        IntakeResolver.ResolvedVessel match = resolver.resolveVessel(v, reporter);
         if (!match.found()) {
             return new VesselOutcome(false, raiseNewVessel(parsed, v) ? 1 : 0);
         }
 
         Vessel vessel = match.vessel();
         VesselFieldDiff.Result diff = VesselFieldDiff.compare(vessel, v);
+        // What this firm has already been told about is not a question any more. Asked before
+        // the item is raised rather than when it is opened, so the queue's count is the number
+        // of questions actually waiting.
+        VesselFieldDiff.Result asking = withoutSettled(vessel, v, diff, Collections.singletonList(reporter));
         int raised = 0;
-        if (diff.hasConflicts() && raiseVesselFields(parsed, vessel, match.how(), v, diff)) {
+        if (asking.hasConflicts() && raiseVesselFields(parsed, vessel, match.how(), v, asking)) {
             raised = 1;
         }
         boolean applied = recordPosition(vessel, v, message, parsed);
         return new VesselOutcome(applied, raised);
+    }
+
+    /**
+     * The same disagreements, less the ones this firm has already been told about.
+     *
+     * <p><b>The repeat this exists to stop.</b> A broker re-sends his position list every
+     * morning. Where his reading of a hull differs from the record the reviewer answers it —
+     * and the next morning the identical email raises the identical question, because the
+     * answer was written on the item and the item was closed. ANGORA asked about JELENA's bale
+     * four days running; nothing recorded that this value, from this firm, about this field,
+     * had been looked at and turned down.
+     *
+     * <p>Scoped to the correspondent, which is the judgement in it: that one broker is wrong
+     * about her bale says nothing about the next one, and a second firm reporting the same
+     * figure is a second opinion nobody here has weighed. Compared through
+     * {@link VesselFieldDiff#reportsValue} rather than as text, so a figure the same broker
+     * rounds differently on Wednesday is still the one settled on Tuesday.
+     *
+     * @param askedBy the firms the rows would be attributed to; a null among them is the
+     *                sender the sync could not place, which is a value here and not a wildcard
+     */
+    VesselFieldDiff.Result withoutSettled(Vessel vessel, Extraction.ExtractedVessel reading,
+                                          VesselFieldDiff.Result diff, Collection<Long> askedBy) {
+        if (!diff.hasConflicts() || vessel.getId() == null) return diff;
+        List<IntakeFieldDecision> settled = decisions.forVessel(vessel.getId());
+        if (settled.isEmpty()) return diff;
+
+        List<FieldDiff> asking = new ArrayList<>();
+        for (FieldDiff row : diff.conflicts()) {
+            if (!isSettled(settled, vessel, reading, row.field(), askedBy)) asking.add(row);
+        }
+        return new VesselFieldDiff.Result(List.copyOf(asking), diff.filled());
+    }
+
+    private static boolean isSettled(List<IntakeFieldDecision> settled, Vessel vessel,
+                                     Extraction.ExtractedVessel reading, String field,
+                                     Collection<Long> askedBy) {
+        for (IntakeFieldDecision d : settled) {
+            if (!d.getField().equals(field)) continue;
+            Long who = d.getReportedByCompany() == null ? null : d.getReportedByCompany().getId();
+            if (!askedBy.contains(who)) continue;
+            if (VesselFieldDiff.reportsValue(vessel, reading, field, d.getValueText())) return true;
+        }
+        return false;
     }
 
     /**
@@ -483,6 +536,7 @@ public class IntakeService {
      */
     @Transactional
     public Resolution resolve(Long id, Action action, List<String> fields,
+                              Map<String, String> corrections,
                               Long vesselId, String note, String user) {
         IntakeItem item = items.findWithEmailById(id)
                 .orElseThrow(() -> new com.chartering.exception.ResourceNotFoundException(
@@ -493,8 +547,9 @@ public class IntakeService {
         ChangeContext.describe("Intake: " + item.getKind() + " " + action);
 
         String summary = switch (item.getKind()) {
-            case NEW_VESSEL -> resolveNewVessel(item, action, vesselId);
-            case VESSEL_FIELDS -> resolveVesselFields(item, action, fields);
+            case NEW_VESSEL -> resolveNewVessel(item, action, vesselId, user);
+            case VESSEL_FIELDS -> resolveVesselFields(item, action, fields,
+                    corrections == null ? Map.of() : corrections, user);
             case CARGO_MERGE -> resolveCargoMerge(item, action);
         };
 
@@ -505,7 +560,7 @@ public class IntakeService {
         return new Resolution(item, summary);
     }
 
-    private String resolveNewVessel(IntakeItem item, Action action, Long vesselId) {
+    private String resolveNewVessel(IntakeItem item, Action action, Long vesselId, String user) {
         IntakePayloads.NewVessel payload = require(item, IntakePayloads.NewVessel.class);
         if (action == Action.DISCARD) return "Discarded; no vessel created.";
 
@@ -533,44 +588,261 @@ public class IntakeService {
             summary = "Created " + vessel.getName() + " and filed her position.";
         }
 
+        // Whichever answer it was, this firm's name for her is now settled. The ex-name above
+        // cannot carry it where the name the email used is the one she already has - which is
+        // every PHANTOM, the case that made this necessary.
+        summary += rememberAlias(item, vessel, payload.vessel().name(),
+                action == Action.ALTERNATIVE ? IntakeVesselAlias.LINKED : IntakeVesselAlias.CREATED,
+                user);
+
         recordPosition(vessel, payload.vessel(), message, item.getParsedEmail());
         item.setVesselId(vessel.getId());
         return summary;
     }
 
-    private String resolveVesselFields(IntakeItem item, Action action, List<String> fields) {
+    private String resolveVesselFields(IntakeItem item, Action action, List<String> fields,
+                                       Map<String, String> corrections, String user) {
         IntakePayloads.VesselFields payload = require(item, IntakePayloads.VesselFields.class);
-        if (action == Action.DISCARD) {
-            return "Kept what was on file; nothing changed.";
-        }
-        Vessel vessel = vessels.findById(payload.vesselId()).orElseThrow(() ->
-                new com.chartering.exception.ResourceNotFoundException("Vessel", payload.vesselId()));
+        Vessel vessel = payload.vesselId() == null ? null
+                : vessels.findById(payload.vesselId()).orElse(null);
 
-        if (action == Action.ALTERNATIVE) return separateVessel(item, payload, vessel);
+        if (action == Action.DISCARD) {
+            // Every row that was on screen has now been answered "the record is right", and
+            // that answer is what stops tomorrow's copy of the same list asking it again.
+            int settled = 0;
+            if (vessel != null) {
+                List<FieldDiff> rows = shown(item, vessel, payload);
+                settled = settle(item, vessel, fieldsOf(rows), reported(vessel, payload, rows),
+                        IntakeFieldDecision.KEPT, Map.of(), user);
+            }
+            return "Kept what was on file; nothing changed."
+                    + (settled > 0 ? " The same reading will not be raised again." : "");
+        }
+        if (vessel == null) {
+            throw new com.chartering.exception.ResourceNotFoundException("Vessel", payload.vesselId());
+        }
+
+        if (action == Action.ALTERNATIVE) return separateVessel(item, payload, vessel, user);
+
+        // What the screen showed: the comparison made now rather than the one stored when the
+        // email arrived (see VesselFieldDiff.preview), less anything these senders have already
+        // settled — so "accept all" cannot write a figure the screen was not offering.
+        List<FieldDiff> onScreen = shown(item, vessel, payload);
+        // Read off before anything is written. Correcting her deadweight moves the size a
+        // capacity's unit is judged against, so the same reading asked about afterwards could
+        // canonicalise differently - and a decision stored under a value the email never
+        // reported would never match it again.
+        Map<String, String> reported = reported(vessel, payload, onScreen);
 
         // An empty list means all of them, which is what the "Accept all" button sends. A
         // list that names nothing and meant nothing would be an accept that quietly did
         // nothing, so the UI never sends one.
-        // "All" is what the screen showed, and the screen shows the comparison made now rather
-        // than the one stored when the email arrived — see VesselFieldDiff.preview.
         List<String> chosen = fields == null || fields.isEmpty()
-                ? (payload.vessel() == null ? payload.diffs()
-                        : VesselFieldDiff.preview(vessel, payload.vessel()).conflicts())
-                        .stream().map(FieldDiff::field).toList()
+                ? fieldsOf(onScreen)
                 : fields;
+
+        // Read into each field's own type before anything is written, so a value that cannot be
+        // one is a sentence on the screen rather than half an accept. parseCorrection throws
+        // with the field's own name in it.
+        Map<String, Object> typed = new LinkedHashMap<>();
+        for (Map.Entry<String, String> e : corrections.entrySet()) {
+            if (!chosen.contains(e.getKey())) continue;
+            typed.put(e.getKey(), VesselFieldDiff.parseCorrection(e.getKey(), e.getValue()));
+        }
 
         // A rename is the one accepted field that has a second effect: the name she is
         // losing is the name this database has been finding her under, and dropping it would
-        // make every older position list unsearchable for her.
+        // make every older position list unsearchable for her. She gains the corrected name
+        // where there is one, and the email's otherwise.
         if (chosen.contains("name")) {
-            rememberExName(vessel, vessel.getName(),
-                    payload.vessel() == null ? null : payload.vessel().name());
+            Object corrected = typed.get("name");
+            rememberExName(vessel, vessel.getName(), corrected != null ? (String) corrected
+                    : payload.vessel() == null ? null : payload.vessel().name());
         }
 
-        List<String> written = VesselFieldDiff.applySelected(vessel, payload.vessel(), chosen);
+        List<String> written =
+                VesselFieldDiff.applySelected(vessel, payload.vessel(), chosen, typed);
+
+        // Two answers leave the email as wrong tomorrow as it is today, and both are recorded:
+        // a row left unticked, and a row the reviewer overrode. An accepted value needs no row
+        // — the record now holds it, so tomorrow's list agrees with it.
+        settle(item, vessel,
+                fieldsOf(onScreen).stream().filter(f -> !chosen.contains(f)).toList(),
+                reported, IntakeFieldDecision.KEPT, Map.of(), user);
+        settle(item, vessel, typed.keySet(), reported, IntakeFieldDecision.CORRECTED, typed, user);
+
         if (written.isEmpty()) return "Nothing changed — the record already reads that way.";
-        return "Updated " + String.join(", ", written.stream().map(VesselFieldDiff::labelOf).toList())
+        String summary = "Updated "
+                + String.join(", ", written.stream().map(VesselFieldDiff::labelOf).toList())
                 + " on " + vessel.getName() + ".";
+        if (!typed.isEmpty()) {
+            summary += " " + String.join(", ",
+                    typed.keySet().stream().map(VesselFieldDiff::labelOf).toList())
+                    + (typed.size() == 1 ? " was corrected by hand." : " were corrected by hand.");
+        }
+        return summary;
+    }
+
+    /**
+     * The rows the reviewer was actually looking at.
+     *
+     * <p>The stored rows are the comparison made the day the email arrived, under that day's
+     * rules; the screen re-asks against the record as it stands and drops what these senders
+     * have already settled. An accept has to be answering that same list, or "accept all" would
+     * write a figure the screen never offered.
+     */
+    List<FieldDiff> shown(IntakeItem item, Vessel vessel, IntakePayloads.VesselFields payload) {
+        if (payload.vessel() == null) return payload.diffs() == null ? List.of() : payload.diffs();
+        return withoutSettled(vessel, payload.vessel(),
+                VesselFieldDiff.preview(vessel, payload.vessel()),
+                senderIdsOf(item)).conflicts();
+    }
+
+    private static List<String> fieldsOf(List<FieldDiff> rows) {
+        return rows.stream().map(FieldDiff::field).toList();
+    }
+
+    /**
+     * What the email reported for each row, canonically: the value as it was compared, with no
+     * unit on it. This is what a decision is stored under and what a later reading is tested
+     * against, and it is never the printed string - two renderings of one figure would be two
+     * declined values, neither recognising the other.
+     */
+    private static Map<String, String> reported(Vessel vessel, IntakePayloads.VesselFields payload,
+                                                List<FieldDiff> rows) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (payload.vessel() == null) return out;
+        for (FieldDiff row : rows) {
+            String value = VesselFieldDiff.incomingValue(vessel, payload.vessel(), row.field());
+            if (value != null) out.put(row.field(), value);
+        }
+        return out;
+    }
+
+    /**
+     * Record that these values, from the firms that sent them, have been answered.
+     *
+     * <p>One row per field per sender. An item several brokers raised is one question and gets
+     * one answer, so the answer covers all of them - but as separate rows, because each is a
+     * statement about what that firm reported and any of them may later be the only one still
+     * saying it.
+     *
+     * <p>Idempotent against what is already stored: re-answering the same value updates the
+     * existing row rather than failing on the unique index, which is what the second copy of a
+     * re-parsed email would otherwise do.
+     *
+     * @param typed the corrected values, for the CORRECTED rows; empty for KEPT
+     * @return how many decisions were written or refreshed
+     */
+    private int settle(IntakeItem item, Vessel vessel, Collection<String> fields,
+                       Map<String, String> reported, String decision,
+                       Map<String, Object> typed, String user) {
+        if (fields.isEmpty()) return 0;
+        List<Company> senders = sendersOf(item);
+        List<IntakeFieldDecision> existing = decisions.forVessel(vessel.getId());
+
+        int written = 0;
+        for (String field : fields) {
+            String value = reported.get(field);
+            // Nothing to recognise it by next time. A field the email did not actually report
+            // cannot have been declined, so there is no row to write.
+            if (value == null) continue;
+            for (Company sender : senders) {
+                Long who = sender == null ? null : sender.getId();
+                IntakeFieldDecision row = existing.stream()
+                        .filter(d -> d.getField().equals(field) && value.equals(d.getValueText()))
+                        .filter(d -> Objects.equals(who,
+                                d.getReportedByCompany() == null ? null : d.getReportedByCompany().getId()))
+                        .findFirst()
+                        .orElseGet(IntakeFieldDecision::new);
+                row.setVesselId(vessel.getId());
+                row.setField(field);
+                row.setReportedByCompany(sender);
+                row.setValueText(value);
+                row.setDecision(decision);
+                row.setCorrectedTo(VesselFieldDiff.canonical(typed.get(field)));
+                row.setIntakeItemId(item.getId());
+                row.setDecidedAt(OffsetDateTime.now());
+                row.setDecidedBy(user);
+                decisions.save(row);
+                written++;
+            }
+        }
+        return written;
+    }
+
+    /**
+     * Record which hull this item's senders mean by the name their email used.
+     *
+     * <p><b>Why {@code vessel_ex_names} cannot carry it.</b> A former name is a fact about the
+     * ship - she used to be called that, it is true for everyone, and it is what lets any
+     * broker's list find her. Two hulls here are called PHANTOM and neither carries an IMO, so
+     * the name tier finds two rows and refuses to choose; the name the email used is the one
+     * she already has, so linking had nothing to file, and filing it anyway would have said
+     * something false about the other PHANTOM as well. What settles it is whose list it is.
+     *
+     * <p>Nothing is recorded where the sync could not put the address to a firm: an alias with
+     * nobody behind it is a claim about the name itself, and that is the arbitrary pick the
+     * resolver exists to refuse.
+     *
+     * @return a sentence for the resolution note, or "" when there was nothing to record
+     */
+    private String rememberAlias(IntakeItem item, Vessel vessel, String nameAsWritten,
+                                 String source, String user) {
+        String name = Extraction.text(nameAsWritten);
+        if (name == null || vessel.getId() == null) return "";
+        String key = IntakeVesselAlias.key(name);
+
+        List<String> firms = new ArrayList<>();
+        for (Company sender : sendersOf(item)) {
+            if (sender == null) continue;
+            IntakeVesselAlias alias = aliases.find(sender.getId(), key)
+                    .orElseGet(IntakeVesselAlias::new);
+            // Replaced rather than added to: an owner sells a ship and takes the name to the
+            // next one, and this firm's later statement is the one to act on.
+            alias.setVesselId(vessel.getId());
+            alias.setReportedByCompany(sender);
+            alias.setName(name);
+            alias.setNameKey(key);
+            alias.setSource(source);
+            alias.setCreatedAt(OffsetDateTime.now());
+            alias.setCreatedBy(user);
+            aliases.save(alias);
+            if (!firms.contains(sender.getName())) firms.add(sender.getName());
+        }
+        if (firms.isEmpty()) return "";
+        return " \"" + name + "\" from " + String.join(", ", firms)
+                + " will be read as this ship from now on.";
+    }
+
+    /** Every firm behind an item, one entry each, with null for a sender the sync could not place. */
+    private List<Company> sendersOf(IntakeItem item) {
+        List<Company> out = new ArrayList<>();
+        List<Long> seen = new ArrayList<>();
+        for (IntakeItemSource source : itemSources.forItem(item.getId())) {
+            Company company = source.getReportedByCompany();
+            Long id = company == null ? null : company.getId();
+            if (seen.contains(id)) continue;
+            seen.add(id);
+            out.add(company);
+        }
+        // An item raised before sources were kept, or one whose only arrival could not be
+        // placed: the question was still asked by somebody, and "nobody" is a value here.
+        if (out.isEmpty()) out.add(companyOf(item.getParsedEmail().getMailMessage()));
+        return out;
+    }
+
+    private List<Long> senderIdsOf(IntakeItem item) {
+        return sendersOf(item).stream().map(c -> c == null ? null : c.getId()).toList();
+    }
+
+    private static Company companyOf(MailMessage message) {
+        return message == null ? null : message.getCompany();
+    }
+
+    private static Long companyIdOf(MailMessage message) {
+        Company company = companyOf(message);
+        return company == null ? null : company.getId();
     }
 
     /**
@@ -597,7 +869,7 @@ public class IntakeService {
      * correcting somebody else's record on the strength of this one.
      */
     private String separateVessel(IntakeItem item, IntakePayloads.VesselFields payload,
-                                  Vessel matched) {
+                                  Vessel matched, String user) {
         MailMessage message = item.getParsedEmail().getMailMessage();
 
         int withdrawn = 0;
@@ -613,6 +885,9 @@ public class IntakeService {
         Vessel created = createVessel(payload.vessel());
         recordPosition(created, payload.vessel(), message, item.getParsedEmail());
         item.setVesselId(created.getId());
+        // These senders were describing this hull all along, whatever the name matched. Without
+        // it the next copy of the same list matches the wrong ship again and asks again.
+        rememberAlias(item, created, payload.vessel().name(), IntakeVesselAlias.CREATED, user);
 
         return "Created " + created.getName() + " as a separate vessel and filed the position "
                 + "on her" + (withdrawn > 0

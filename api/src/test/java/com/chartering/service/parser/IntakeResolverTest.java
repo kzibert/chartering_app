@@ -19,6 +19,7 @@ import org.mockito.ArgumentCaptor;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -34,11 +35,14 @@ class IntakeResolverTest {
 
     private VesselRepository vessels;
     private IntakeResolver resolver;
+    private com.chartering.repository.IntakeVesselAliasRepository aliases;
 
     @BeforeEach
     void setUp() {
         vessels = mock(VesselRepository.class);
-        resolver = new IntakeResolver(vessels, mock(PortRepository.class),
+        aliases = mock(com.chartering.repository.IntakeVesselAliasRepository.class);
+        when(aliases.find(any(), any())).thenReturn(java.util.Optional.empty());
+        resolver = new IntakeResolver(vessels, aliases, mock(PortRepository.class),
                 mock(CompanyRepository.class), mock(TradeAreaRepository.class),
                 mock(TradeAreaGraph.class), mock(PortDirectory.class));
     }
@@ -69,7 +73,7 @@ class IntakeResolverTest {
         when(vessels.findByImoNumber("9123456")).thenReturn(List.of(renamed));
 
         IntakeResolver.ResolvedVessel match =
-                resolver.resolveVessel(reading("AMIKO", "IMO 9123456", null, null));
+                resolver.resolveVessel(reading("AMIKO", "IMO 9123456", null, null), null);
 
         assertThat(match.found()).isTrue();
         assertThat(match.how()).isEqualTo(IntakeResolver.VesselMatch.IMO);
@@ -85,7 +89,7 @@ class IntakeResolverTest {
         // Position lists mostly carry no IMO, and the ones that do often carry it for a hull
         // entered here years before anybody recorded them.
         IntakeResolver.ResolvedVessel match =
-                resolver.resolveVessel(reading("PACIFIC DAWN", "IMO 9999999", null, null));
+                resolver.resolveVessel(reading("PACIFIC DAWN", "IMO 9999999", null, null), null);
 
         assertThat(match.how()).isEqualTo(IntakeResolver.VesselMatch.NAME);
     }
@@ -96,7 +100,7 @@ class IntakeResolverTest {
         Vessel onFile = vessel(1L, "LOIRE RIVER", "5000", 2005);
         when(vessels.findByExactName("AMIKO")).thenReturn(List.of(onFile));
 
-        IntakeResolver.ResolvedVessel match = resolver.resolveVessel(reading("AMIKO", null, null, null));
+        IntakeResolver.ResolvedVessel match = resolver.resolveVessel(reading("AMIKO", null, null, null), null);
 
         // Right answer that looks wrong — the row comes back called something else — so the
         // reviewer is told which of the two names matched.
@@ -112,7 +116,7 @@ class IntakeResolverTest {
 
         // A data fault. Picking whichever came first would hide it behind a position that
         // looks perfectly ordinary.
-        assertThat(resolver.resolveVessel(reading("A", "9123456", null, null)).found()).isFalse();
+        assertThat(resolver.resolveVessel(reading("A", "9123456", null, null), null).found()).isFalse();
     }
 
     // ------------------------------------------------------------------ tier 3
@@ -193,4 +197,76 @@ class IntakeResolverTest {
         assertThat(prefix.getValue()).doesNotContain("%");
     }
 
+    /**
+     * PHANTOM: a name two hulls answer to, settled by whose list it is.
+     *
+     * <p>Two ships here are called PHANTOM and neither carries an IMO, so the name tier finds
+     * two rows and refuses to choose - correctly, because picking one would file an owner's
+     * position on another owner's ship. The reviewer pointed the item at the right hull on three
+     * separate mornings and the fourth asked again, because linking had nothing to file: the
+     * name the email used is the one she already has, so no former name could carry it.
+     */
+    @Test
+    void settlesANameTwoHullsShareFromTheFirmThatUsedIt() {
+        Vessel hers = vessel(4607, "PHANTOM", null, null);
+        when(vessels.findByExactName("PHANTOM"))
+                .thenReturn(List.of(hers, vessel(4499, "PHANTOM", null, null)));
+        when(vessels.findById(4607L)).thenReturn(java.util.Optional.of(hers));
+        when(aliases.find(797L, "phantom")).thenReturn(java.util.Optional.of(alias(4607L)));
+
+        IntakeResolver.ResolvedVessel match =
+                resolver.resolveVessel(reading("PHANTOM", null, null, null), 797L);
+
+        assertThat(match.found()).isTrue();
+        assertThat(match.vessel().getId()).isEqualTo(4607L);
+        assertThat(match.how()).isEqualTo(IntakeResolver.VesselMatch.SENDER_ALIAS);
+    }
+
+    /**
+     * The same ambiguous name from anybody else is still unresolved.
+     *
+     * <p>An alias is a fact about one firm's vocabulary, never about the ship, so it can only
+     * answer a question for the firm that answered it. Without a sender there is nothing to
+     * scope it by and the arbitrary pick is refused, which is where it started.
+     */
+    @Test
+    void doesNotLetOneFirmsAliasAnswerForAnother() {
+        when(vessels.findByExactName("PHANTOM"))
+                .thenReturn(List.of(vessel(4607, "PHANTOM", null, null),
+                        vessel(4499, "PHANTOM", null, null)));
+        when(aliases.find(any(), any())).thenReturn(java.util.Optional.empty());
+
+        assertThat(resolver.resolveVessel(reading("PHANTOM", null, null, null), 123L).found())
+                .isFalse();
+        assertThat(resolver.resolveVessel(reading("PHANTOM", null, null, null), null).found())
+                .isFalse();
+    }
+
+    /**
+     * An alias never overrules a hull's own name, which is why it is asked last.
+     *
+     * <p>A firm that once had PACIFIC DAWN settled onto another hull must not go on steering
+     * her positions away from the ship that actually carries the name.
+     */
+    @Test
+    void neverOverrulesAnExactNameMatch() {
+        Vessel hers = vessel(7, "PACIFIC DAWN", null, null);
+        when(vessels.findByExactName("PACIFIC DAWN")).thenReturn(List.of(hers));
+
+        IntakeResolver.ResolvedVessel match =
+                resolver.resolveVessel(reading("PACIFIC DAWN", null, null, null), 797L);
+
+        assertThat(match.vessel().getId()).isEqualTo(7L);
+        assertThat(match.how()).isEqualTo(IntakeResolver.VesselMatch.NAME);
+        verifyNoInteractions(aliases);
+    }
+
+    private static com.chartering.model.IntakeVesselAlias alias(Long vesselId) {
+        com.chartering.model.IntakeVesselAlias a = new com.chartering.model.IntakeVesselAlias();
+        a.setVesselId(vesselId);
+        a.setName("PHANTOM");
+        a.setNameKey("phantom");
+        a.setSource(com.chartering.model.IntakeVesselAlias.LINKED);
+        return a;
+    }
 }

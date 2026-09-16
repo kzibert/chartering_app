@@ -98,7 +98,10 @@ Three things bite here:
   `V19__seed_sea_routes_and_port_geography.sql`, `V20__add_intake_item_sources.sql` and
   `V21__collapse_duplicate_pending_vessel_items.sql` and
   `V22__recover_former_names_from_change_log.sql` and
-  `V23__add_cargo_max_ballast_days.sql` exist; the next one is V24.
+  `V23__add_cargo_max_ballast_days.sql` and `V25__add_intake_decisions.sql` exist; the next
+  one is V26. V24 is `feature/feed`'s and is already applied to the hosted database, which is
+  why V25 rather than V24 is the free number here, and why a build from `main` will not start
+  against that database until that branch merges.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
@@ -613,7 +616,8 @@ The vessel record also gained `geared`, `gear_description`, `holds`, `hatches`,
 the position lists this mailbox already receives, and every one nullable, because null is
 "not on file" and false would be a claim about four thousand rows nobody has checked.
 
-**Grain and bale are stored in m³, and the unit of a figure is read off the ship's size.**
+**Grain and bale are stored in m³, and the unit of a figure is read off the ship's size,
+one figure at a time.**
 Circulars write cbm and cbft in the same week, thirty-five apart, and often write neither. A
 hold carries about 0.7–2.6 m³ per tonne of deadweight (this fleet: 3,072 of 3,221 grain figures
 between 1.0 and 1.7), which is 25–92 in cubic feet, and nothing real falls between the bands —
@@ -623,6 +627,17 @@ whatever the text wrote beside it; only where the size cannot decide is a stated
 and a figure with neither is still dropped rather than guessed. `VesselFieldDiff` settles the
 unit before comparing — the email's deadweight, else the vessel's own — so the sweep, the review
 queue and the paste read one rule.
+
+The two figures used to share one unit, judged on grain and applied to bale, on the reasoning
+that a list quotes a ship's holds in one unit throughout. One broker here disproves it: JELENA's
+grain arrives in cubic metres (8,267 against 5,000 DWCC) and her bale in cubic feet (291,000) in
+the same paragraph, so the pair settled as cbm and her bale read as 291,000 m³ — fifty times what
+a 5,700-tonner holds, put to a person as a disagreement to arbitrate every morning for a week.
+Each figure is asked about its own size first; what the old rule bought is the fallback rather
+than the rule, so a figure its own size cannot place still takes the other capacity's answer,
+and the stated label only after that. Where the size genuinely cannot decide, the review row
+carries an **m³/cbft switch** that reinterprets the figure and drops the converted value into
+the correction box — the manual override for the case the arithmetic cannot settle.
 
 The storage unit stayed m³ on purpose. Match's cubic check, the parser and the columns'
 names all read m³, and converting every figure would bury the handful of real corrections in
@@ -690,6 +705,21 @@ So three things stop and become `intake_items`:
   is within 5% or whose name starts the same, each carrying its figures, so linking is a click
   rather than a search. Accepting creates her; linking to an existing hull also files the name
   the email used as an ex-name, which is what stops the next circular asking again.
+  **Where an ex-name cannot carry it, `intake_vessel_aliases` does.** Two hulls on this desk
+  are called PHANTOM and neither has an IMO, so the name tier finds two rows and treats that
+  as no match — correctly, since picking one would file an owner's position on another
+  owner's ship. Answering it could record nothing: the name the email used is the one she
+  already carries, so there was no former name to file, and filing it anyway would have said
+  something false about the other PHANTOM too. The reviewer pointed the item at the right
+  hull on three separate mornings and the fourth asked again. An alias is deliberately **not**
+  a former name and must not be folded into that table: a former name is a fact about the
+  *ship* and true for everyone, while this is a fact about one correspondent's vocabulary —
+  which is exactly what can settle a name two hulls share, ambiguous in the fleet and
+  unambiguous in one broker's list. It is written by linking, by creating her, and by "not
+  this ship — create her", and it is asked **last**, only where the exact tiers found nothing
+  or found too much, so a broker's habit can never overrule a hull's own name. One hull per
+  firm per name, replaced rather than added to, because an owner sells a ship and takes the
+  name to the next one.
 - **`VESSEL_FIELDS`** — she is on file and the email disagrees. One item per vessel per email,
   accepted whole or per field. Gap fills are *not* queued: an empty column is written straight
   away, on the importer's rule that a matched record is never overwritten, only gap-filled.
@@ -712,6 +742,26 @@ So three things stop and become `intake_items`:
   strings genuinely differ — because the mistake was treating it as two questions.
   Only *pending* items merge: an answered question is history, and an email disagreeing
   afterwards is a new question about a record that has since been decided.
+  **An answer is remembered, and until it was the queue asked the same question daily.**
+  Merging only covers arrivals that reach a question still waiting; once it is answered the
+  item closes, and the next morning's copy of the same list raises the same disagreement
+  again. ANGORA asked about JELENA's bale four days running. So an answer that leaves the
+  email as wrong tomorrow as it is today writes `intake_field_decisions` — a row left
+  unticked (`KEPT`) or one the reviewer overrode (`CORRECTED`) — and a later reading of that
+  value from that firm is dropped before an item is raised. **Accepting writes no row**: the
+  record now holds the figure, so tomorrow's list agrees and there is nothing to raise.
+  Scoped to the correspondent, which is the judgement in it — that one broker is wrong about
+  her bale says nothing about the next one, and a second firm carrying the same figure is a
+  second opinion nobody here has weighed. The value is stored as it was *compared* (a
+  capacity already in m³, no unit on it) and matched back through the same half-percent
+  tolerance, so a broker who re-rounds on Wednesday is still reporting Tuesday's figure.
+  **A third answer, beside the record and the email: correct the row.** A list is regularly
+  wrong in a way that does not make the record right, and answering that used to mean
+  discarding the item and then going to edit the hull — the half that gets forgotten. The
+  typed value is read into the field's own type (a value that cannot be one is refused by
+  name, never skipped), written through the same writer an accepted value uses, and recorded
+  as a decision so the email's own figure stops coming back. The drawer drops settled rows on
+  the **detail call only** — it costs a query per item, and the list row prints one line.
 - **`CARGO_MERGE`** — a cargo that looks like one in hand. Never merged silently: two cargoes
   cannot be un-merged. The key is same commodity + the load point actually agreeing +
   quantity within 20% + laycans overlapping, where **an absent field abstains rather than
@@ -872,7 +922,8 @@ arrives, one class is written, one setting changes.
   `DWT 0 → 6,977 · Web lookup (vesselfinder) IMO 9014561 — <url>`. Folding them together would
   save a click and lose the only answer to "where did this figure come from".
 
-Nothing in `parsed_emails`, `intake_items` or `cargo_sources` is audited — they are machine
+Nothing in `parsed_emails`, `intake_items`, `intake_field_decisions`,
+`intake_vessel_aliases` or `cargo_sources` is audited — they are machine
 writes and each is already a record of its own event. What a person *decides* is, because
 accepting writes to `Vessel` or `Cargo`, with the change set named so a merge reads as one
 event.

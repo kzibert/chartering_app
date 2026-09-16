@@ -193,11 +193,15 @@ public class IntakeController {
                     + "and withdraws the reading this email put on the other one — and it writes too, which is why it is not called a "
                     + "rejection. DISCARD writes nothing.\n\n"
                     + "On a VESSEL_FIELDS item, `fields` names which differences to accept; "
-                    + "leaving it out accepts all of them.")
+                    + "leaving it out accepts all of them, and `corrections` carries a value "
+                    + "typed by hand for any of them, which is written instead of the email's.\n\n"
+                    + "What is *not* accepted is remembered: a row left unticked, and a row "
+                    + "corrected, record that value as declined from the firms that sent it, so "
+                    + "tomorrow's copy of the same list does not ask again.")
     public ResponseEntity<IntakeItemResponse> resolve(@PathVariable Long id,
                                                       @Valid @RequestBody IntakeResolveRequest req) {
-        intake.resolve(id, req.getAction(), req.getFields(), req.getVesselId(), req.getNote(),
-                currentUser());
+        intake.resolve(id, req.getAction(), req.getFields(), req.getCorrections(),
+                req.getVesselId(), req.getNote(), currentUser());
         // Re-read rather than mapping what the write returned: accepting can change the row
         // it is about, and the screen should show what is now on file rather than what the
         // service was holding half way through.

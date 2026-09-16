@@ -169,6 +169,18 @@ export interface IntakeResolveRequest {
   action: IntakeAction;
   /** VESSEL_FIELDS: which differences to accept. Left out means all of them. */
   fields?: string[];
+  /**
+   * VESSEL_FIELDS: a value typed by hand, written instead of the email's.
+   *
+   * The third answer, and the screen was missing it: a broker's list is regularly wrong in a
+   * way that does not make the record right, and answering that used to take two visits —
+   * discard the item, then go and edit the hull.
+   *
+   * Keyed by field, and only for fields also being accepted. What is *not* accepted is
+   * remembered: a row corrected, or left unticked, records the email's value as declined from
+   * the firms that sent it, so tomorrow's copy of the same list does not ask again.
+   */
+  corrections?: Record<string, string>;
   /** NEW_VESSEL with ALTERNATIVE: the hull this position belongs to. */
   vesselId?: number;
   note?: string;

@@ -229,7 +229,9 @@ public class IntakePasteService {
         vessel.setIceClass(blank.getIceClass());
         vessel.setNotes(Extraction.text(v.notes()));
 
-        IntakeResolver.ResolvedVessel resolved = resolver.resolveVessel(v);
+        // The sender where the paste was matched to one firm outright, so a name this
+        // correspondent has already had settled resolves here too rather than only in the sweep.
+        IntakeResolver.ResolvedVessel resolved = resolver.resolveVessel(v, sender);
         IntakePasteDraftResponse.VesselMatchHint match = resolved.found()
                 ? new IntakePasteDraftResponse.VesselMatchHint(resolved.vessel().getId(),
                         resolved.vessel().getName(), resolved.vessel().getImoNumber(), resolved.how().name())
