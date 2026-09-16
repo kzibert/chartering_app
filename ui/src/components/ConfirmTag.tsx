@@ -16,6 +16,21 @@ interface Props {
    * The other default would put a one-click write next to every row it was forgotten on.
    */
   editing?: boolean;
+  /**
+   * Reveals the confirm control alone, for a record that is not confirmed yet — never
+   * unconfirm, whatever the record's state.
+   *
+   * It is a separate prop from `editing` rather than a widening of it because the two
+   * are not the same permission. Confirming adds an attestation, and the modal collects a
+   * name and a note on the way, so it cannot happen by accident and leaves more behind
+   * than it found. Unconfirming destroys one — who vouched for this record and when, with
+   * no history kept of either — and stays where it was, at the foot of the edit form.
+   */
+  confirmable?: boolean;
+  /** Title for the confirm modal. Used with `confirmable`, where the record needs naming. */
+  confirmTitle?: string;
+  /** A line above the modal's fields saying what is being attested to. */
+  confirmDescription?: string;
   onConfirm: (body: ConfirmRequest) => void;
   onUnconfirm: () => void;
 }
@@ -31,6 +46,12 @@ interface Props {
  * short of asking the person who had done it. The tag is information and always shows; the
  * write is an edit and waits to be asked for, the same way every other write on a contact
  * row does (see `ContactLine`).
+ *
+ * **Why `confirmable` lets half of it back out.** Checking a record is something you do
+ * while reading it — you have the record open, you have just rung the office — and sending
+ * that through the edit form meant opening a form over the thing you were reading and
+ * scrolling past every field to reach the foot of it. That is enough friction that records
+ * stay unconfirmed. Only the adding half comes out; see the prop.
  */
 export default function ConfirmTag({
   confirmed,
@@ -38,6 +59,9 @@ export default function ConfirmTag({
   confirmedBy,
   loading,
   editing = false,
+  confirmable = false,
+  confirmTitle,
+  confirmDescription,
   onConfirm,
   onUnconfirm,
 }: Props) {
@@ -75,8 +99,18 @@ export default function ConfirmTag({
             confirm
           </Button>
         ))}
+      {/* The read-only screens' own button. Not `type="link"` like the one above: there it
+          sits inside a form full of controls and a link is the quiet member of them, here
+          it is the one write on a page of text and reads as nothing at all. */}
+      {!editing && confirmable && !confirmed && (
+        <Button size="small" loading={loading} onClick={() => setOpen(true)}>
+          Confirm
+        </Button>
+      )}
       <ConfirmModal
         open={open}
+        title={confirmTitle}
+        description={confirmDescription}
         loading={loading}
         onCancel={() => setOpen(false)}
         onSubmit={(body) => {

@@ -40,7 +40,7 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
   // Owner contacts follow the same rules as the company drawer's Contacts tab:
   // read-only until Edit is on, which then reveals add/edit/delete and the
   // main / not-working toggles.
-  const { setLink, removeLink } = useVesselMutations();
+  const { confirm, setLink, removeLink } = useVesselMutations();
   const [linksEditing, setLinksEditing] = useEditMode(vesselId);
   const [linkModalOpen, setLinkModalOpen] = useState(false);
   const links = data?.links ?? [];
@@ -78,14 +78,20 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
         <Spin />
       ) : (
         <>
-          {/* Status only. ConfirmTag without `editing` is a tag and nothing more, and the
-              control for it now lives in the edit form. */}
+          {/* Confirming only. `confirmable` adds the attestation and nothing else: the
+              control that *clears* one stays at the foot of the edit form, because that
+              throws away who vouched for this hull and when. The modal is what keeps a
+              stray click on a drawer full of buttons from putting a name on the record. */}
           <Space style={{ marginBottom: 12 }} wrap>
             <ConfirmTag
               confirmed={v.confirmed}
               confirmedAt={v.confirmedAt}
               confirmedBy={v.confirmedBy}
-              onConfirm={() => undefined}
+              confirmable
+              confirmTitle={`Confirm ${v.name} is up to date`}
+              confirmDescription={`This records that ${v.name}'s particulars were checked against the world today, under your name.`}
+              loading={confirm.isPending}
+              onConfirm={(body) => confirm.mutate({ id: v.id, confirmed: true, body })}
               onUnconfirm={() => undefined}
             />
             {v.banned && <Tag color="red">banned</Tag>}

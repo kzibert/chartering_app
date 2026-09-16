@@ -22,6 +22,7 @@ import ResponsiveTable from '../../components/ResponsiveTable';
 import {
   useCompany,
   useCompanyContacts,
+  useCompanyMutations,
   useCompanyVessels,
   useContactMutations,
   useVesselMutations,
@@ -66,6 +67,10 @@ interface Props {
 export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClose, onEdit }: Props) {
   const { data, isLoading } = useCompany(companyId);
   const c = data?.company;
+  // Confirming is the one write this drawer does, and it reads the answer back off the
+  // query: the mutation invalidates 'company', so the tag beside the button re-renders
+  // from the server's own record rather than from a copy kept here.
+  const { confirm } = useCompanyMutations();
 
   const [vesselId, setVesselId] = useState<number>();
 
@@ -125,14 +130,20 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
         <Spin />
       ) : (
         <>
-          {/* Status only. ConfirmTag without `editing` is a tag and nothing more, and the
-              control for it now lives in the edit form. */}
+          {/* Confirming only. `confirmable` adds the attestation and nothing else: the
+              control that *clears* one stays at the foot of the edit form, because that
+              throws away who vouched for this company and when. The modal is what keeps a
+              stray click on a drawer full of buttons from putting a name on the record. */}
           <Space style={{ marginBottom: 12 }} wrap>
             <ConfirmTag
               confirmed={c.confirmed}
               confirmedAt={c.confirmedAt}
               confirmedBy={c.confirmedBy}
-              onConfirm={() => undefined}
+              confirmable
+              confirmTitle={`Confirm ${c.name} is up to date`}
+              confirmDescription={`This records that ${c.name}'s details were checked against the world today, under your name.`}
+              loading={confirm.isPending}
+              onConfirm={(body) => confirm.mutate({ id: c.id, confirmed: true, body })}
               onUnconfirm={() => undefined}
             />
             {c.noWorkingEmail && (
