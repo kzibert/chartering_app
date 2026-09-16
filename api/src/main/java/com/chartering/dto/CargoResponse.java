@@ -82,5 +82,19 @@ public record CargoResponse(
         OffsetDateTime receivedAt,
         String notes,
         OffsetDateTime createdAt,
-        OffsetDateTime updatedAt) {
+        OffsetDateTime updatedAt,
+
+        /**
+         * When it last reached the desk: the newest arrival, else its received date, else when
+         * it was entered. Absent only on the response to a create, before the row is re-read.
+         */
+        OffsetDateTime lastSentAt,
+
+        /**
+         * Who sent the newest arrival - the firm, else the person, else the address - and how
+         * many different sending addresses it has come from, leaving out the desk's own. Filled on the list only; the drawer reads
+         * every arrival instead. A cargo somebody typed has a count of 0 and no sender.
+         */
+        String lastSentBy,
+        Integer senderCount) {
 }

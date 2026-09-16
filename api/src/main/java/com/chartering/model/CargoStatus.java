@@ -31,10 +31,35 @@ public enum CargoStatus {
     EXPIRED,
 
     /** The charterer pulled it. */
-    WITHDRAWN;
+    WITHDRAWN,
+
+    /**
+     * Not for this desk: the wrong trade, the wrong size, a charterer nobody here works with.
+     *
+     * <p>Distinct from WITHDRAWN (the charterer's decision) and FAILED (worked and went
+     * nowhere) — this one is ours, made before any work. Kept rather than deleted, and that is
+     * the whole value of it: the same enquiry comes round again next week from another broker,
+     * and a deleted cargo would arrive as a new one, open and on Match, asking to be worked.
+     * A cargo marked here is still there for the duplicate test to recognise — see
+     * {@link #isRecognisedOnArrival()}.
+     */
+    NOT_WORKABLE;
 
     /** Still worth showing tonnage against. */
     public boolean isLive() {
         return this == OPEN || this == QUOTED || this == FIRM;
+    }
+
+    /**
+     * Worth recognising when the same cargo arrives again.
+     *
+     * <p>The live ones, because a repeat is a second broker on an enquiry in hand. And
+     * NOT_WORKABLE, because otherwise every cargo turned down comes back as a fresh OPEN one on
+     * the next circular and the decision has to be made again. The closed ones are not: a
+     * fixed or withdrawn cargo that turns up later is the market offering it again, which is a
+     * new enquiry.
+     */
+    public boolean isRecognisedOnArrival() {
+        return isLive() || this == NOT_WORKABLE;
     }
 }

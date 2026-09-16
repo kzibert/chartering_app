@@ -16,6 +16,11 @@ export const CARGO_STATUS_META: Record<CargoStatus, { label: string; color: stri
   FAILED: { label: 'Failed', color: 'red', hint: 'Negotiated and went nowhere' },
   EXPIRED: { label: 'Expired', color: 'default', hint: 'The laycan passed with nothing done' },
   WITHDRAWN: { label: 'Withdrawn', color: 'default', hint: 'The charterer pulled it' },
+  NOT_WORKABLE: {
+    label: 'Not workable',
+    color: 'default',
+    hint: 'Not for this desk. Never on Match, and a re-send is recognised rather than filed as new',
+  },
 };
 
 export const CARGO_STATUSES = Object.keys(CARGO_STATUS_META) as CargoStatus[];

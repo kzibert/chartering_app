@@ -23,7 +23,9 @@ import { SendingTodayPanel } from '../../components/SendingToday';
 import type { CirculationSettings, CirculationSettingsRequest } from '../../api/types';
 import WhatsappSettingsCard from './WhatsappSettingsCard';
 import ParserSettingsCard from './ParserSettingsCard';
+import FeedSettingsCard from './FeedSettingsCard';
 import MatchSettingsCard from './MatchSettingsCard';
+import OwnAddressesCard from './OwnAddressesCard';
 
 /**
  * Delays are stored in milliseconds but shown in seconds — nobody reasons about a send
@@ -396,7 +398,11 @@ export default function SettingsPage() {
         />
       </Card>
 
+      <OwnAddressesCard />
+
       <ParserSettingsCard />
+
+      <FeedSettingsCard />
 
       <MatchSettingsCard />
 

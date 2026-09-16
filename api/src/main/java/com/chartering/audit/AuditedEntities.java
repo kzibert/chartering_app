@@ -71,8 +71,12 @@ public final class AuditedEntities {
      * so logging them would put a "updatedAt changed" row beside every real change and one
      * on its own beside every save that changed nothing else. What they would have recorded,
      * {@code changed_at} already records more precisely.
+     *
+     * <p>The rest are {@code Cargo}'s formulas: read from other rows, never written, so they
+     * are not part of what a snapshot could put back.
      */
-    static final Set<String> IGNORED_FIELDS = Set.of("createdAt", "updatedAt");
+    static final Set<String> IGNORED_FIELDS = Set.of("createdAt", "updatedAt",
+            "lastSentAt", "statusRank", "loadPlace", "dischargePlace");
 
     private record Audited(String type, Function<Object, String> label) {
     }

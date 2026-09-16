@@ -15,8 +15,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -197,7 +201,64 @@ public class SettingsService {
                 .orElse(DEFAULT_WHATSAPP_MESSAGE);
     }
 
+    /**
+     * The desk's own addresses, lower-cased. Empty until somebody enters them.
+     *
+     * <p>No default from the environment, although the mailbox login is plainly one of them:
+     * a desk writes from several addresses (a {@code desk@} and a {@code chartering@}) and
+     * only some of them are the login, so a list that silently held one would look complete
+     * and not be.
+     */
+    @Transactional(readOnly = true)
+    public Set<String> ownAddresses() {
+        return repository.findById(AppSetting.OWN_ADDRESSES)
+                .map(AppSetting::getValue)
+                .map(v -> Arrays.stream(v.split(","))
+                        .map(String::trim)
+                        .filter(a -> !a.isEmpty())
+                        .collect(Collectors.toCollection(LinkedHashSet::new)))
+                .orElseGet(LinkedHashSet::new);
+    }
+
+    /** Whether an arrival came from the desk itself — a reply of ours the sweep read. */
+    public static boolean isOwn(String address, Set<String> own) {
+        return address != null && own.contains(address.trim().toLowerCase(Locale.ROOT));
+    }
+
     // ---------------------------------------------------------------- writing
+
+    /**
+     * Replace the list. An empty one deletes the row, which reads back the same as never set.
+     *
+     * <p>Stored comma-joined because {@code Cargo.lastSentAt} splits it in SQL — which is also
+     * why a comma inside an address is refused rather than escaped.
+     */
+    @Transactional
+    public Set<String> updateOwnAddresses(List<String> addresses) {
+        List<String> clean = normaliseAddresses(addresses);
+        if (clean.isEmpty()) {
+            repository.deleteByKeyIn(List.of(AppSetting.OWN_ADDRESSES));
+        } else {
+            put(AppSetting.OWN_ADDRESSES, String.join(",", clean));
+        }
+        log.info("Own email addresses set to {}", clean);
+        return ownAddresses();
+    }
+
+    /** Trimmed, lower-cased, de-duplicated in the order given; refuses anything not an address. */
+    static List<String> normaliseAddresses(List<String> addresses) {
+        if (addresses == null) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String raw : addresses) {
+            String a = raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
+            if (a.isEmpty() || out.contains(a)) continue;
+            if (a.contains(",") || !EMAIL.matcher(a).matches()) {
+                throw new IllegalArgumentException("\"" + raw.trim() + "\" is not a valid email address.");
+            }
+            out.add(a);
+        }
+        return out;
+    }
 
     @Transactional
     public String updateWhatsappMessage(String message) {

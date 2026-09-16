@@ -124,13 +124,24 @@ class CompanyStyleReaderTest {
 
         assertThat(s.name()).isEqualTo("HARBOUR LINE EXAMPLE CORP");
         assertThat(s.people()).extracting(CompanyStyleReader.Person::fullName).containsExactly("Alex Brown");
-        assertThat(s.website()).isEqualTo("harbourline.example");
+        // The text gives an address and no website, so there is no website.
+        assertThat(s.website()).isNull();
     }
 
     @Test
-    void aWebmailDomainIsNeverTakenForTheWebsite() {
-        CompanyStyleReader.Style s = CompanyStyleReader.read("John Smith\njohn.smith.example@gmail.com", null);
+    void anEmailDomainIsNeverTakenForTheWebsite() {
+        assertThat(CompanyStyleReader.read("John Smith\njohn.smith.example@gmail.com", null).website()).isNull();
+        assertThat(CompanyStyleReader.read("Jane Doe\nchartering@examplebulk.example\nops@examplebulk.example", null)
+                .website()).isNull();
+        // Not even a www inside an address.
+        assertThat(CompanyStyleReader.read("E-mail: info@www.examplebulk.example", null).website()).isNull();
+    }
 
-        assertThat(s.website()).isNull();
+    @Test
+    void readsAWebsiteWrittenBehindALabelWithoutWww() {
+        assertThat(CompanyStyleReader.read("Website: harbourline.example\nchartering@harbourline.example", null)
+                .website()).isEqualTo("harbourline.example");
+        assertThat(CompanyStyleReader.read("Web - https://northsea.example/contact", null).website())
+                .isEqualTo("northsea.example");
     }
 }

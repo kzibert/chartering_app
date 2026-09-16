@@ -153,6 +153,14 @@ services:
       PARSER_MODEL: ${PARSER_MODEL:-}
       PARSER_READ_TIMEOUT_MS: ${PARSER_READ_TIMEOUT_MS:-180000}
       PARSER_MAX_ATTEMPTS: ${PARSER_MAX_ATTEMPTS:-3}
+      # The Feed tab's fetching and summarising, with the model above. The tab and its data are
+      # on every deployment; this instance is the one that reads the sources and runs the model,
+      # so it is ON here and off on Render.
+      FEED_ANALYSIS_ENABLED: ${FEED_ANALYSIS_ENABLED:-true}
+      # A general model for summaries, apart from the parser's extraction finetune. Blank uses
+      # PARSER_URL. See .env.example.
+      FEED_LLM_URL: ${FEED_LLM_URL:-}
+      FEED_LLM_MODEL: ${FEED_LLM_MODEL:-}
       # Finding a hull on an outside source when the IMO is missing on both sides - which a
       # position list creates constantly, since a circular names a ship and almost never her
       # number. Reads a public ship-database search page.

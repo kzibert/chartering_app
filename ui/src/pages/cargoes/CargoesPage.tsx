@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Button, Col, DatePicker, Form, Input, InputNumber, Row, Select, Space, Tag, Tooltip } from 'antd';
+import { useEffect, useState } from 'react';
+import { Button, Col, DatePicker, Form, Input, InputNumber, Row, Select, Space, Tag, Tooltip, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
@@ -20,6 +20,23 @@ import {
 } from './status';
 import { LIVE_CARGO_STATUSES, type CargoFilter, type CargoResponse } from '../../api/types';
 
+/** The filter fields held as a day, which the form wants as dayjs and the API as YYYY-MM-DD. */
+const DATE_FILTERS = ['laycanFrom', 'laycanTo', 'sentSince'] as const;
+
+/** "12 Sep 14:05", with the year only when it is not this one. */
+function formatSent(iso?: string): string {
+  if (!iso) return '—';
+  const d = dayjs(iso);
+  return d.format(d.year() === dayjs().year() ? 'D MMM HH:mm' : 'D MMM YYYY');
+}
+
+/** "Oceanic Brokers", or "Oceanic Brokers +2" when others sent it too. */
+function formatSenders(c: CargoResponse): string {
+  if (!c.lastSentBy) return c.fromMail ? '—' : 'typed in';
+  const others = (c.senderCount ?? 1) - 1;
+  return others > 0 ? `${c.lastSentBy} +${others}` : c.lastSentBy;
+}
+
 /**
  * Cargoes in hand.
  *
@@ -27,17 +44,34 @@ import { LIVE_CARGO_STATUSES, type CargoFilter, type CargoResponse } from '../..
  * is asked for, which is the right default for an API and the wrong one for this screen: a
  * desk that has worked a hundred cargoes wants the six it is still working, and the fixed
  * and failed ones are history to be searched for rather than scrolled past. The filter is
- * pre-set and visible, so nothing is hidden — clearing it shows the lot.
+ * pre-set and visible, so nothing is hidden — clearing it shows the lot. Not workable is one
+ * of the closed ones: it is out of this view and off Match for the same reason.
+ *
+ * **Every sort is the server's.** The list is paged, so a column sorted in the browser would
+ * order twenty rows out of two hundred and look right. Each sortable column's `dataIndex` is
+ * the name the API sorts on — `statusRank`, `loadPlace` and `lastSentAt` are derived on the
+ * entity for exactly that — and the cell renders from the whole row.
  */
 export default function CargoesPage() {
   const [form] = Form.useForm();
   const [filters, setFilters] = usePersistedFilters<Partial<CargoFilter>>('cargoes', form);
-  const tc = useTableControls({ size: 20 }, 'cargoes');
+  // Newest arrival first by default: the question this list is opened with is what came in.
+  const tc = useTableControls({ size: 20, sort: 'lastSentAt,desc' }, 'cargoes');
   const { setStatus } = useCargoMutations();
 
   const [selectedId, setSelectedId] = useState<number>();
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<CargoResponse | null>(null);
+
+  // The persisted filters hold dates as the strings the API takes, and a DatePicker handed a
+  // string does not render it. Runs after usePersistedFilters' own restore, which it corrects.
+  useEffect(() => {
+    form.setFieldsValue(
+      Object.fromEntries(
+        DATE_FILTERS.map((k) => [k, filters[k] ? dayjs(filters[k]) : undefined]),
+      ),
+    );
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The live default applies only until the user says otherwise. `status` in the persisted
   // filters is an empty array once they have cleared it, which is a different thing from
@@ -53,18 +87,25 @@ export default function CargoesPage() {
   });
 
   const applyFilters = (values: Record<string, unknown>) => {
-    setFilters({
-      ...(values as Partial<CargoFilter>),
-      laycanFrom: values.laycanFrom ? (values.laycanFrom as dayjs.Dayjs).format('YYYY-MM-DD') : undefined,
-      laycanTo: values.laycanTo ? (values.laycanTo as dayjs.Dayjs).format('YYYY-MM-DD') : undefined,
-    });
+    const next = { ...(values as Partial<CargoFilter>) };
+    for (const k of DATE_FILTERS) {
+      next[k] = values[k] ? (values[k] as dayjs.Dayjs).format('YYYY-MM-DD') : undefined;
+    }
+    setFilters(next);
     tc.resetPage();
   };
+
+  /** A column the server sorts, keyed by the field name it sorts on. */
+  const sortable = (field: string) => ({
+    dataIndex: field,
+    sorter: true,
+    sortOrder: tc.sortOrderFor(field),
+  });
 
   const columns: ColumnsType<CargoResponse> = [
     {
       title: 'Cargo',
-      dataIndex: 'commodity',
+      ...sortable('commodity'),
       fixed: 'left',
       render: (commodity: string, c) => (
         <Space size={4} wrap>
@@ -75,24 +116,22 @@ export default function CargoesPage() {
     },
     {
       title: 'Quantity',
-      key: 'quantity',
+      ...sortable('quantity'),
       render: (_, c) => formatQuantity(c.quantity, c.quantityUnit, c.quantityTolerance),
     },
     {
       title: 'Load',
-      key: 'load',
+      ...sortable('loadPlace'),
       render: (_, c) => formatPlace(c.loadPortName, c.loadPortText, c.loadAreaCode),
     },
     {
       title: 'Discharge',
-      key: 'discharge',
+      ...sortable('dischargePlace'),
       render: (_, c) => formatPlace(c.dischargePortName, c.dischargePortText, c.dischargeAreaCode),
     },
     {
       title: 'Laycan',
-      key: 'laycan',
-      sorter: true,
-      sortOrder: tc.sortOrderFor('laycanFrom'),
+      ...sortable('laycanFrom'),
       render: (_, c) => formatLaycan(c.laycanFrom, c.laycanTo, c.laycanText),
     },
     {
@@ -111,8 +150,26 @@ export default function CargoesPage() {
       },
     },
     {
+      title: 'Last sent',
+      ...sortable('lastSentAt'),
+      render: (_, c) => (
+        <Space direction="vertical" size={0}>
+          {/* A typed cargo's date is when it was entered, and says so, rather than passing
+              for a send that never happened. */}
+          <Typography.Text type={c.lastSentBy ? undefined : 'secondary'}>
+            {formatSent(c.lastSentAt)}
+          </Typography.Text>
+          <Tooltip title={c.senderCount && c.senderCount > 1 ? 'Open the cargo to see every sender and their emails' : undefined}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {formatSenders(c)}
+            </Typography.Text>
+          </Tooltip>
+        </Space>
+      ),
+    },
+    {
       title: 'Status',
-      dataIndex: 'status',
+      ...sortable('statusRank'),
       // Editable in the row: it is one field with its own endpoint, and moving a cargo
       // along is the most frequent write this screen carries. Stopping the click from
       // reaching the row keeps it from opening the drawer underneath.
@@ -123,7 +180,7 @@ export default function CargoesPage() {
               size="small"
               value={c.status}
               options={CARGO_STATUS_OPTIONS}
-              style={{ width: 118 }}
+              style={{ width: 128 }}
               onChange={(next) => setStatus.mutate({ id: c.id, status: next })}
             />
           </Tooltip>
@@ -158,7 +215,7 @@ export default function CargoesPage() {
         >
           <Row gutter={12}>
             <Col xs={24} md={6}>
-              <Form.Item name="commodity" label="Commodity">
+              <Form.Item name="commodity" label="Cargo">
                 <Input allowClear placeholder="wheat, hbi…" />
               </Form.Item>
             </Col>
@@ -166,7 +223,7 @@ export default function CargoesPage() {
               <Form.Item
                 name="status"
                 label="Status"
-                tooltip="Empty means the live ones — open, quoted and firm. Pick statuses to see fixed, failed and the rest."
+                tooltip="Empty means the live ones — open, quoted and firm. Pick statuses to see fixed, not workable and the rest."
               >
                 <Select
                   mode="multiple"
@@ -178,6 +235,22 @@ export default function CargoesPage() {
               </Form.Item>
             </Col>
             <Col xs={12} md={6}>
+              <Form.Item
+                name="loadPlace"
+                label="Load"
+                tooltip="Port on file, the words the email used, or the area's name or code."
+              >
+                <Input allowClear placeholder="port or area" />
+              </Form.Item>
+            </Col>
+            <Col xs={12} md={6}>
+              <Form.Item name="dischargePlace" label="Discharge">
+                <Input allowClear placeholder="port or area" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={12}>
+            <Col xs={12} md={6}>
               <Form.Item name="loadAreaId" label="Load area">
                 <TradeAreaSelect />
               </Form.Item>
@@ -187,9 +260,7 @@ export default function CargoesPage() {
                 <TradeAreaSelect />
               </Form.Item>
             </Col>
-          </Row>
-          <Row gutter={12}>
-            <Col xs={12} md={5}>
+            <Col xs={12} md={6}>
               <Form.Item
                 name="laycanFrom"
                 label="Laycan from"
@@ -198,11 +269,13 @@ export default function CargoesPage() {
                 <DatePicker style={{ width: '100%' }} />
               </Form.Item>
             </Col>
-            <Col xs={12} md={5}>
+            <Col xs={12} md={6}>
               <Form.Item name="laycanTo" label="Laycan to">
                 <DatePicker style={{ width: '100%' }} />
               </Form.Item>
             </Col>
+          </Row>
+          <Row gutter={12}>
             <Col xs={12} md={4}>
               <Form.Item name="minQuantity" label="Qty min">
                 <InputNumber style={{ width: '100%' }} min={0} />
@@ -211,6 +284,15 @@ export default function CargoesPage() {
             <Col xs={12} md={4}>
               <Form.Item name="maxQuantity" label="Qty max">
                 <InputNumber style={{ width: '100%' }} min={0} />
+              </Form.Item>
+            </Col>
+            <Col xs={12} md={6}>
+              <Form.Item
+                name="sentSince"
+                label="Last sent since"
+                tooltip="Cargoes whose newest email arrived on or after this day."
+              >
+                <DatePicker style={{ width: '100%' }} />
               </Form.Item>
             </Col>
             <Col xs={12} md={6}>
@@ -236,7 +318,7 @@ export default function CargoesPage() {
         dataSource={query.data?.content ?? []}
         pagination={tc.pagination(query.data?.totalElements ?? 0)}
         onChange={tc.onChange}
-        scroll={{ x: 1200 }}
+        scroll={{ x: 1300 }}
         mobile={{
           title: (c) => (
             <Space size={4} wrap>
@@ -254,12 +336,23 @@ export default function CargoesPage() {
           fields: (c) => [
             { label: 'Quantity', value: formatQuantity(c.quantity, c.quantityUnit, c.quantityTolerance) },
             { label: 'Laycan', value: formatLaycan(c.laycanFrom, c.laycanTo, c.laycanText) },
+            { label: 'Last sent', value: formatSent(c.lastSentAt) },
+            { label: 'Sent by', value: formatSenders(c) },
             c.minDwt != null && { label: 'DWT min', value: c.minDwt.toLocaleString() },
             c.maxDwt != null && { label: 'DWT max', value: c.maxDwt.toLocaleString() },
             c.freightIdea != null && { label: 'Freight', value: c.freightIdea },
           ],
         }}
-        mobileSort={[{ field: 'laycanFrom', label: 'Laycan' }, { field: 'id', label: 'Newest' }]}
+        mobileSort={[
+          { field: 'lastSentAt', label: 'Last sent' },
+          { field: 'laycanFrom', label: 'Laycan' },
+          { field: 'commodity', label: 'Cargo' },
+          { field: 'quantity', label: 'Quantity' },
+          { field: 'loadPlace', label: 'Load' },
+          { field: 'dischargePlace', label: 'Discharge' },
+          { field: 'statusRank', label: 'Status' },
+          { field: 'id', label: 'Newest' },
+        ]}
         onRow={(c) => ({ onClick: () => setSelectedId(c.id), style: { cursor: 'pointer' } })}
       />
 

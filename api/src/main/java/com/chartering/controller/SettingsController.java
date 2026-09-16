@@ -4,6 +4,8 @@ import com.chartering.config.BrevoProperties;
 import com.chartering.dto.CirculationProviderRequest;
 import com.chartering.dto.CirculationSettingsRequest;
 import com.chartering.dto.CirculationSettingsResponse;
+import com.chartering.dto.OwnAddressesRequest;
+import com.chartering.dto.OwnAddressesResponse;
 import com.chartering.dto.WhatsappSettingsRequest;
 import com.chartering.dto.WhatsappSettingsResponse;
 import com.chartering.service.MailTemplateService;
@@ -19,6 +21,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -104,6 +107,25 @@ public class SettingsController {
     @Operation(summary = "Reset the WhatsApp greeting to the built-in default")
     public ResponseEntity<WhatsappSettingsResponse> resetWhatsapp() {
         return ResponseEntity.ok(whatsappResponse(settings.resetWhatsappMessage()));
+    }
+
+    @GetMapping("/own-addresses")
+    @Operation(summary = "The desk's own email addresses",
+            description = "Arrivals from these are left out of a cargo's senders and its last-sent "
+                    + "date: when the sweep reads a reply of ours that quotes a cargo, the desk is "
+                    + "not who sent it. Applied when read, so it covers rows already stored.")
+    public ResponseEntity<OwnAddressesResponse> ownAddresses() {
+        return ResponseEntity.ok(new OwnAddressesResponse(List.copyOf(settings.ownAddresses())));
+    }
+
+    @PutMapping("/own-addresses")
+    @Operation(summary = "Replace the desk's own email addresses",
+            description = "The whole list; an empty one clears it. Addresses are trimmed and "
+                    + "lower-cased, and one that is not an address is refused with its name.")
+    public ResponseEntity<OwnAddressesResponse> updateOwnAddresses(
+            @Valid @RequestBody OwnAddressesRequest req) {
+        return ResponseEntity.ok(new OwnAddressesResponse(
+                List.copyOf(settings.updateOwnAddresses(req.getAddresses()))));
     }
 
     private WhatsappSettingsResponse whatsappResponse(String message) {
