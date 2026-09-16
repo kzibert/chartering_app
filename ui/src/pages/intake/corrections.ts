@@ -27,10 +27,17 @@ function rawFigure(field: string, reading?: Record<string, unknown>): number | u
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
-/** The number out of "8240 m3", or undefined when the text is not one. */
+/**
+ * The number out of "8240 m3", or undefined when the text is not one.
+ *
+ * The leading number token, not every digit in the string: the unit these rows print is `m3`,
+ * whose own 3 would otherwise be read as part of the figure and turn 8,240 into 82,403.
+ */
 export function figureIn(text?: string): number | undefined {
   if (!text) return undefined;
-  const n = Number(String(text).replace(/,/g, '').replace(/[^\d.-]/g, ''));
+  const match = String(text).replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+  if (!match) return undefined;
+  const n = Number(match[0]);
   return Number.isFinite(n) ? n : undefined;
 }
 
