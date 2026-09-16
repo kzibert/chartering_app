@@ -98,7 +98,7 @@ Three things bite here:
   `V19__seed_sea_routes_and_port_geography.sql`, `V20__add_intake_item_sources.sql` and
   `V21__collapse_duplicate_pending_vessel_items.sql` and
   `V22__recover_former_names_from_change_log.sql` and
-  `V23__add_cargo_max_ballast_days.sql` exist; the next one is V24.
+  `V23__add_cargo_max_ballast_days.sql` and `V24__add_feed.sql` exist; the next one is V25.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
@@ -876,6 +876,74 @@ Nothing in `parsed_emails`, `intake_items` or `cargo_sources` is audited — the
 writes and each is already a record of its own event. What a person *decides* is, because
 accepting writes to `Vessel` or `Cargo`, with the change set named so a merge reads as one
 event.
+
+### Feed: outside sources summarised by the local model
+
+`V24`/`feed_*`. The market is talked about in Telegram channels, trade-press feeds and a couple
+of public boards where brokers paste their circulars; the Feed tab reads those on a timer and has
+the email parser's model write **one summary per selected topic**.
+
+**WhatsApp channels are not a source, and that was researched rather than assumed.** A channel's
+public page (`whatsapp.com/channel/<code>`, and each post's own link) carries a name, a description
+and a follower count and nothing else; every tool that reads the posts — whatsmeow, Baileys,
+whatsapp-web.js, WAHA — is a linked device on a paired phone number, and the "no login" SaaS ones
+are the operator's numbers. The desk chose not to run a number for it. Telegram is a source
+because `t.me/s/<handle>` is Telegram itself publishing a public channel's posts as a page.
+Hellenic Shipping News is not one because it answers 403 to anything but a browser and its
+robots.txt says `ai-train=no, use=reference`: the reader names itself (`FEED_USER_AGENT`) and a
+source that refuses that is dropped, not worked around.
+
+- **The tab is on every deployment; only the analysis is switched.** Sources, topics, the prompts
+  and summaries are rows in the shared database, so the hosted instance reads and edits them.
+  `FEED_ANALYSIS_ENABLED` covers fetching, summarising and `detect-context` — pinned false in
+  `render.yaml`, both because the model is in the office and because a second fetcher would read
+  somebody else's server twice. Off, those endpoints 404 and the page omits their buttons.
+- **Readers are by kind, not by site.** `RssReader` (RSS and Atom through Jsoup's XML parser — no
+  feed library) and `TelegramReader` serve every feed and channel; `WEBSITE` hands the page to the
+  `WebsiteParser` its `parser_key` names (`ship-gr-board`, `shipoffer`). A new site is one class. A
+  reader returns what the page shows, seen or not — telling new from stored is `FeedFetchRunner`'s
+  job against `(source_id, external_id)` — and reads **outside** the transaction, because a
+  Telegram channel paged back with pauses is seconds of network nobody should hold a connection for.
+- **Unlike the parser sweep, one failing source does not stop a fetch.** Every source is a
+  different server; t.me being slow says nothing about ship.gr.
+- **`FeedLlmClient` is a sibling of `EmailParserClient`, not a reuse.** That client's prompt,
+  schema and Date/Subject turn are pinned to the extraction measurement; a summary wants none of
+  them, and the schema would make prose impossible.
+- **Summaries go to a different model (`FEED_LLM_URL`), and that was measured, not preferred.**
+  Blank falls back to `PARSER_URL`, and the finetune does write prose on a short input — which is
+  why it looked fine at first. On real feed batches it reported "no vessel openings" for a ship.gr
+  position list full of them, answered "nothing relevant" to every Handysize batch, and, given the
+  summary prompt on two items, wrote eight Danube–Med rates from $12.50/t to $16.00/t that neither
+  item contained. The general model is unsloth's Q4_K_M of the same Qwen3-4B-Instruct-2507,
+  unfinetuned, served by `chartering-ml/serve/docker-compose.general.yml` on :8091. An 8 GB card
+  cannot hold both servers, so they are **swapped** — stop `chartering-llamacpp`, start the general
+  one, summarise, swap back — and a parser sweep during the swap stops at its first message with
+  nothing lost. The 409 below applies only when both features point at one server.
+- **A summary run does not start while the parser sweep is running on the same server** (409):
+  llama-server's slots share one KV cache, and two 7,000-token requests do not fit in 8,192.
+- **Every figure in a summary is looked up in the items it was written from** (`FigureCheck`) and
+  the ones not found are listed under it. A flag, not a filter: a figure the model computed
+  honestly will not be found either, and deleting it would be the tool deciding what a broker may
+  read. No model call — string matching, so it holds whatever model wrote the text.
+
+**Fitting the context window** is `FeedItemSelector` then `SummaryPlanner`, both pure and tested
+with a fake token counter. Selection is the cheap half: exact duplicates by `content_hash`,
+reposts by their opening, signature and contact lines cut, and an item must mention one of the
+topic's keywords (the name's words when it has none), ranked by hits discounted by age. The
+budget is the window less the rendered prompt, less the answer reserved, less 5%; counted with
+llama-server's `/tokenize` and a deliberately pessimistic estimate where it cannot count.
+**One pass whenever everything fits** — every intermediate step is a place to lose a figure —
+else map-reduce: batches grouped by source (so notes can attribute), oversize items cut on
+paragraphs then lines, notes condensed level by level until they fit, then the summary.
+`maxCallsPerTopic` caps GPU time by dropping the lowest-ranked items, and **the number dropped is
+stored and printed on the summary**, because a summary of twelve items out of forty reads exactly
+like one of all forty.
+
+The window (default 8,192, what chartering-ml serves), answer sizes, lookback, call cap, fetch
+interval and both prompts are `app_settings` (`FeedSettings`). The prompts are templates with
+`{topic}`, `{keywords}`, `{today}`, `{period}`; an unedited prompt has no row, so a better default
+reaches everyone who never changed theirs, and each summary stores the prompt it ran under.
+Nothing `feed_*` is audited — machine copies of other people's pages, and documents about them.
 
 ### Auth
 
