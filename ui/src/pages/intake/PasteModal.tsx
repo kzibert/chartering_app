@@ -25,6 +25,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import CargoForm from '../cargoes/CargoForm';
 import PositionForm from '../openFleet/PositionForm';
 import VesselForm from '../vessels/VesselForm';
+import CompanyDrawer from '../companies/CompanyDrawer';
 import { intakeApi } from '../../api/intake';
 import type {
   IntakePasteCompanyComparison,
@@ -498,6 +499,12 @@ function CompanyCard({
   const [contacts, setContacts] = useState<ContactRow[]>(draft.contacts);
   const [comparison, setComparison] = useState<IntakePasteCompanyComparison | null>(null);
   const [fieldTicks, setFieldTicks] = useState<Record<string, boolean>>({});
+  // Whose record the drawer over this one is showing. A match is a name and a city, which is
+  // not enough to tell two firms of the same family apart — the record behind it is, so every
+  // name here opens it, before the save and after.
+  const [viewing, setViewing] = useState<number>();
+  /** The company this card wrote to, so the result can be opened rather than hunted for. */
+  const [saved, setSaved] = useState<{ id: number; name: string }>();
   const locked = !!doneNote;
 
   const compare = useMutation({
@@ -595,6 +602,7 @@ function CompanyCard({
       message.success(
         `${r.created ? 'Created' : 'Saved to'} ${r.companyName}: ${parts.join(', ') || 'nothing to change'}${skipped}`,
       );
+      setSaved({ id: r.companyId, name: r.companyName });
       onDone(`${r.created ? 'Created' : 'Saved to'} ${r.companyName}`);
       ['companies', 'company', 'people', 'person', 'contacts', 'dashboard'].forEach((k) =>
         qc.invalidateQueries({ queryKey: [k] }),
@@ -640,7 +648,20 @@ function CompanyCard({
                 <Radio key={m.companyId} value={m.companyId}>
                   <Space size={4} wrap>
                     <span>
-                      {m.name}
+                      {/* Inside a Radio's own label, so a plain click would pick the firm as
+                          well as open it. preventDefault stops the label activating its
+                          input; the radio keeps whatever it had, which is the point — this
+                          is the click that answers "is that the same ACME?". */}
+                      <Typography.Link
+                        style={{ cursor: 'pointer' }}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setViewing(m.companyId);
+                        }}
+                      >
+                        {m.name}
+                      </Typography.Link>
                       {m.city || m.country ? (
                         <Typography.Text type="secondary">
                           {' '}— {[m.city, m.country].filter(Boolean).join(', ')}
@@ -711,7 +732,12 @@ function CompanyCard({
 
         {onFileCompany && comparison && (
           <div>
-            <Typography.Text strong>What the text says about {comparison.companyName}</Typography.Text>
+            <Typography.Text strong>
+              What the text says about{' '}
+              <Typography.Link onClick={() => setViewing(comparison.companyId)}>
+                {comparison.companyName}
+              </Typography.Link>
+            </Typography.Text>
             {comparison.fields.length === 0 ? (
               <Typography.Paragraph type="secondary" style={{ marginTop: 4, marginBottom: 0 }}>
                 Nothing the record does not already say.
@@ -868,15 +894,25 @@ function CompanyCard({
             : 'Creates the company with these people and contacts. '}
           Nothing is flagged main or for circulation.
         </Typography.Text>
-        <Button
-          type="primary"
-          loading={accept.isPending}
-          disabled={locked || (onFileCompany && !comparison)}
-          onClick={() => accept.mutate()}
-        >
-          {onFileCompany ? 'Save to this company' : 'Create the company'}
-        </Button>
+        {saved ? (
+          <Button onClick={() => setViewing(saved.id)}>Open {saved.name}</Button>
+        ) : (
+          <Button
+            type="primary"
+            loading={accept.isPending}
+            disabled={locked || (onFileCompany && !comparison)}
+            onClick={() => accept.mutate()}
+          >
+            {onFileCompany ? 'Save to this company' : 'Create the company'}
+          </Button>
+        )}
       </Space>
+
+      {/* Read-only, like the one the review queue opens and for the same reason: this dialog
+          is open to decide what the text says about a firm, and editing that firm underneath
+          it would be two half-finished jobs at once. Omitting onEdit hides the Edit button
+          rather than leaving a dead one. */}
+      <CompanyDrawer companyId={viewing} onClose={() => setViewing(undefined)} />
     </Card>
   );
 }
