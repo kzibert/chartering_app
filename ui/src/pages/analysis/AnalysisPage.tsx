@@ -222,7 +222,7 @@ export default function AnalysisPage() {
                 icon={<ImportOutlined />}
                 onClick={() => setCaptureOpen(true)}
               >
-                Capture from mailbox
+                Capture circulars
               </Button>
               <Button icon={<PlusOutlined />} onClick={() => setPasteOpen(true)}>
                 Paste an email
