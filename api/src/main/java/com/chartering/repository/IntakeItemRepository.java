@@ -17,11 +17,13 @@ public interface IntakeItemRepository
         extends JpaRepository<IntakeItem, Long>, JpaSpecificationExecutor<IntakeItem> {
 
     @Override
-    @EntityGraph(attributePaths = {"parsedEmail", "parsedEmail.mailMessage"})
+    @EntityGraph(attributePaths = {"parsedEmail", "parsedEmail.mailMessage",
+            "parsedEmail.feedItem", "parsedEmail.feedItem.source"})
     Page<IntakeItem> findAll(org.springframework.data.jpa.domain.Specification<IntakeItem> spec,
                              Pageable pageable);
 
-    @EntityGraph(attributePaths = {"parsedEmail", "parsedEmail.mailMessage"})
+    @EntityGraph(attributePaths = {"parsedEmail", "parsedEmail.mailMessage",
+            "parsedEmail.feedItem", "parsedEmail.feedItem.source"})
     Optional<IntakeItem> findWithEmailById(Long id);
 
     long countByStatus(IntakeItemStatus status);
@@ -63,11 +65,71 @@ public interface IntakeItemRepository
             select distinct i from IntakeItem i
             left join fetch i.parsedEmail p
             left join fetch p.mailMessage
+            left join fetch p.feedItem
             where i.status = com.chartering.model.IntakeItemStatus.PENDING
               and i.kind = ?1
             order by i.id asc
             """)
     List<IntakeItem> pendingByKind(IntakeItemKind kind);
+
+    /**
+     * A pending question already open about this firm.
+     *
+     * <p>The suppression {@code COMPANY_DETAILS} cannot do without. A signature arrives with
+     * every list a broker sends rather than only when something is wrong, so one unanswered
+     * question about a firm would be twenty rows in a month and the queue would be unreadable
+     * — the failure the vessel rule already exists to prevent, at ten times the rate.
+     */
+    @Query("""
+            select i from IntakeItem i
+            where i.status = com.chartering.model.IntakeItemStatus.PENDING
+              and i.kind = com.chartering.model.IntakeItemKind.COMPANY_DETAILS
+              and i.companyId = ?1
+            order by i.id desc
+            """)
+    List<IntakeItem> pendingForCompany(Long companyId);
+
+    /**
+     * The same question about a firm that is not on file yet, matched on the name as signed.
+     *
+     * <p>{@code NEW_VESSEL}'s rule, for the same situation: there is no id to group on until
+     * somebody accepts the item, and the name as written is the only handle there is.
+     */
+    @Query("""
+            select i from IntakeItem i
+            where i.status = com.chartering.model.IntakeItemStatus.PENDING
+              and i.kind = com.chartering.model.IntakeItemKind.COMPANY_DETAILS
+              and i.companyId is null
+              and lower(i.subjectLabel) = lower(?1)
+            order by i.id desc
+            """)
+    List<IntakeItem> pendingNewCompany(String name);
+
+    /**
+     * Whether a signature reading exactly like this one has already been turned down.
+     *
+     * <p>What a discarded company question suppresses. The other kinds can re-raise when the
+     * incoming figures move, because figures are what they are about; a signature is about a
+     * firm, and "do not file these details" would be worthless if the same broker's next list
+     * undid it. The fingerprint is in the payload, so this is a {@code like} over a text
+     * column — a scan of a queue table, run once per circular, against a hash that cannot
+     * collide with anything else stored in there.
+     */
+    @Query("""
+            select count(i) from IntakeItem i
+            where i.status = com.chartering.model.IntakeItemStatus.REJECTED
+              and i.kind = com.chartering.model.IntakeItemKind.COMPANY_DETAILS
+              and i.payload like concat('%', ?1, '%')
+            """)
+    long countRejectedWithStyle(String styleHash);
+
+    /** Whether any question raised off one board is still waiting — asked before deleting it. */
+    @Query("""
+            select count(i) from IntakeItem i
+            where i.status = com.chartering.model.IntakeItemStatus.PENDING
+              and i.parsedEmail.feedItem.source.id = ?1
+            """)
+    long countPendingFromSource(Long sourceId);
 
     /** The same question about a hull that is not on file yet, matched on the name as spelled. */
     @Query("""

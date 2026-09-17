@@ -34,6 +34,7 @@ import {
 import IntakeItemDrawer from './IntakeItemDrawer';
 import ParsedEmailDrawer from './ParsedEmailDrawer';
 import PasteModal from './PasteModal';
+import WebSources from './WebSources';
 import { EMAIL_TYPES, KINDS, PARSE_STATUSES, kindMeta, parseStatusMeta } from './labels';
 import type {
   IntakeItemKind,
@@ -49,6 +50,12 @@ import type {
  * <b>A local-only feature.</b> PARSER_ENABLED is false on the hosted deployment, and this
  * page is reachable there only by typing the URL — hence an explanation rather than an
  * error when the API says the feature is off. The nav entry is already gone.
+ *
+ * <b>Mail is not the only door.</b> The open boards carry the same circulars from the same
+ * firms, so they are read by the same model and land in the same places. The Sources card is
+ * on this tab rather than only on the Feed tab because "is anything arriving" is a question
+ * about this queue; where a board is added and configured is still the Feed tab, beside the
+ * kinds it does not read.
  *
  * <b>Two views, because there are two questions.</b> The queue answers "what needs me": the
  * disagreements, the unknown hulls, the cargoes that look like duplicates. The log answers
@@ -118,6 +125,7 @@ export default function IntakePage() {
       <IntakeHeader
         pending={status.data?.pendingItems ?? 0}
         unparsed={status.data?.unparsed ?? 0}
+        unparsedPosts={status.data?.unparsedPosts ?? 0}
         parsedTotal={status.data?.parsedTotal ?? 0}
         failedTotal={status.data?.failedTotal ?? 0}
         reachable={status.data?.reachable === true}
@@ -137,6 +145,8 @@ export default function IntakePage() {
           logTc.resetPage();
         }}
       />
+
+      <WebSources waiting={status.data?.unparsedPosts ?? 0} />
 
       <Card size="small" style={{ marginBottom: 16 }}>
         <Space wrap size={12}>
@@ -234,6 +244,7 @@ export default function IntakePage() {
 function IntakeHeader({
   pending,
   unparsed,
+  unparsedPosts,
   parsedTotal,
   failedTotal,
   reachable,
@@ -251,6 +262,7 @@ function IntakeHeader({
 }: {
   pending: number;
   unparsed: number;
+  unparsedPosts: number;
   parsedTotal: number;
   failedTotal: number;
   reachable: boolean;
@@ -292,12 +304,26 @@ function IntakeHeader({
         <Col xs={12} md={5}>
           <Statistic
             title={
-              <Tooltip title="Synced mail the model has not been given yet, inside the age limit. The next sweep takes them newest first.">
+              <Tooltip
+                title={
+                  'Arrivals the model has not been given yet, inside the age limit. The next ' +
+                  'sweep takes the boards first and then the mail, newest first — a board adds ' +
+                  'a dozen entries a day against a mailbox that can hold thousands, and the ' +
+                  'other order would starve it.'
+                }
+              >
                 Waiting to be read
               </Tooltip>
             }
-            value={unparsed}
+            value={unparsed + unparsedPosts}
             valueStyle={{ fontSize: 22 }}
+            suffix={
+              unparsedPosts > 0 ? (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {unparsedPosts} off the web
+                </Typography.Text>
+              ) : undefined
+            }
           />
         </Col>
         <Col xs={24} md={14}>
@@ -421,14 +447,23 @@ function QueueTable({
       ),
     },
     {
-      title: 'From the email',
+      // Not "From the email" any more: half of these can come off a board, and a column
+      // headed for one door would read as a bug on the rows that came through the other.
+      title: 'Where from',
       key: 'mail',
       width: 260,
       render: (_, r) => (
         <div style={{ minWidth: 0 }}>
-          <Typography.Text style={{ fontSize: 13 }}>
-            {r.fromName || r.fromAddress || '—'}
-          </Typography.Text>
+          <Space size={4}>
+            {r.sourceKind === 'WEB' && (
+              <Tooltip title="Read off an open board rather than out of the mailbox">
+                <Tag color="cyan" style={{ marginInlineEnd: 0 }}>web</Tag>
+              </Tooltip>
+            )}
+            <Typography.Text style={{ fontSize: 13 }}>
+              {r.fromName || r.fromAddress || '—'}
+            </Typography.Text>
+          </Space>
           <div>
             <Typography.Text type="secondary" style={{ fontSize: 11 }}>
               {r.mailSubject || '(no subject)'}
@@ -507,13 +542,16 @@ function LogTable({
       ),
     },
     {
-      title: 'Email',
+      title: 'Arrival',
       key: 'subject',
       render: (_, r) => (
         <div style={{ minWidth: 0 }}>
-          <Typography.Text strong style={{ fontSize: 13 }}>
-            {r.subject || '(no subject)'}
-          </Typography.Text>
+          <Space size={4}>
+            {r.sourceKind === 'WEB' && <Tag color="cyan" style={{ marginInlineEnd: 0 }}>web</Tag>}
+            <Typography.Text strong style={{ fontSize: 13 }}>
+              {r.subject || '(no subject)'}
+            </Typography.Text>
+          </Space>
           <div>
             <Typography.Text type="secondary" style={{ fontSize: 11 }}>
               {r.fromName || r.fromAddress || '—'}

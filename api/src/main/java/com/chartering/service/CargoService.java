@@ -6,6 +6,7 @@ import com.chartering.dto.PageResponse;
 import com.chartering.exception.ResourceNotFoundException;
 import com.chartering.mapper.DtoMapper;
 import com.chartering.model.Cargo;
+import com.chartering.model.SourceKind;
 import com.chartering.model.CargoSource;
 import com.chartering.model.CargoStatus;
 import com.chartering.repository.*;
@@ -66,7 +67,7 @@ public class CargoService {
                               BigDecimal maxQuantity,
                               LocalDate sentSince,
                               Long companyId,
-                              Boolean fromMail) {
+                              SourceKind sourceKind) {
     }
 
     /**
@@ -103,7 +104,7 @@ public class CargoService {
                 CargoSpecification.quantityOverlaps(f.minQuantity(), f.maxQuantity()),
                 CargoSpecification.lastSentSince(f.sentSince()),
                 CargoSpecification.companyIdEquals(f.companyId()),
-                CargoSpecification.fromMailEquals(f.fromMail()));
+                CargoSpecification.sourceKindEquals(f.sourceKind()));
     }
 
     @Transactional(readOnly = true)
@@ -206,14 +207,15 @@ public class CargoService {
                 : personRepository.findById(r.getBrokerPersonId())
                         .orElseThrow(() -> new ResourceNotFoundException("Person", r.getBrokerPersonId())));
 
-        // fromMail follows the link rather than being sent alongside it: two fields saying
-        // the same thing are two fields that eventually disagree. Once true it stays true
-        // even if the message is later unlinked - how the cargo reached the desk is a fact
-        // about the cargo, not about the row it was read from.
+        // sourceKind follows the link rather than being sent alongside it: two fields saying
+        // the same thing are two fields that eventually disagree. Once set it stays set even
+        // if the message is later unlinked - how the cargo reached the desk is a fact about
+        // the cargo, not about the row it was read from. A form that names no message leaves
+        // whatever is there, so saving a cargo the sweep read does not demote it to MANUAL.
         if (r.getSourceMailMessageId() != null) {
             c.setSourceMailMessage(mailMessageRepository.findById(r.getSourceMailMessageId())
                     .orElseThrow(() -> new ResourceNotFoundException("Message", r.getSourceMailMessageId())));
-            c.setFromMail(true);
+            c.setSourceKind(SourceKind.MAIL);
         }
         c.setReceivedAt(r.getReceivedAt());
         c.setNotes(blankToNull(r.getNotes()));

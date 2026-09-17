@@ -2,7 +2,6 @@ package com.chartering.service.parser;
 
 import com.chartering.config.ParserProperties;
 import com.chartering.exception.FeatureDisabledException;
-import com.chartering.model.MailMessage;
 import com.chartering.repository.ParsedEmailRepository;
 import com.chartering.service.ParserSettings;
 import lombok.RequiredArgsConstructor;
@@ -34,6 +33,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * poller: a restart is not a reason to spend GPU time, and a container that crash-loops would
  * otherwise re-read the backlog on every attempt.
  *
+ * <h2>Two queues, one sweep</h2>
+ * <p>Synced mail, and posts off the boards a source is marked to be read into intake. They are
+ * one sweep because they are one cost — the model server, one request at a time — and because
+ * the tab's "is it running" has to mean one thing. <b>Posts are taken first and mail fills what
+ * is left of the batch.</b> A board adds perhaps a dozen entries a day against a mailbox that
+ * can hold a backlog of thousands, so the other order would starve the boards for as long as
+ * the backlog lasted, and a position list is worth least on the day after it stops being true.
+ *
  * <h2>Why parsing is not part of the mail sync</h2>
  * <p>The sync is a network read against an IMAP server that must finish; parsing is minutes of
  * somebody else's GPU. Chaining them would mean a mailbox that stops updating because a
@@ -61,6 +68,7 @@ public class ParserSweepService {
     private final ParserProperties props;
     private final ParserSettings settings;
     private final ParsedEmailRepository parsedEmails;
+    private final com.chartering.repository.FeedItemRepository feedItems;
     private final EmailParseRunner runner;
     private final com.chartering.service.lookup.VesselLookupService lookups;
 
@@ -91,7 +99,7 @@ public class ParserSweepService {
      *                    outcomes a user most needs told apart
      */
     public record SweepReport(int read, int failed, int skipped, int positions, int cargoes,
-                              int items, boolean unreachable, String message,
+                              int items, int posts, boolean unreachable, String message,
                               OffsetDateTime finishedAt) {
     }
 
@@ -159,7 +167,7 @@ public class ParserSweepService {
             // Nothing above this catches. The worker thread dying would stop the mailbox
             // being read for the life of the process, silently.
             log.error("Parser sweep failed", e);
-            lastReport = new SweepReport(0, 0, 0, 0, 0, 0, false,
+            lastReport = new SweepReport(0, 0, 0, 0, 0, 0, 0, false,
                     "The sweep failed: " + e.getMessage(), OffsetDateTime.now());
         } finally {
             lastSweep = OffsetDateTime.now();
@@ -175,19 +183,64 @@ public class ParserSweepService {
         }
     }
 
+    /**
+     * One arrival in the queue: a message to read, or a post.
+     *
+     * <p>A pair of ids rather than the entities, because the two queues are loaded in this
+     * method and read one by one in another transaction. Holding forty {@code MailMessage}
+     * entities open across forty model calls is exactly the transaction this service is built
+     * not to have.
+     */
+    private record Job(Long mailMessageId, Long feedItemId) {
+
+        static Job mail(Long id) {
+            return new Job(id, null);
+        }
+
+        static Job post(Long id) {
+            return new Job(null, id);
+        }
+
+        boolean isPost() {
+            return feedItemId != null;
+        }
+
+        Long id() {
+            return isPost() ? feedItemId : mailMessageId;
+        }
+
+        String describe() {
+            return isPost() ? "Post " + feedItemId : "Message " + mailMessageId;
+        }
+    }
+
     private SweepReport sweep() {
         // Read once and used throughout: the batch size and the lookback have to come from
         // the same snapshot, or a save landing mid-sweep would page one against the other.
         ParserSettings.Values values = settings.values();
         int batch = values.sweepBatchSize();
-        List<MailMessage> queue = new ArrayList<>(
-                parsedEmails.unparsed(values.receivedSince(), PageRequest.of(0, batch)));
+        List<Job> queue = new ArrayList<>();
 
-        // Failures come after the fresh mail and only fill what is left of the batch. A
+        // Boards first. A board adds a dozen entries a day against a mailbox that can hold a
+        // backlog of thousands, so taking mail first would starve them for as long as the
+        // backlog lasted - and a position list is worth least on the day after it stops being
+        // true. Bounded by the same batch, so the whole sweep is still one number of model
+        // calls however the two queues divide it.
+        feedItems.unparsedForIntake(values.receivedSince(), PageRequest.of(0, batch))
+                .forEach(i -> queue.add(Job.post(i.getId())));
+
+        if (queue.size() < batch) {
+            parsedEmails.unparsed(values.receivedSince(), PageRequest.of(0, batch - queue.size()))
+                    .forEach(m -> queue.add(Job.mail(m.getId())));
+        }
+
+        // Failures come after the fresh arrivals and only fill what is left of the batch. A
         // backlog of timeouts must not push today's circulars behind tomorrow.
         if (queue.size() < batch) {
             parsedEmails.retryable(props.getMaxAttempts(), PageRequest.of(0, batch - queue.size()))
-                    .forEach(p -> queue.add(p.getMailMessage()));
+                    .forEach(p -> queue.add(p.getMailMessage() != null
+                            ? Job.mail(p.getMailMessage().getId())
+                            : Job.post(p.getFeedItem().getId())));
         }
 
         if (queue.isEmpty()) {
@@ -197,7 +250,7 @@ public class ParserSweepService {
             String nothing = values.sweepMaxAgeDays() > 0
                     ? "Nothing new to read in the last " + values.sweepMaxAgeDays() + " days."
                     : "Nothing new to read.";
-            return new SweepReport(0, 0, 0, 0, 0, 0, false, nothing, OffsetDateTime.now());
+            return new SweepReport(0, 0, 0, 0, 0, 0, 0, false, nothing, OffsetDateTime.now());
         }
 
         int read = 0;
@@ -206,15 +259,19 @@ public class ParserSweepService {
         int positions = 0;
         int cargoes = 0;
         int items = 0;
+        int posts = 0;
         boolean unreachable = false;
 
-        for (MailMessage message : queue) {
+        for (Job job : queue) {
             try {
-                IntakeService.ApplyOutcome outcome = runner.parseOne(message.getId());
+                IntakeService.ApplyOutcome outcome = job.isPost()
+                        ? runner.parsePost(job.feedItemId())
+                        : runner.parseOne(job.mailMessageId());
                 if (outcome == null) {
                     skipped++;
                 } else {
                     read++;
+                    if (job.isPost()) posts++;
                     positions += outcome.positionsApplied();
                     cargoes += outcome.cargoesApplied();
                     items += outcome.itemsRaised();
@@ -229,34 +286,35 @@ public class ParserSweepService {
                 break;
             } catch (Exception e) {
                 failed++;
-                log.warn("Message {} could not be read: {}", message.getId(), e.toString());
-                // Recorded here rather than inside parseOne, and that is the whole point:
-                // parseOne is one transaction, so whatever threw took the row that would
+                log.warn("{} could not be read: {}", job.describe(), e.toString());
+                // Recorded here rather than inside the runner, and that is the whole point:
+                // a parse is one transaction, so whatever threw took the row that would
                 // have recorded it down with the rollback - and where the cause is a
-                // database error the connection is already refusing statements. The message
+                // database error the connection is already refusing statements. The arrival
                 // was left with no row at all, which is exactly the shape the sweep's queue
                 // treats as "never read": it came back every sweep, spent a model call every
                 // time, never showed up under the Log's FAILED filter and never reached the
                 // attempt ceiling. This is its own transaction, after the failed one is done
                 // with.
                 try {
-                    runner.recordFailure(message.getId(), e.toString());
+                    if (job.isPost()) runner.recordPostFailure(job.feedItemId(), e.toString());
+                    else runner.recordFailure(job.mailMessageId(), e.toString());
                 } catch (Exception recording) {
                     // A failure to record a failure is not a reason to abandon the sweep,
                     // but it is the one that leaves no trace anywhere else.
-                    log.error("Could not record the failure of message {}",
-                            message.getId(), recording);
+                    log.error("Could not record the failure of {}", job.describe(), recording);
                 }
             }
         }
 
         String summary = unreachable
                 ? "Stopped: the model server did not answer."
-                : "Read %d, %d failed, %d skipped.".formatted(read, failed, skipped);
+                : "Read %d (%d off the web), %d failed, %d skipped."
+                        .formatted(read, posts, failed, skipped);
         log.info("Parser sweep: {} positions {} cargoes {} items {}",
                 summary, positions, cargoes, items);
-        return new SweepReport(read, failed, skipped, positions, cargoes, items, unreachable,
-                summary, OffsetDateTime.now());
+        return new SweepReport(read, failed, skipped, positions, cargoes, items, posts,
+                unreachable, summary, OffsetDateTime.now());
     }
 
     private void requireEnabled() {

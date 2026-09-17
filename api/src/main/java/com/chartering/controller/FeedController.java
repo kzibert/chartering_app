@@ -130,6 +130,18 @@ public class FeedController {
         return ResponseEntity.ok(queries.items(sourceId, q, from, to, page, size));
     }
 
+    @GetMapping("/items/{id}")
+    @Operation(summary = "One collected item, whole",
+            description = "The post as the source published it. Read by the Intake screens "
+                    + "as well as this tab: a cargo or a position read off a board is checked "
+                    + "by eye against the post, the way a mailed one is checked against the "
+                    + "email. Not behind the analysis switch, for the reason nothing else "
+                    + "here is — what a source collected is data, and reading it costs "
+                    + "nobody's server anything.")
+    public ResponseEntity<FeedItemResponse> item(@PathVariable Long id) {
+        return ResponseEntity.ok(queries.item(id));
+    }
+
     // ------------------------------------------------------------------ topics
 
     @GetMapping("/topics")

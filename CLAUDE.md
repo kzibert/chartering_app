@@ -99,7 +99,7 @@ Three things bite here:
   `V21__collapse_duplicate_pending_vessel_items.sql` and
   `V22__recover_former_names_from_change_log.sql` and
   `V23__add_cargo_max_ballast_days.sql` and `V24__add_feed.sql` and
-  `V25__add_intake_decisions.sql` exist; the next one is V26.
+  `V25__add_intake_decisions.sql` and `V26__add_web_intake.sql` exist; the next one is V27.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
@@ -366,6 +366,20 @@ Flyway builds one schema, not one per environment.
 
 Three tabs and one rule engine. A day here is cargoes arriving, tonnage positions arriving,
 and the two being put against each other; these are those three things.
+
+**Where a cargo came from is one column with three answers.** `cargoes.source_kind` is
+`MANUAL`, `MAIL` or `WEB` — typed on a form, read out of the mailbox by the sweep, or read off
+an open board by the same sweep. It replaced a `from_mail` boolean in V26 rather than gaining a
+second boolean beside it, because two columns for one fact are two columns free to disagree and
+the one nobody thought about is the one that ends up wrong. It is a fact about the *arrival* and
+not about the quality of what arrived: a cargo typed out of a phone call is `MANUAL` and is the
+best-checked row in the table, while one read off a board is `WEB` and nobody has looked at it
+yet — which is exactly what the Cargoes tab's Source filter exists to tell apart.
+`source_feed_item_id` is the post itself, so the drawer offers the original to read the way it
+offers the original email. A position carries no such column: what a broker reads on Open Fleet
+is *who reported her*, which is already a column and is filled from the signature block off a
+board exactly as it is filled from the sender out of the mail — provenance there is a link
+(`vessel_positions.source_feed_item_id`) rather than a category.
 
 **A `Cargo` is a charterer's requirement as it arrived, and almost every field is nullable.**
 A real first email says "25,000 MT Wheat +/- 10%, Chornomorsk to Spain Med, geared bulker abt
@@ -673,6 +687,31 @@ The other half of the Analysis tab, and what the corpus was collected for. A mod
 incoming email and the app files what it found — positions onto Open Fleet, cargoes onto
 Cargoes — so Match has both sides to work with without anybody typing a circular in.
 
+**Mail is not the only door.** ship.gr's Open Cargoes and Open Ships boards are circulars the
+same firms paste by hand — "25,000 MT +/-10% MOLCO Wheat, St Petersburg / Durres", signed with
+a full style — so they are read by the same model on the same corpus and land in the same
+places. The Feed tab already fetched those pages to summarise them, so a source is *marked*
+rather than duplicated (`feed_sources.into_intake`) and the Intake tab's Sources card lists the
+marked ones. Everything downstream works on an `Arrival`: a message or a post, with the four
+questions the rest of the code asks of one — who told us, when, what to file it against, what to
+call the change set. What differs is only where "who told us" comes from. Out of the mail it is
+the envelope, which the sync already matched against the contacts table and which beats any
+reading of the prose below it; off a board there is no envelope, so it is the signature block,
+matched the way the paste screen matches one, and null where nothing on file carries identity
+evidence for the firm. A null reporter is honest rather than broken — the position is still
+worth filing, and it is the case the `COMPANY_DETAILS` question raised beside it exists to
+close.
+
+`parsed_emails` grew a nullable `feed_item_id` beside its now-nullable `mail_message_id`, with a
+check that exactly one is set. A post needs everything a message needs and for the same reasons:
+the row is what stops the sweep reading it again, it is what every review item hangs off, and
+`raw_json` is the only thing that can settle whether the model read it wrong or we filed its
+answer wrong. A parallel table would have had to repeat all three and then fork the queue, the
+log, and `intake_items.parsed_email_id` behind them. **The sweep takes posts first and lets mail
+fill the rest of the batch** — a board adds a dozen entries a day against a mailbox that can hold
+a backlog of thousands, and the other order would starve the boards for as long as the backlog
+lasted.
+
 **The model is not in this application and not in this repository.** It is an HTTP endpoint:
 the sibling `chartering-ml` project serving a finetuned Qwen3-4B through llama.cpp behind a
 JSON schema (`make serve-docker`, port 8090). `PARSER_ENABLED` is the switch, true in compose
@@ -760,6 +799,24 @@ So three things stop and become `intake_items`:
   name, never skipped), written through the same writer an accepted value uses, and recorded
   as a decision so the email's own figure stops coming back. The drawer drops settled rows on
   the **detail call only** — it costs a query per item, and the list row prints one line.
+- **`COMPANY_DETAILS`** — the firm that signed it, against the firm on file. Every circular
+  ends in a full style, and it is the one part of the mail that is *about the sender* rather
+  than about the market; the contacts database goes stale in exactly that place while the market
+  keeps posting its current details through the door. Raised from mail as well as from a board,
+  because the same document goes stale the same way through either door. **Silence is the normal
+  answer and it has to be**, or a signature arriving with every list would bury the other three
+  kinds inside a week. Three things keep it quiet: a firm whose record already holds everything
+  the block says raises nothing (which, after the first answer, is every regular correspondent
+  for ever); **one pending item per firm**, on `intake_items.company_id`, or on the name as
+  signed for a firm not on file yet; and **a discarded reading stays discarded** — the payload
+  carries a fingerprint of what the block actually said, so only a signature that has *moved*
+  comes back. Our own outgoing mail is skipped on `mail.ownAddresses`, the same list the cargo
+  sources screen filters on: the sweep reads the Sent folder, and a queue asking whether to
+  create the firm you work for is a queue with an obvious bug in it. Accepting is the paste
+  modal's own card (`CompanyStyleCard`) posting to `POST /intake/items/{id}/company`, which
+  delegates to `IntakePasteService.acceptCompany` — the same service, so a signature is allowed
+  to write exactly the same things whichever screen reviewed it: only what was ticked, nothing
+  flagged main or `circ`, notes appended rather than replaced.
 - **`CARGO_MERGE`** — a cargo that looks like one in hand. Never merged silently: two cargoes
   cannot be un-merged. The key is same commodity + the load point actually agreeing +
   quantity within 20% + laycans overlapping, where **an absent field abstains rather than
@@ -942,6 +999,18 @@ Hellenic Shipping News is not one because it answers 403 to anything but a brows
 robots.txt says `ai-train=no, use=reference`: the reader names itself (`FEED_USER_AGENT`) and a
 source that refuses that is dropped, not worked around.
 
+- **A source can be read twice over, and is fetched once.** `feed_sources.into_intake` marks a
+  board whose posts the *parser* reads as circulars — ship.gr's two pages are exactly that, and
+  a trade-press feed is not, since running the extraction model over a news article spends GPU
+  to produce nothing. It is separate from `enabled`, which is whether the page is fetched at
+  all. One fetch, one stored copy of each post, two readers of it: a second source at the same
+  address would read somebody else's server twice for the same bytes. It also means the fetch
+  timer runs when `FEED_ANALYSIS_ENABLED` is off but `PARSER_ENABLED` is on and a source is
+  marked — otherwise the Intake queue would be permanently empty with nothing on screen saying
+  why. Both switches are false on the hosted instance, so the condition is an or of two falses
+  there. Deleting a source that still has unanswered Intake questions is refused, because the
+  delete cascades through its posts to the parse records and the items behind them; disabling
+  is the reversible way to stop a board.
 - **The tab is on every deployment; only the analysis is switched.** Sources, topics, the prompts
   and summaries are rows in the shared database, so the hosted instance reads and edits them.
   `FEED_ANALYSIS_ENABLED` covers fetching, summarising and `detect-context` — pinned false in

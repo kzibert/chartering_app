@@ -61,24 +61,27 @@ public interface ParsedEmailRepository extends JpaRepository<ParsedEmail, Long> 
      */
     @Query("""
             select p from ParsedEmail p
-            join fetch p.mailMessage
+            left join fetch p.mailMessage
+            left join fetch p.feedItem
             where p.status = com.chartering.model.ParseStatus.FAILED
               and p.attempts < :maxAttempts
             order by p.parsedAt asc
             """)
     List<ParsedEmail> retryable(@Param("maxAttempts") int maxAttempts, Pageable pageable);
 
-    @EntityGraph(attributePaths = "mailMessage")
+    @EntityGraph(attributePaths = {"mailMessage", "feedItem", "feedItem.source"})
     Optional<ParsedEmail> findWithMessageById(Long id);
 
     Optional<ParsedEmail> findByMailMessageId(Long mailMessageId);
 
+    Optional<ParsedEmail> findByFeedItemId(Long feedItemId);
+
     boolean existsByMailMessageId(Long mailMessageId);
 
-    @EntityGraph(attributePaths = "mailMessage")
+    @EntityGraph(attributePaths = {"mailMessage", "feedItem", "feedItem.source"})
     Page<ParsedEmail> findAllByOrderByParsedAtDesc(Pageable pageable);
 
-    @EntityGraph(attributePaths = "mailMessage")
+    @EntityGraph(attributePaths = {"mailMessage", "feedItem", "feedItem.source"})
     Page<ParsedEmail> findByStatusOrderByParsedAtDesc(ParseStatus status, Pageable pageable);
 
     long countByStatus(ParseStatus status);

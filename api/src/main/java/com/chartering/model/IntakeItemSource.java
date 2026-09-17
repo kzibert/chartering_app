@@ -60,6 +60,11 @@ public class IntakeItemSource {
     @JoinColumn(name = "mail_message_id")
     private MailMessage mailMessage;
 
+    /** The board post, for an arrival that came off one rather than out of the mailbox. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "feed_item_id")
+    private FeedItem feedItem;
+
     /** Who sent it — the reason more than one firm can be offered for attaching to the hull. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "reported_by_company_id")

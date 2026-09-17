@@ -2,6 +2,7 @@ package com.chartering.dto;
 
 import com.chartering.model.IntakeItemKind;
 import com.chartering.model.IntakeItemStatus;
+import com.chartering.model.SourceKind;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -33,6 +34,8 @@ public record IntakeItemResponse(
         String summary,
         Long vesselId,
         Long cargoId,
+        /** The firm a {@code COMPANY_DETAILS} item is about, when it is one already on file. */
+        Long companyId,
         Long mailMessageId,
         String fromAddress,
         String fromName,
@@ -44,6 +47,16 @@ public record IntakeItemResponse(
         String senderCompanyName,
         String mailSubject,
         LocalDateTime receivedAt,
+        /**
+         * Which door it came in through, and the post where it was a board rather than the
+         * mailbox. The fields above it are filled either way — a post's title stands in for the
+         * subject, the board's name for the sender, its date line for when it arrived — so every
+         * screen that already prints an arrival prints this one without knowing the difference.
+         */
+        SourceKind sourceKind,
+        Long feedItemId,
+        String feedSourceName,
+        String feedUrl,
         JsonNode payload,
         /**
          * What an outside source found, on the detail call only. Absent from the list: it

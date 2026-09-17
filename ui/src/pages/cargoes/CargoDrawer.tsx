@@ -50,19 +50,21 @@ export default function CargoDrawer({ cargoId, onClose, onEdit }: Props) {
   // newer per-arrival table and older rows have only source_mail_message_id on the cargo
   // itself, so without this the button would be missing on exactly the cargoes that have been
   // here longest. A cargo with both lists the sources, which are the fuller answer.
+  const held = (sources ?? []).filter((s) => s.mailMessageId != null || s.feedItemId != null);
   const readable: EmailSource[] =
-    (sources ?? []).filter((s) => s.mailMessageId != null).length > 0
-      ? (sources ?? [])
-          .filter((s) => s.mailMessageId != null)
-          .map((s, i) => ({
-            mailMessageId: s.mailMessageId,
-            label: s.companyName ?? s.personName ?? s.fromAddress,
-            when: s.reportedAt,
-            current: i === 0,
-          }))
+    held.length > 0
+      ? held.map((s, i) => ({
+          mailMessageId: s.mailMessageId,
+          feedItemId: s.feedItemId,
+          label: s.companyName ?? s.personName ?? s.fromAddress ?? s.feedSourceName,
+          when: s.reportedAt,
+          current: i === 0,
+        }))
       : data?.sourceMailMessageId != null
         ? [{ mailMessageId: data.sourceMailMessageId, current: true }]
-        : [];
+        : data?.sourceFeedItemId != null
+          ? [{ feedItemId: data.sourceFeedItemId, current: true }]
+          : [];
 
   return (
     <Drawer
@@ -108,7 +110,18 @@ export default function CargoDrawer({ cargoId, onClose, onEdit }: Props) {
             <Tag color={CARGO_STATUS_META[data.status].color}>
               {CARGO_STATUS_META[data.status].label}
             </Tag>
-            {data.fromMail && <Tag color="blue">from mail</Tag>}
+            {data.sourceKind === 'MAIL' && <Tag color="blue">from mail</Tag>}
+            {data.sourceKind === 'WEB' && (
+              <Tooltip
+                title={
+                  data.sourceFeedName
+                    ? `Read off ${data.sourceFeedName} — a circular the firm posted publicly, not one addressed to this desk`
+                    : 'Read off an open board — a circular the firm posted publicly, not one addressed to this desk'
+                }
+              >
+                <Tag color="cyan">from the web</Tag>
+              </Tooltip>
+            )}
           </Space>
           {data.statusNote && (
             <Typography.Paragraph type="secondary">{data.statusNote}</Typography.Paragraph>
@@ -116,7 +129,9 @@ export default function CargoDrawer({ cargoId, onClose, onEdit }: Props) {
 
           <Descriptions column={1} size="small" bordered>
             {data.lastSentAt && (
-              <Descriptions.Item label={data.fromMail || sources?.length ? 'Last sent' : 'Entered'}>
+              <Descriptions.Item
+                label={data.sourceKind !== 'MANUAL' || sources?.length ? 'Last sent' : 'Entered'}
+              >
                 {dayjs(data.lastSentAt).format('D MMM YYYY HH:mm')}
               </Descriptions.Item>
             )}

@@ -57,12 +57,12 @@ export default function ParsedEmailDrawer({ parsedId, onClose }: Props) {
            without it the only way to stop the retries was to leave them running. Offered on
            a skipped row too - an attachment-only list is the standing example of a message
            there is no point ever reading. */
-        p && p.mailMessageId && p.status !== 'PARSED' ? (
+        p && p.status !== 'PARSED' ? (
           <Space>
             <Button
               loading={reopen.isPending}
               onClick={() =>
-                reopen.mutate(p.mailMessageId!, {
+                reopen.mutate(p.id, {
                   onSuccess: () => {
                     message.success('Queued to be read again on the next sweep.');
                     onClose();
@@ -93,7 +93,7 @@ export default function ParsedEmailDrawer({ parsedId, onClose }: Props) {
                 okText="Ignore it"
                 onConfirm={() =>
                   ignoreParsed.mutate(
-                    { mailMessageId: p.mailMessageId!, note: note.trim() || undefined },
+                    { parsedEmailId: p.id, note: note.trim() || undefined },
                     {
                       onSuccess: () => {
                         message.success('Ignored. It will not be read again.');

@@ -15,7 +15,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -24,9 +23,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Turning one read email into rows — and into the questions it could not answer.
+ *
+ * <p><b>Mail is no longer the only door.</b> A board post — ship.gr's Open Cargoes and Open
+ * Ships pages are circulars the same firms paste by hand — arrives as the same text and is read
+ * by the same model, so everything below works on an {@link Arrival} rather than on a
+ * {@code MailMessage}. What differs is where "who told us" comes from: an envelope the mail sync
+ * has already matched against the contacts table, or the signature block at the foot of the
+ * post. Nothing downstream of that distinction has to know which.
  *
  * <p><b>The whole feature's judgement lives in one distinction.</b> A parse may write, on its
  * own, anything that only <em>adds</em>: a position for a hull already on file, a cargo
@@ -65,6 +72,12 @@ public class IntakeService {
     private final IntakeVesselAliasRepository aliases;
     private final VesselPositionRepository positions;
     private final IntakeResolver resolver;
+    private final CompanyStyleIntake styles;
+    private final com.chartering.config.ParserProperties props;
+    private final com.chartering.repository.CompanyRepository companies;
+    private final IntakePasteService paste;
+    private final com.chartering.repository.PersonRepository people;
+    private final com.chartering.service.SettingsService settingsService;
     private final VesselLookupService lookups;
     private final VesselService vesselService;
     private final ObjectMapper json;
@@ -84,11 +97,17 @@ public class IntakeService {
      */
     @Transactional
     public ApplyOutcome apply(ParsedEmail parsed, Extraction extraction) {
-        MailMessage message = parsed.getMailMessage();
+        // The signature block, read before anything else is filed, because a post off a board
+        // has no other way of saying who is talking - and on a mailed circular it is the
+        // question the fourth kind of review item asks. Costs no model call: CompanyStyleReader
+        // reads shapes, not prose.
+        CompanyStyleIntake.Reading signature = styles.read(textOf(parsed), extraction.broker());
+        Arrival arrival = arrivalOf(parsed, signature);
         // Names the transaction's whole change set, so the gap fills a circular writes read
         // in the History tab as one event with a cause rather than as scattered edits. The
         // importer uses it the same way for the same reason.
-        ChangeContext.describe("Read from mail: " + subjectOf(message));
+        ChangeContext.describe((arrival.isMail() ? "Read from mail: " : "Read from the web: ")
+                + arrival.label());
 
         int positionsApplied = 0;
         int cargoesApplied = 0;
@@ -96,19 +115,97 @@ public class IntakeService {
 
         for (Extraction.ExtractedVessel v : extraction.vesselsOrEmpty()) {
             if (!v.isUsable()) continue;
-            VesselOutcome outcome = applyVessel(parsed, message, v);
+            VesselOutcome outcome = applyVessel(parsed, arrival, v);
             positionsApplied += outcome.positionApplied() ? 1 : 0;
             itemsRaised += outcome.itemsRaised();
         }
 
         for (Extraction.ExtractedCargo c : extraction.cargoesOrEmpty()) {
             if (!c.isUsable()) continue;
-            CargoOutcome outcome = applyCargo(parsed, message, c);
+            CargoOutcome outcome = applyCargo(parsed, arrival, c);
             cargoesApplied += outcome.cargoApplied() ? 1 : 0;
             itemsRaised += outcome.itemsRaised();
         }
 
+        if (raiseCompanyDetails(parsed, arrival, signature)) itemsRaised++;
+
         return new ApplyOutcome(positionsApplied, cargoesApplied, itemsRaised);
+    }
+
+    /**
+     * What this parse was read out of, with the sender placed.
+     *
+     * <p>For mail the sync has already done the work: the envelope was matched against the
+     * contacts table when the message landed, which beats any reading of the prose below it.
+     * For a post there is no envelope, so the only firm named anywhere is the one that signed
+     * it — matched the way the paste screen matches a signature, and left null when nothing on
+     * file carries identity evidence for it. A null reporter is honest rather than broken: the
+     * position is still worth filing, and it is precisely the case the {@code COMPANY_DETAILS}
+     * question raised beside it exists to close.
+     */
+    private Arrival arrivalOf(ParsedEmail parsed, CompanyStyleIntake.Reading signature) {
+        if (parsed.getMailMessage() != null) return Arrival.of(parsed.getMailMessage());
+        Company signer = signature.companyId() == null ? null
+                : companies.findById(signature.companyId()).orElse(null);
+        return Arrival.of(parsed.getFeedItem(), signature, signer, signerPerson(signer, signature));
+    }
+
+    /**
+     * Which person at the firm signed it, where the block names one this desk already holds.
+     *
+     * <p>Only an exact full name, and only within the matched firm. A looser rule belongs on the
+     * review screen, where a person can see both names — {@code IntakePasteService.compare}
+     * offers a surname-and-initial suggestion and flags it as one. Guessing here would file a
+     * cargo against the wrong colleague with nothing on any screen ever saying so.
+     */
+    private Person signerPerson(Company company, CompanyStyleIntake.Reading signature) {
+        if (company == null || signature.style() == null || signature.style().people().isEmpty()) {
+            return null;
+        }
+        List<Person> onFile = people.findByCompanyIds(List.of(company.getId()));
+        for (CompanyStyleReader.Person read : signature.style().people()) {
+            if (read.fullName() == null) continue;
+            for (Person p : onFile) {
+                if (p.getFullName() != null
+                        && p.getFullName().strip().equalsIgnoreCase(read.fullName().strip())) {
+                    return p;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The same, for the paths that start from a stored item rather than from a fresh parse.
+     *
+     * <p>A post's signature is read again here rather than stored on the row, and the reason is
+     * the one this whole table follows: what is stored is what a reading <em>produced</em> — the
+     * reporter on the position, the broker on the cargo — not the intermediate step. Reading a
+     * signature costs no model call and no network, so keeping a second copy of it in step with
+     * the first would be work with a bug in it and nothing bought.
+     */
+    private Arrival arrivalOf(ParsedEmail parsed) {
+        if (parsed.getMailMessage() != null) return Arrival.of(parsed.getMailMessage());
+        return arrivalOf(parsed, styles.read(textOf(parsed), null));
+    }
+
+    /**
+     * The text a parse was read out of, whichever door it came in through.
+     *
+     * <p><b>Cut to the same length the model was given</b>, which is not tidiness. What runs
+     * past {@code maxBodyChars} on a mailed circular is a quoted chain, and a quoted chain
+     * ends in somebody else's signature — often several, oldest last. Reading the whole body
+     * would let a firm three replies down be proposed as the sender of this one, and the
+     * queue would fill with questions about correspondents nobody wrote to. Cutting here also
+     * keeps one promise worth keeping: the signature that is compared is inside the text the
+     * model actually read.
+     */
+    private String textOf(ParsedEmail parsed) {
+        String text = parsed.getMailMessage() != null
+                ? parsed.getMailMessage().getBodyText()
+                : (parsed.getFeedItem() == null ? null : parsed.getFeedItem().getText());
+        int max = props.getMaxBodyChars();
+        return text == null || text.length() <= max ? text : text.substring(0, max);
     }
 
     private record VesselOutcome(boolean positionApplied, int itemsRaised) {
@@ -126,12 +223,12 @@ public class IntakeService {
      * a disagreement about her particulars is raised alongside it and can wait, since a
      * deadweight that has been wrong since Tuesday is not more wrong by Thursday.
      */
-    private VesselOutcome applyVessel(ParsedEmail parsed, MailMessage message,
+    private VesselOutcome applyVessel(ParsedEmail parsed, Arrival arrival,
                                       Extraction.ExtractedVessel v) {
-        Long reporter = companyIdOf(message);
+        Long reporter = companyIdOf(arrival);
         IntakeResolver.ResolvedVessel match = resolver.resolveVessel(v, reporter);
         if (!match.found()) {
-            return new VesselOutcome(false, raiseNewVessel(parsed, v) ? 1 : 0);
+            return new VesselOutcome(false, raiseNewVessel(parsed, arrival, v) ? 1 : 0);
         }
 
         Vessel vessel = match.vessel();
@@ -141,10 +238,11 @@ public class IntakeService {
         // of questions actually waiting.
         VesselFieldDiff.Result asking = withoutSettled(vessel, v, diff, Collections.singletonList(reporter));
         int raised = 0;
-        if (asking.hasConflicts() && raiseVesselFields(parsed, vessel, match.how(), v, asking)) {
+        if (asking.hasConflicts()
+                && raiseVesselFields(parsed, arrival, vessel, match.how(), v, asking)) {
             raised = 1;
         }
-        boolean applied = recordPosition(vessel, v, message, parsed);
+        boolean applied = recordPosition(vessel, v, arrival);
         return new VesselOutcome(applied, raised);
     }
 
@@ -209,14 +307,13 @@ public class IntakeService {
      * <p>Superseding is scoped to the same reporter, here as everywhere: when GN says she is
      * open Adriatic and Interscan says the Aegean, both are what we were told.
      */
-    private boolean recordPosition(Vessel vessel, Extraction.ExtractedVessel v,
-                                   MailMessage message, ParsedEmail parsed) {
+    private boolean recordPosition(Vessel vessel, Extraction.ExtractedVessel v, Arrival arrival) {
         Port openPort = resolver.resolvePort(v.openPort());
         TradeArea openArea = resolver.resolveArea(v.openArea(), v.openPort(), openPort);
         LocalDate openFrom = IntakeResolver.date(v.openFrom());
         LocalDate openTo = IntakeResolver.date(v.openTo());
-        Company reporter = message.getCompany();
-        OffsetDateTime reportedAt = reportedAt(message);
+        Company reporter = arrival.company();
+        OffsetDateTime reportedAt = arrival.reportedAt();
 
         List<VesselPosition> existing = positions.findByVesselIdOrderByReportedAtDesc(vessel.getId());
         Optional<VesselPosition> reconfirmed = existing.stream()
@@ -230,8 +327,9 @@ public class IntakeService {
             // fresher reading of the same position backwards and make it look stale.
             if (p.getReportedAt() == null || p.getReportedAt().isBefore(reportedAt)) {
                 p.setReportedAt(reportedAt);
-                p.setSourceMailMessage(message);
-                p.setFromMail(true);
+                p.setSourceMailMessage(arrival.message());
+                p.setSourceFeedItem(arrival.post());
+                p.setFromMail(arrival.isMail());
             }
             return false;
         }
@@ -254,9 +352,10 @@ public class IntakeService {
         p.setLastCargo(Extraction.text(v.lastCargo()));
         p.setCargoPreferences(Extraction.text(v.cargoPreferences()));
         p.setReportedByCompany(reporter);
-        p.setReportedByPerson(message.getPerson());
-        p.setSourceMailMessage(message);
-        p.setFromMail(true);
+        p.setReportedByPerson(arrival.person());
+        p.setSourceMailMessage(arrival.message());
+        p.setSourceFeedItem(arrival.post());
+        p.setFromMail(arrival.isMail());
         p.setReportedAt(reportedAt);
         p.setNotes(Extraction.text(v.notes()));
         positions.save(p);
@@ -270,7 +369,7 @@ public class IntakeService {
      * what keeps "who else is working this" answerable after a merge has folded three emails
      * into one record.
      */
-    private CargoOutcome applyCargo(ParsedEmail parsed, MailMessage message,
+    private CargoOutcome applyCargo(ParsedEmail parsed, Arrival arrival,
                                     Extraction.ExtractedCargo c) {
         ResolvedCargo resolved = resolve(c);
 
@@ -279,11 +378,12 @@ public class IntakeService {
                 CargoMatcher.findDuplicate(c, candidates, resolved.loadPort(), resolved.loadArea());
 
         if (duplicate.isPresent()) {
-            return new CargoOutcome(false, raiseCargoMerge(parsed, resolved, duplicate.get()) ? 1 : 0);
+            return new CargoOutcome(false,
+                    raiseCargoMerge(parsed, arrival, resolved, duplicate.get()) ? 1 : 0);
         }
 
-        Cargo cargo = createCargo(resolved, message);
-        addSource(cargo, message, null);
+        Cargo cargo = createCargo(resolved, arrival);
+        addSource(cargo, arrival, null);
         return new CargoOutcome(true, 0);
     }
 
@@ -300,7 +400,8 @@ public class IntakeService {
      *
      * @return whether an item was actually created
      */
-    private boolean raiseNewVessel(ParsedEmail parsed, Extraction.ExtractedVessel v) {
+    private boolean raiseNewVessel(ParsedEmail parsed, Arrival arrival,
+                                   Extraction.ExtractedVessel v) {
         String name = Extraction.text(v.name());
         if (!items.pendingNewVessel(name).isEmpty()) return false;
 
@@ -309,7 +410,8 @@ public class IntakeService {
                 : "the name \"" + name + "\"";
         IntakePayloads.NewVessel payload =
                 new IntakePayloads.NewVessel(v, searchedBy, resolver.suggest(v));
-        addSource(save(parsed, IntakeItemKind.NEW_VESSEL, null, null, name, payload), parsed);
+        addSource(save(parsed, IntakeItemKind.NEW_VESSEL, null, null, name, payload),
+                parsed, arrival);
         return true;
     }
 
@@ -339,7 +441,7 @@ public class IntakeService {
      * <p>Only pending items merge. An answered question is history, and an email disagreeing
      * again afterwards is a new question about a record that has since been decided.
      */
-    private boolean raiseVesselFields(ParsedEmail parsed, Vessel vessel,
+    private boolean raiseVesselFields(ParsedEmail parsed, Arrival arrival, Vessel vessel,
                                       IntakeResolver.VesselMatch how,
                                       Extraction.ExtractedVessel v,
                                       VesselFieldDiff.Result diff) {
@@ -348,7 +450,7 @@ public class IntakeService {
                     read(pending, IntakePayloads.VesselFields.class);
             if (existing == null) continue;
             mergeInto(pending, existing, how, v, diff);
-            addSource(pending, parsed);
+            addSource(pending, parsed, arrival);
             // Not a new question, so the sweep's "raised" count does not grow. The email is on
             // the item and the reviewer will see it; the queue is no longer than it was.
             return false;
@@ -358,7 +460,7 @@ public class IntakeService {
                 diff.conflicts(), diff.filled());
         IntakeItem item = save(parsed, IntakeItemKind.VESSEL_FIELDS, vessel.getId(), null,
                 vessel.getName(), payload);
-        addSource(item, parsed);
+        addSource(item, parsed, arrival);
         return true;
     }
 
@@ -425,8 +527,7 @@ public class IntakeService {
         // Her position, now that there is a hull to file it against. An add, and the half of
         // the email that goes stale — the particulars can wait for a reviewer, "where is she
         // open" cannot.
-        ParsedEmail parsed = item.getParsedEmail();
-        recordPosition(vessel, payload.vessel(), parsed.getMailMessage(), parsed);
+        recordPosition(vessel, payload.vessel(), arrivalOf(item.getParsedEmail()));
         return true;
     }
 
@@ -467,19 +568,19 @@ public class IntakeService {
      * the unique index states, checked here so it reads as "already counted" rather than as a
      * constraint violation and a 500.
      */
-    private void addSource(IntakeItem item, ParsedEmail parsed) {
+    private void addSource(IntakeItem item, ParsedEmail parsed, Arrival arrival) {
         if (itemSources.existsByIntakeItemIdAndParsedEmailId(item.getId(), parsed.getId())) return;
-        MailMessage message = parsed.getMailMessage();
         IntakeItemSource source = new IntakeItemSource();
         source.setIntakeItem(item);
         source.setParsedEmail(parsed);
-        source.setMailMessage(message);
-        source.setReportedByCompany(message == null ? null : message.getCompany());
-        source.setReportedAt(reportedAt(message));
+        source.setMailMessage(arrival.message());
+        source.setFeedItem(arrival.post());
+        source.setReportedByCompany(arrival.company());
+        source.setReportedAt(arrival.reportedAt());
         itemSources.save(source);
     }
 
-    private boolean raiseCargoMerge(ParsedEmail parsed, ResolvedCargo resolved,
+    private boolean raiseCargoMerge(ParsedEmail parsed, Arrival arrival, ResolvedCargo resolved,
                                     CargoMatcher.Candidate candidate) {
         Cargo existing = candidate.cargo();
         CargoFieldDiff.Result preview = CargoFieldDiff.merge(existing, resolved, false);
@@ -487,8 +588,78 @@ public class IntakeService {
                 resolved.parsed(), existing.getId(), describe(existing),
                 candidate.reasons(), preview.filled(), preview.differing());
         addSource(save(parsed, IntakeItemKind.CARGO_MERGE, null, existing.getId(),
-                Extraction.text(resolved.parsed().commodity()), payload), parsed);
+                Extraction.text(resolved.parsed().commodity()), payload), parsed, arrival);
         return true;
+    }
+
+    /**
+     * The firm that signed it, where the record and the signature do not agree.
+     *
+     * <p><b>Raised from mail as well as from a board, deliberately.</b> The signature at the
+     * foot of a mailed circular is the same document as the one on a board post and goes stale
+     * the same way; reading one and not the other would mean a firm's details being kept current
+     * only while they happened to post publicly. What makes that affordable is that silence is
+     * the normal answer — see {@link CompanyStyleIntake}: a firm whose record already holds
+     * everything the block says raises nothing, which after the first answer is every regular
+     * correspondent for ever.
+     *
+     * <p><b>Our own mail signs with our own block, and is skipped.</b> The sweep reads the Sent
+     * folder as well as the inbox — the same reason {@code cargo_sources} filters the desk's own
+     * addresses out of "who told us about this cargo" — and a queue asking whether to create the
+     * firm you work for is a queue with an obvious bug in it.
+     *
+     * <p><b>A rejected reading is not asked again.</b> The other kinds can re-raise on new
+     * figures because figures are what they are about; a signature is about a firm, and "do not
+     * file these details" would be worthless if the same broker's next list undid it. The
+     * fingerprint is what a discard suppresses, so only a signature that has genuinely moved
+     * comes back.
+     */
+    private boolean raiseCompanyDetails(ParsedEmail parsed, Arrival arrival,
+                                        CompanyStyleIntake.Reading signature) {
+        if (isOurs(arrival, signature)) return false;
+        IntakePayloads.CompanyDetails payload = styles.question(signature).orElse(null);
+        if (payload == null) return false;
+        String name = payload.draft().company().getName();
+
+        // One pending question per firm. A broker signs every list he sends, so without this the
+        // queue would carry a row per circular per firm - the failure the vessel rule prevents,
+        // at ten times the rate. The newest reading wins, as it does there: the later block is
+        // the later statement, and every arrival stays readable from the item.
+        List<IntakeItem> pending = payload.companyId() != null
+                ? items.pendingForCompany(payload.companyId())
+                : items.pendingNewCompany(name);
+        if (!pending.isEmpty()) {
+            IntakeItem open = pending.get(0);
+            open.setPayload(write(payload));
+            items.save(open);
+            addSource(open, parsed, arrival);
+            return false;
+        }
+
+        if (items.countRejectedWithStyle(payload.styleHash()) > 0) return false;
+
+        IntakeItem item = save(parsed, IntakeItemKind.COMPANY_DETAILS, null, null, name, payload);
+        item.setCompanyId(payload.companyId());
+        addSource(item, parsed, arrival);
+        return true;
+    }
+
+    /**
+     * Whether this circular is one of ours.
+     *
+     * <p>Every address in the block is tested, not only the envelope's: a reply of ours carries
+     * the desk's whole signature, and it is the block rather than the From line that would
+     * otherwise be proposed as a new company. The list is {@code app_settings}' "My email
+     * addresses", the same one the cargo sources screen filters on.
+     */
+    private boolean isOurs(Arrival arrival, CompanyStyleIntake.Reading signature) {
+        Set<String> own = settingsService.ownAddresses();
+        if (own.isEmpty()) return false;
+        if (com.chartering.service.SettingsService.isOwn(arrival.fromAddress(), own)) return true;
+        if (signature == null || signature.style() == null) return false;
+        return signature.style().contacts().stream()
+                .filter(c -> "email".equals(c.kind()))
+                .anyMatch(c -> com.chartering.service.SettingsService.isOwn(c.value(), own));
     }
 
     private IntakeItem save(ParsedEmail parsed, IntakeItemKind kind, Long vesselId, Long cargoId,
@@ -551,6 +722,7 @@ public class IntakeService {
             case VESSEL_FIELDS -> resolveVesselFields(item, action, fields,
                     corrections == null ? Map.of() : corrections, user);
             case CARGO_MERGE -> resolveCargoMerge(item, action);
+            case COMPANY_DETAILS -> resolveCompanyDetails(item, action);
         };
 
         item.setStatus(action == Action.DISCARD ? IntakeItemStatus.REJECTED : IntakeItemStatus.ACCEPTED);
@@ -564,7 +736,7 @@ public class IntakeService {
         IntakePayloads.NewVessel payload = require(item, IntakePayloads.NewVessel.class);
         if (action == Action.DISCARD) return "Discarded; no vessel created.";
 
-        MailMessage message = item.getParsedEmail().getMailMessage();
+        Arrival arrival = arrivalOf(item.getParsedEmail());
         Vessel vessel;
         String summary;
         if (action == Action.ALTERNATIVE) {
@@ -595,7 +767,7 @@ public class IntakeService {
                 action == Action.ALTERNATIVE ? IntakeVesselAlias.LINKED : IntakeVesselAlias.CREATED,
                 user);
 
-        recordPosition(vessel, payload.vessel(), message, item.getParsedEmail());
+        recordPosition(vessel, payload.vessel(), arrival);
         item.setVesselId(vessel.getId());
         return summary;
     }
@@ -840,6 +1012,19 @@ public class IntakeService {
         return message == null ? null : message.getCompany();
     }
 
+    /**
+     * The firm an arrival is from, as an id.
+     *
+     * <p>Out of the mail that is the envelope the sync resolved; off a board it is the
+     * signature block. Both answer "who is telling us this", which is what a settled decision
+     * is scoped to — that one broker is wrong about a bale says nothing about what the next
+     * one reports, and a board post is a correspondent like any other.
+     */
+    private static Long companyIdOf(Arrival arrival) {
+        Company company = arrival == null ? null : arrival.company();
+        return company == null ? null : company.getId();
+    }
+
     private static Long companyIdOf(MailMessage message) {
         Company company = companyOf(message);
         return company == null ? null : company.getId();
@@ -870,20 +1055,22 @@ public class IntakeService {
      */
     private String separateVessel(IntakeItem item, IntakePayloads.VesselFields payload,
                                   Vessel matched, String user) {
-        MailMessage message = item.getParsedEmail().getMailMessage();
+        Arrival arrival = arrivalOf(item.getParsedEmail());
 
         int withdrawn = 0;
         for (VesselPosition p : positions.findByVesselIdOrderByReportedAtDesc(matched.getId())) {
+            // Only what this arrival put there — a row an earlier circular created and this one
+            // merely re-confirmed belongs to that earlier reading. Asked of both doors, because
+            // by now a reading may have come off a board rather than out of the mail.
             if (p.getStatus() == PositionStatus.LIVE
-                    && p.getSourceMailMessage() != null
-                    && p.getSourceMailMessage().getId().equals(message.getId())) {
+                    && (arrival.is(p.getSourceMailMessage()) || arrival.is(p.getSourceFeedItem()))) {
                 p.setStatus(PositionStatus.WITHDRAWN);
                 withdrawn++;
             }
         }
 
         Vessel created = createVessel(payload.vessel());
-        recordPosition(created, payload.vessel(), message, item.getParsedEmail());
+        recordPosition(created, payload.vessel(), arrival);
         item.setVesselId(created.getId());
         // These senders were describing this hull all along, whatever the name matched. Without
         // it the next copy of the same list matches the wrong ship again and asks again.
@@ -898,14 +1085,14 @@ public class IntakeService {
 
     private String resolveCargoMerge(IntakeItem item, Action action) {
         IntakePayloads.CargoMerge payload = require(item, IntakePayloads.CargoMerge.class);
-        MailMessage message = item.getParsedEmail().getMailMessage();
+        Arrival arrival = arrivalOf(item.getParsedEmail());
         ResolvedCargo resolved = resolve(payload.cargo());
 
         if (action == Action.DISCARD) return "Discarded; no cargo written.";
 
         if (action == Action.ALTERNATIVE) {
-            Cargo cargo = createCargo(resolved, message);
-            addSource(cargo, message, "Kept separate from cargo #" + payload.candidateId());
+            Cargo cargo = createCargo(resolved, arrival);
+            addSource(cargo, arrival, "Kept separate from cargo #" + payload.candidateId());
             item.setCargoId(cargo.getId());
             return "Kept as a separate cargo.";
         }
@@ -913,10 +1100,75 @@ public class IntakeService {
         Cargo existing = cargoes.findById(payload.candidateId()).orElseThrow(() ->
                 new com.chartering.exception.ResourceNotFoundException("Cargo", payload.candidateId()));
         CargoFieldDiff.Result merged = CargoFieldDiff.merge(existing, resolved, true);
-        addSource(existing, message, null);
+        addSource(existing, arrival, null);
         return merged.filled().isEmpty()
                 ? "Merged; the cargo already held everything this email said."
                 : "Merged, filling " + merged.filled().size() + " empty field(s).";
+    }
+
+    /**
+     * The only answer to a company question that goes through {@link #resolve}.
+     *
+     * <p>Accepting one writes a firm, its people and its addresses from a form the reviewer has
+     * edited, which is a request body rather than a list of field names — so it has its own
+     * endpoint and its own method, {@link #acceptCompanyDetails}. What is left here is the
+     * refusal, and the refusal is the half that needed saying: the fingerprint in the payload is
+     * what stops the same signature asking again next Monday.
+     */
+    private String resolveCompanyDetails(IntakeItem item, Action action) {
+        if (action != Action.DISCARD) {
+            throw new IllegalArgumentException(
+                    "Answer a company question by reviewing its details, not by accepting it "
+                            + "whole — the screen sends what you ticked.");
+        }
+        return "Discarded; the firm was left as it is. This signature will not be raised again "
+                + "unless it changes.";
+    }
+
+    /**
+     * Accept a company question as the reviewer left it.
+     *
+     * <p><b>Delegates to {@link IntakePasteService#acceptCompany}</b>, which is the same call the
+     * paste modal makes, because the decision is the same decision: a signature is a lead sheet,
+     * a firm on file changes only where it was ticked, everything else only adds, and nothing
+     * arrives flagged main or for circulation. Two implementations of that would be two ideas of
+     * what a signature is allowed to overwrite, and the one nobody was looking at would be the
+     * one that overwrote a city somebody had typed.
+     *
+     * <p>Its own transaction and its own change-set name, the split {@link #applyLookup} makes:
+     * "who this firm is" and "what the parser read out of a circular" are two origins, and the
+     * History tab is worth being able to tell them apart.
+     */
+    @Transactional
+    public com.chartering.dto.IntakePasteCompanyResponse acceptCompanyDetails(
+            Long id, com.chartering.dto.IntakePasteCompanyRequest req, String user) {
+        IntakeItem item = items.findWithEmailById(id).orElseThrow(() ->
+                new com.chartering.exception.ResourceNotFoundException("Intake item", id));
+        if (item.getStatus() != IntakeItemStatus.PENDING) {
+            throw new IllegalArgumentException("This item has already been answered.");
+        }
+        if (item.getKind() != IntakeItemKind.COMPANY_DETAILS) {
+            throw new IllegalArgumentException("That item is not a question about a company.");
+        }
+
+        var applied = paste.acceptCompany(req);
+        ChangeContext.describe("Intake: company details from " + arrivalOf(item.getParsedEmail()).label());
+
+        item.setCompanyId(applied.companyId());
+        item.setStatus(IntakeItemStatus.ACCEPTED);
+        item.setResolvedAt(OffsetDateTime.now());
+        item.setResolvedBy(user);
+        String summary = applied.created()
+                ? "Created " + applied.companyName() + " with " + applied.peopleAdded()
+                        + " person(s) and " + applied.contactsAdded() + " address(es)."
+                : "Updated " + applied.companyName() + ": " + applied.companyFieldsUpdated()
+                        + " field(s), " + applied.peopleAdded() + " person(s) added, "
+                        + applied.contactsAdded() + " address(es) added.";
+        item.setResolutionNote(summary);
+        // The paste screen's own answer, passed straight back: the card that sent this renders
+        // "created X, 2 people added, 1 address already on file" out of it, and a second shape
+        // would be a second wording of the same event on two screens.
+        return applied;
     }
 
     // ------------------------------------------------------------------ the outside source
@@ -993,10 +1245,7 @@ public class IntakeService {
      * decision about the ship and belongs on her own record, where every link is in view.
      */
     private Company chooseSender(IntakeItem item, Long itemId, Long companyId) {
-        if (companyId == null) {
-            MailMessage message = item.getParsedEmail().getMailMessage();
-            return message == null ? null : message.getCompany();
-        }
+        if (companyId == null) return arrivalOf(item.getParsedEmail()).company();
         return itemSources.forItem(itemId).stream()
                 .map(IntakeItemSource::getReportedByCompany)
                 .filter(Objects::nonNull)
@@ -1063,7 +1312,7 @@ public class IntakeService {
         exNames.save(ex);
     }
 
-    private Cargo createCargo(ResolvedCargo r, MailMessage message) {
+    private Cargo createCargo(ResolvedCargo r, Arrival arrival) {
         Extraction.ExtractedCargo p = r.parsed();
         Cargo c = new Cargo();
         c.setCommodity(p.commodity().trim());
@@ -1102,15 +1351,19 @@ public class IntakeService {
         c.setDischargeRate(Extraction.text(p.dischargeRate()));
 
         c.setChartererCompany(r.charterer());
-        // The sender is the broker this cargo reached us through, taken from the envelope
-        // rather than from the signature block the model read: the mail sync resolved it
-        // against the contacts table, which is a better answer than a name in prose.
-        c.setBrokerCompany(message.getCompany());
-        c.setBrokerPerson(message.getPerson());
+        // The sender is the broker this cargo reached us through. Out of the mail that is the
+        // envelope, which the sync already matched against the contacts table and which beats
+        // any reading of the prose below it; off a board there is no envelope, so it is the
+        // signature block, matched the same way the paste screen matches one. Null where
+        // nothing on file carries identity evidence for the firm — which is the question the
+        // COMPANY_DETAILS item raised beside this cargo exists to close.
+        c.setBrokerCompany(arrival.company());
+        c.setBrokerPerson(arrival.person());
 
-        c.setSourceMailMessage(message);
-        c.setFromMail(true);
-        c.setReceivedAt(reportedAt(message));
+        c.setSourceKind(arrival.kind());
+        c.setSourceMailMessage(arrival.message());
+        c.setSourceFeedItem(arrival.post());
+        c.setReceivedAt(arrival.reportedAt());
         c.setNotes(noteFor(p, r));
         return cargoes.save(c);
     }
@@ -1147,20 +1400,34 @@ public class IntakeService {
         c.setQuantityMax(range.map(QuantityTolerance.Range::max).orElse(null));
     }
 
-    private void addSource(Cargo cargo, MailMessage message, String note) {
-        if (message != null && cargo.getId() != null
-                && cargoSources.existsByCargoIdAndMailMessageId(cargo.getId(), message.getId())) {
-            return;
-        }
+    /**
+     * Record that this arrival told us about this cargo.
+     *
+     * <p>Guarded against a second row for the same arrival, whichever door it came in through:
+     * re-parsing a message, or a board re-listing a post under the same entry, must read as
+     * "already counted" rather than as a duplicate broker on the cargo's own drawer.
+     */
+    private void addSource(Cargo cargo, Arrival arrival, String note) {
+        if (cargo.getId() != null && alreadySourced(cargo, arrival)) return;
         CargoSource source = new CargoSource();
         source.setCargo(cargo);
-        source.setMailMessage(message);
-        source.setReportedByCompany(message == null ? null : message.getCompany());
-        source.setReportedByPerson(message == null ? null : message.getPerson());
-        source.setFromAddress(message == null ? null : message.getFromAddress());
-        source.setReportedAt(reportedAt(message));
+        source.setMailMessage(arrival.message());
+        source.setFeedItem(arrival.post());
+        source.setReportedByCompany(arrival.company());
+        source.setReportedByPerson(arrival.person());
+        source.setFromAddress(arrival.fromAddress());
+        source.setReportedAt(arrival.reportedAt());
         source.setNotes(note);
         cargoSources.save(source);
+    }
+
+    private boolean alreadySourced(Cargo cargo, Arrival arrival) {
+        if (arrival.message() != null) {
+            return cargoSources.existsByCargoIdAndMailMessageId(
+                    cargo.getId(), arrival.message().getId());
+        }
+        return arrival.post() != null && cargoSources.existsByCargoIdAndFeedItemId(
+                cargo.getId(), arrival.post().getId());
     }
 
     // ------------------------------------------------------------------ internals
@@ -1176,20 +1443,6 @@ public class IntakeService {
                 IntakeResolver.date(c.laycanFrom()),
                 IntakeResolver.date(c.laycanTo()),
                 resolver.resolveCompany(c.charterer()));
-    }
-
-    /**
-     * When we were told.
-     *
-     * <p>The sender's own clock where there is one, for the reason the corpus export prefers
-     * it: a message that sat in a queue overnight would otherwise be dated a day after the
-     * laycan it announces. Received is the fallback for mail carrying no Date header.
-     */
-    private static OffsetDateTime reportedAt(MailMessage message) {
-        if (message == null) return OffsetDateTime.now();
-        var when = message.getSentAt() != null ? message.getSentAt() : message.getReceivedAt();
-        return when == null ? OffsetDateTime.now()
-                : when.atZone(ZoneId.systemDefault()).toOffsetDateTime();
     }
 
     private static boolean sameReporter(VesselPosition p, Company reporter) {
@@ -1254,11 +1507,6 @@ public class IntakeService {
         // how the repeat stays off the desk, and the reviewer should know that is what it is.
         if (c.getStatus() == CargoStatus.NOT_WORKABLE) sb.append(" (marked not workable)");
         return sb.toString();
-    }
-
-    private static String subjectOf(MailMessage m) {
-        String subject = m == null ? null : m.getSubject();
-        return subject == null || subject.isBlank() ? "(no subject)" : subject.strip();
     }
 
     private static String truncate(String s) {

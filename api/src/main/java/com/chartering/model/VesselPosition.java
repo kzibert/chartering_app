@@ -110,6 +110,19 @@ public class VesselPosition {
     private MailMessage sourceMailMessage;
 
     /**
+     * The board post she was read off, where she came off one.
+     *
+     * <p>No {@code sourceKind} beside it, unlike {@link Cargo}. What a broker reads on Open
+     * Fleet is who reported her — "open Adriatic, per AKANA BULK" — and that is already a
+     * column here, filled from the signature block when the reading came off a board and from
+     * the sender when it came out of the mail. Where we were standing when we read it is
+     * provenance, and provenance is a link rather than a category.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "source_feed_item_id")
+    private FeedItem sourceFeedItem;
+
+    /**
      * When we were told, which is not when the row was written: a list read out of a
      * three-day-old email is three days old, and staleness is the first thing the Open
      * Fleet tab has to show.

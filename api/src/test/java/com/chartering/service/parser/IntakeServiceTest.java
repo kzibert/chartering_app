@@ -18,6 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -45,6 +46,8 @@ class IntakeServiceTest {
     private VesselPositionRepository positions;
     private IntakeResolver resolver;
     private com.chartering.repository.IntakeItemSourceRepository itemSources;
+    private CompanyStyleIntake styles;
+    private com.chartering.service.SettingsService settingsService;
     private com.chartering.service.lookup.VesselLookupService lookupService;
     private IntakeService service;
 
@@ -71,8 +74,17 @@ class IntakeServiceTest {
         aliases = mock(com.chartering.repository.IntakeVesselAliasRepository.class);
         when(decisions.forVessel(any())).thenReturn(List.of());
         when(aliases.find(any(), any())).thenReturn(java.util.Optional.empty());
+        styles = mock(CompanyStyleIntake.class);
+        settingsService = mock(com.chartering.service.SettingsService.class);
         service = new IntakeService(items, cargoSources, cargoes, vessels, exNames, itemSources,
-                decisions, aliases, positions, resolver, lookupService,
+                decisions, aliases, positions, resolver,
+                styles,
+                new com.chartering.config.ParserProperties(),
+                mock(com.chartering.repository.CompanyRepository.class),
+                mock(IntakePasteService.class),
+                mock(com.chartering.repository.PersonRepository.class),
+                settingsService,
+                lookupService,
                 mock(com.chartering.service.VesselService.class), new ObjectMapper());
         // The item is saved and then a source row is attached to it, so the mock has to hand
         // the entity back rather than null.
@@ -104,6 +116,89 @@ class IntakeServiceTest {
         when(resolver.resolvePort(any())).thenReturn(null);
         when(resolver.resolveArea(any(), any(), any())).thenReturn(null);
         when(resolver.suggest(any())).thenReturn(List.of());
+        when(items.pendingForCompany(anyLong())).thenReturn(List.of());
+        when(items.pendingNewCompany(any())).thenReturn(List.of());
+        when(settingsService.ownAddresses()).thenReturn(java.util.Set.of());
+    }
+
+    // ---------------------------------------------------------- the firm that signed it
+
+    /** A question about a firm on file, as CompanyStyleIntake would hand one over. */
+    private void signatureRaises(Long companyId, String name, String hash) {
+        com.chartering.dto.CompanyRequest company = new com.chartering.dto.CompanyRequest();
+        company.setName(name);
+        IntakePayloads.CompanyDetails payload = new IntakePayloads.CompanyDetails(
+                new com.chartering.dto.IntakePasteDraftResponse.CompanyDraft(
+                        company, null, List.of(), List.of(), List.of()),
+                companyId, companyId == null ? null : name, "email",
+                List.of("1 address not on file"), hash);
+        when(styles.question(any())).thenReturn(java.util.Optional.of(payload));
+    }
+
+    private static Extraction emptyEmail() {
+        return new Extraction("other", List.of(), List.of(), null, null);
+    }
+
+    @Test
+    void raisesTheFirmThatSignedWhenTheRecordDisagrees() {
+        signatureRaises(3L, "Interscan", "hash-a");
+
+        IntakeService.ApplyOutcome outcome = service.apply(parsed, emptyEmail());
+
+        assertThat(outcome.itemsRaised()).isEqualTo(1);
+        ArgumentCaptor<IntakeItem> saved = ArgumentCaptor.forClass(IntakeItem.class);
+        verify(items, atLeastOnce()).save(saved.capture());
+        IntakeItem item = saved.getAllValues().get(0);
+        assertThat(item.getKind()).isEqualTo(IntakeItemKind.COMPANY_DETAILS);
+        assertThat(item.getSubjectLabel()).isEqualTo("Interscan");
+        assertThat(item.getCompanyId()).isEqualTo(3L);
+    }
+
+    @Test
+    void doesNotAskTwiceAboutOneFirm() {
+        // A broker signs every list he sends, not only when something has changed. Without
+        // this the queue would carry a row per circular per firm and would stop being read -
+        // the failure the vessel rule already prevents, at ten times the rate.
+        signatureRaises(3L, "Interscan", "hash-a");
+        IntakeItem waiting = new IntakeItem();
+        waiting.setId(77L);
+        waiting.setKind(IntakeItemKind.COMPANY_DETAILS);
+        waiting.setCompanyId(3L);
+        waiting.setPayload("{}");
+        when(items.pendingForCompany(3L)).thenReturn(List.of(waiting));
+
+        IntakeService.ApplyOutcome outcome = service.apply(parsed, emptyEmail());
+
+        // Not a new question, so the queue is no longer than it was - but the newer reading
+        // wins the payload, and this arrival is recorded against the item that was waiting.
+        assertThat(outcome.itemsRaised()).isZero();
+        assertThat(waiting.getPayload()).contains("Interscan");
+        verify(itemSources).save(any());
+    }
+
+    @Test
+    void doesNotAskAgainAboutASignatureAlreadyTurnedDown() {
+        // "Do not file these details" would be worthless if the same broker's next list undid
+        // it. Only a signature that has actually moved comes back.
+        signatureRaises(3L, "Interscan", "hash-a");
+        when(items.countRejectedWithStyle("hash-a")).thenReturn(1L);
+
+        assertThat(service.apply(parsed, emptyEmail()).itemsRaised()).isZero();
+        verify(items, never()).save(any(IntakeItem.class));
+    }
+
+    @Test
+    void neverProposesTheDesksOwnSignature() {
+        // The sweep reads the Sent folder as well as the inbox, so our own replies arrive
+        // carrying our own block. A queue asking whether to create the firm you work for is a
+        // queue with an obvious bug in it.
+        signatureRaises(null, "Our Own Desk", "hash-b");
+        message.setFromAddress("chartering@ourdesk.example");
+        when(settingsService.ownAddresses())
+                .thenReturn(java.util.Set.of("chartering@ourdesk.example"));
+
+        assertThat(service.apply(parsed, emptyEmail()).itemsRaised()).isZero();
+        verify(items, never()).save(any(IntakeItem.class));
     }
 
     private static Extraction.ExtractedVessel opening(String name, String openText,

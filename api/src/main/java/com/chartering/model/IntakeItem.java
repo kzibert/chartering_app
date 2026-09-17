@@ -54,6 +54,17 @@ public class IntakeItem {
     @Column(name = "cargo_id")
     private Long cargoId;
 
+    /**
+     * The firm a {@code COMPANY_DETAILS} item is about, where it is about one already on file.
+     *
+     * <p>Null on the other kinds, and null on a question about a firm nobody here has heard
+     * of — which is the question itself, and is why {@link #subjectLabel} carries the name as
+     * the signature spelled it. What it buys is one pending question per firm: a broker signs
+     * every list he sends, so without it the queue would carry a row per circular per firm.
+     */
+    @Column(name = "company_id")
+    private Long companyId;
+
     /** How the queue reads as a list of ships and cargoes rather than a list of ids. */
     @Column(name = "subject_label", length = 255)
     private String subjectLabel;

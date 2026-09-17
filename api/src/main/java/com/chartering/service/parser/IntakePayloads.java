@@ -86,4 +86,36 @@ public final class IntakePayloads {
                              List<String> wouldFill,
                              List<FieldDiff> differing) {
     }
+
+    /**
+     * The firm that signed a circular, against the firm on file.
+     *
+     * <p><b>{@code draft} is the paste screen's own {@code CompanyDraft}, deliberately.</b> The
+     * modal that reviews a pasted signature is already written, already handles the three shapes
+     * this item comes in — create, update, "which of these firms is it" — and already sends an
+     * {@code IntakePasteCompanyRequest} back. Carrying the same record means the drawer renders
+     * it with that component rather than a second one, and accepting goes through
+     * {@code IntakePasteService.acceptCompany} rather than a second idea of what a signature may
+     * write.
+     *
+     * @param companyId  the firm on file this is about, when one piece of identity evidence said
+     *                   so; null is the question "which firm, if any" — the candidates are in
+     *                   {@code draft.matches()}
+     * @param matchedBy  {@code email}, {@code name} or {@code phone} — how it was identified, so
+     *                   the drawer can say why it is sure rather than only that it is
+     * @param changes    what there is to decide, in the words the queue row prints
+     * @param styleHash  a fingerprint of what the block said. What a discard suppresses: without
+     *                   it "do not file these details" would last until the same broker's next
+     *                   list, because the comparison would find the same rows again. Only a
+     *                   signature that has moved comes back
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record CompanyDetails(com.chartering.dto.IntakePasteDraftResponse.CompanyDraft draft,
+                                 Long companyId,
+                                 String companyName,
+                                 String matchedBy,
+                                 List<String> changes,
+                                 String styleHash) {
+    }
 }

@@ -3,9 +3,10 @@ import type { IntakeItemKind, ParseStatus } from '../../api/intake';
 /**
  * What each kind of review item is called on screen, and what it is asking.
  *
- * The hints are not tooltips for their own sake. The three items look similar in a list and
- * want quite different answers — one creates a record, one edits one, one folds two into
- * one — and a queue whose rows are indistinguishable is a queue answered carelessly.
+ * The hints are not tooltips for their own sake. The four items look similar in a list and
+ * want quite different answers — one creates a record, one edits one, one folds two into one,
+ * one is about the firm that signed rather than about the market — and a queue whose rows are
+ * indistinguishable is a queue answered carelessly.
  */
 export const KINDS: {
   value: IntakeItemKind;
@@ -30,6 +31,12 @@ export const KINDS: {
     label: 'Duplicate cargo',
     colour: 'purple',
     hint: 'Looks like a cargo already in hand, usually because two brokers are working the same charterer. Merge and keep both senders, or keep it separate.',
+  },
+  {
+    value: 'COMPANY_DETAILS',
+    label: 'Company details',
+    colour: 'cyan',
+    hint: 'The signature at the foot of a circular says something the contacts database does not: a firm nobody here has met, or a record with gaps or disagreements. Nothing is written until you tick it, and nothing arrives flagged for circulation.',
   },
 ];
 
