@@ -18,7 +18,12 @@ import {
   formatPlace,
   formatQuantity,
 } from './status';
-import { LIVE_CARGO_STATUSES, type CargoFilter, type CargoResponse } from '../../api/types';
+import {
+  LIVE_CARGO_STATUSES,
+  type CargoFilter,
+  type CargoResponse,
+  type SourceKind,
+} from '../../api/types';
 
 /** The filter fields held as a day, which the form wants as dayjs and the API as YYYY-MM-DD. */
 const DATE_FILTERS = ['laycanFrom', 'laycanTo', 'sentSince'] as const;
@@ -30,9 +35,23 @@ function formatSent(iso?: string): string {
   return d.format(d.year() === dayjs().year() ? 'D MMM HH:mm' : 'D MMM YYYY');
 }
 
+/**
+ * Where a cargo came from, as one small tag.
+ *
+ * Typed carries none: a hand-entered cargo is the ordinary case and a tag on every row would
+ * be noise. The other two are worth a glance — one arrived addressed to this desk, the other
+ * was read off a page nobody sent us, which is the difference between a cargo somebody is
+ * working with us and a cargo we happened to see.
+ */
+function sourceTag(kind: SourceKind) {
+  if (kind === 'MAIL') return <Tag color="blue">mail</Tag>;
+  if (kind === 'WEB') return <Tag color="cyan">web</Tag>;
+  return null;
+}
+
 /** "Oceanic Brokers", or "Oceanic Brokers +2" when others sent it too. */
 function formatSenders(c: CargoResponse): string {
-  if (!c.lastSentBy) return c.fromMail ? '—' : 'typed in';
+  if (!c.lastSentBy) return c.sourceKind === 'MANUAL' ? 'typed in' : '—';
   const others = (c.senderCount ?? 1) - 1;
   return others > 0 ? `${c.lastSentBy} +${others}` : c.lastSentBy;
 }
@@ -110,7 +129,7 @@ export default function CargoesPage() {
       render: (commodity: string, c) => (
         <Space size={4} wrap>
           {commodity}
-          {c.fromMail && <Tag color="blue">mail</Tag>}
+          {sourceTag(c.sourceKind)}
         </Space>
       ),
     },
@@ -296,12 +315,18 @@ export default function CargoesPage() {
               </Form.Item>
             </Col>
             <Col xs={12} md={6}>
-              <Form.Item name="fromMail" label="Source" initialValue="">
+              <Form.Item
+                name="sourceKind"
+                label="Source"
+                initialValue=""
+                tooltip="Which door it came in through, not how good it is: a cargo typed out of a phone call is the best-checked row in the table, and one read off a board is the one nobody has looked at yet."
+              >
                 <Select
                   options={[
                     { value: '', label: 'Source: all' },
-                    { value: false, label: 'Typed in the app' },
-                    { value: true, label: 'Read from mail' },
+                    { value: 'MANUAL', label: 'Typed in the app' },
+                    { value: 'MAIL', label: 'Read from the mailbox' },
+                    { value: 'WEB', label: 'Read off an open board' },
                   ]}
                 />
               </Form.Item>
@@ -324,7 +349,7 @@ export default function CargoesPage() {
             <Space size={4} wrap>
               {c.commodity}
               <Tag color={CARGO_STATUS_META[c.status].color}>{CARGO_STATUS_META[c.status].label}</Tag>
-              {c.fromMail && <Tag color="blue">mail</Tag>}
+              {sourceTag(c.sourceKind)}
             </Space>
           ),
           subtitle: (c) =>

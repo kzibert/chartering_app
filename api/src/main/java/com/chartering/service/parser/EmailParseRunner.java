@@ -1,5 +1,6 @@
 package com.chartering.service.parser;
 
+import com.chartering.model.FeedItem;
 import com.chartering.model.MailMessage;
 import com.chartering.model.ParseStatus;
 import com.chartering.model.ParsedEmail;
@@ -14,6 +15,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -31,6 +33,13 @@ import java.util.List;
  * about the database and nothing about HTTP, so it can be reasoned about — and tested —
  * without a model server anywhere in sight.
  *
+ * <p><b>Two doors, one method.</b> A board post is a circular somebody pasted onto a public
+ * page, which is the same document a broker mails and was read by the same model on the same
+ * corpus. So {@link #parsePost} is {@link #parseOne} with a different place to get the subject,
+ * the date and the body from — and everything after that, including the row this writes and the
+ * questions it raises, is shared. Splitting them further down would have meant two ideas of what
+ * "already read" means.
+ *
  * <p><b>One transaction per message, not one per sweep.</b> A sweep is forty model calls over
  * several minutes; a transaction around all of it would hold a connection open for the whole
  * run and lose forty good readings to one bad row. Per message, a circular that produced
@@ -45,6 +54,7 @@ public class EmailParseRunner {
 
     private final ParsedEmailRepository parsedEmails;
     private final MailMessageRepository messages;
+    private final com.chartering.repository.FeedItemRepository feedItems;
     private final EmailParserClient client;
     private final IntakeService intake;
     private final ObjectMapper json;
@@ -71,20 +81,62 @@ public class EmailParseRunner {
                     fresh.setAttempts(0);
                     return fresh;
                 });
+        return parse(row, message.getSubject(), message.getSentAt(), message.getBodyText(),
+                "The message has no text body — nothing to read.");
+    }
+
+    /**
+     * Read one post off a board — the same reading, through the other door.
+     *
+     * <p>The subject is the post's title where the page gives one and the source's name where it
+     * does not, because the prompt the model was measured under has a Subject line in it and an
+     * empty one is a shape the corpus never contained. The date is the board's own date line,
+     * which is what makes "SPOT" mean anything: a circular posted on the 14th and read on the
+     * 17th announces a laycan relative to the 14th, and handing the model today's date would
+     * move every relative date in it by three days.
+     */
+    @Transactional
+    public IntakeService.ApplyOutcome parsePost(Long feedItemId) {
+        FeedItem post = feedItems.findById(feedItemId).orElse(null);
+        if (post == null) return null;
+
+        ParsedEmail row = parsedEmails.findByFeedItemId(feedItemId)
+                .orElseGet(() -> {
+                    ParsedEmail fresh = new ParsedEmail();
+                    fresh.setFeedItem(post);
+                    fresh.setAttempts(0);
+                    return fresh;
+                });
+        String subject = post.getTitle() != null && !post.getTitle().isBlank()
+                ? post.getTitle()
+                : (post.getSource() == null ? "Board post" : post.getSource().getName());
+        return parse(row, subject,
+                post.getPublishedAt() != null ? post.getPublishedAt() : post.getFetchedAt(),
+                post.getText(), "The post has no text — nothing to read.");
+    }
+
+    /**
+     * Everything both doors share: the model call, the row it writes, and what is made of it.
+     *
+     * <p>Not {@code @Transactional} itself — it is called from the two methods above, which are,
+     * and a self-invocation would not go through the proxy anyway. That is the same trap the
+     * class exists to avoid at the level above.
+     */
+    private IntakeService.ApplyOutcome parse(ParsedEmail row, String subject, LocalDateTime when,
+                                             String body, String nothingToRead) {
         row.setAttempts(row.getAttempts() + 1);
         row.setParsedAt(OffsetDateTime.now());
 
-        if (message.getBodyText() == null || message.getBodyText().isBlank()) {
+        if (body == null || body.isBlank()) {
             row.setStatus(ParseStatus.SKIPPED);
-            row.setError("The message has no text body — nothing to read.");
+            row.setError(nothingToRead);
             parsedEmails.save(row);
             return null;
         }
 
         EmailParserClient.Completion completion;
         try {
-            completion = client.complete(message.getSubject(), message.getSentAt(),
-                    message.getBodyText());
+            completion = client.complete(subject, when, body);
         } catch (EmailParserClient.ParserUnavailableException e) {
             row.setStatus(ParseStatus.FAILED);
             row.setError(e.getMessage());
@@ -161,6 +213,26 @@ public class EmailParseRunner {
                     fresh.setAttempts(0);
                     return fresh;
                 });
+        markFailed(row, error);
+    }
+
+    /** The same, for a post — a board's arrivals need the attempt ceiling exactly as mail does. */
+    @Transactional
+    public void recordPostFailure(Long feedItemId, String error) {
+        FeedItem post = feedItems.findById(feedItemId).orElse(null);
+        if (post == null) return;
+
+        ParsedEmail row = parsedEmails.findByFeedItemId(feedItemId)
+                .orElseGet(() -> {
+                    ParsedEmail fresh = new ParsedEmail();
+                    fresh.setFeedItem(post);
+                    fresh.setAttempts(0);
+                    return fresh;
+                });
+        markFailed(row, error);
+    }
+
+    private void markFailed(ParsedEmail row, String error) {
         row.setAttempts(row.getAttempts() + 1);
         row.setParsedAt(OffsetDateTime.now());
         row.setStatus(ParseStatus.FAILED);
@@ -180,21 +252,17 @@ public class EmailParseRunner {
      * rather than deleted, for the reason {@code SKIPPED} is: a row is what stops the sweep
      * finding the message again tomorrow and spending another model call on it.
      *
-     * <p>Reversible. {@link #reopen} puts an ignored message back in the queue, because
+     * <p>Reversible. {@link #reopen} puts an ignored arrival back in the queue, because
      * "ignore" is a judgement about an email and judgements are sometimes wrong.
+     *
+     * <p>Taken by the id of the parse row rather than of the message, and that is what lets it
+     * serve both doors: the Log lists these rows, so whatever is on screen has one, and a
+     * message id would have needed a post id beside it and a branch at every call.
      */
     @Transactional
-    public void ignore(Long mailMessageId, String note) {
-        MailMessage message = messages.findById(mailMessageId).orElse(null);
-        if (message == null) return;
-
-        ParsedEmail row = parsedEmails.findByMailMessageId(mailMessageId)
-                .orElseGet(() -> {
-                    ParsedEmail fresh = new ParsedEmail();
-                    fresh.setMailMessage(message);
-                    fresh.setAttempts(0);
-                    return fresh;
-                });
+    public void ignore(Long parsedEmailId, String note) {
+        ParsedEmail row = parsedEmails.findById(parsedEmailId).orElse(null);
+        if (row == null) return;
         row.setStatus(ParseStatus.IGNORED);
         row.setParsedAt(OffsetDateTime.now());
         String reason = storable(note);
@@ -211,8 +279,8 @@ public class EmailParseRunner {
      * there has to be a way to say so that is not editing the database by hand.
      */
     @Transactional
-    public void reopen(Long mailMessageId) {
-        parsedEmails.findByMailMessageId(mailMessageId).ifPresent(row -> {
+    public void reopen(Long parsedEmailId) {
+        parsedEmails.findById(parsedEmailId).ifPresent(row -> {
             row.setAttempts(0);
             row.setStatus(ParseStatus.FAILED);
             row.setError("Queued to be read again.");

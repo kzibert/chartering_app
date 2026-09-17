@@ -20,6 +20,8 @@ public interface IntakeItemSourceRepository extends JpaRepository<IntakeItemSour
     @Query("""
             select s from IntakeItemSource s
             left join fetch s.mailMessage m
+            left join fetch s.feedItem f
+            left join fetch f.source
             left join fetch s.reportedByCompany
             where s.intakeItem.id = :itemId
             order by s.reportedAt desc, s.id desc

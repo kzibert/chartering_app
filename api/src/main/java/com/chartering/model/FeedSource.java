@@ -47,6 +47,22 @@ public class FeedSource {
     @Column(nullable = false)
     private boolean enabled = true;
 
+    /**
+     * Read this source's posts as circulars, through the parser the mailbox goes through.
+     *
+     * <p>Separate from {@link #enabled} because they are separate questions: enabled is
+     * whether the page is fetched at all, this is what is done with what comes back. A board
+     * of pasted circulars is worth both — summarised for the market it describes, parsed for
+     * the cargoes and open tonnage on it — while a trade-press feed is worth only the first,
+     * and running the extraction model over a news article spends GPU to produce nothing.
+     *
+     * <p>Marked rather than copied into a second source of its own: one fetch, one stored
+     * copy of each post, two readers of it. Two sources at one address would read somebody
+     * else's server twice for the same bytes.
+     */
+    @Column(name = "into_intake", nullable = false)
+    private boolean intoIntake = false;
+
     @Column(length = 500)
     private String etag;
 

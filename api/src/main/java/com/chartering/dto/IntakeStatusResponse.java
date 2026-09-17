@@ -35,6 +35,17 @@ public record IntakeStatusResponse(
         Long acceptedItems,
         Long rejectedItems,
         Long unparsed,
+        /**
+         * How many posts off the open boards are waiting, counted apart from the mail.
+         *
+         * <p>Two numbers rather than one sum, because they fail for different reasons and the
+         * cures are different: mail waiting means the sync is ahead of the parser, posts
+         * waiting means a board has been fetched and not yet read. A single figure would hide
+         * a source that has stopped fetching behind a healthy mailbox.
+         */
+        Long unparsedPosts,
+        /** Enabled sources marked to be read in — 0 is what the Sources card explains. */
+        Long intakeSources,
         Long parsedTotal,
         Long failedTotal,
         Integer sweepIntervalMinutes,
@@ -50,6 +61,6 @@ public record IntakeStatusResponse(
     /** Off: nothing counted, nothing claimed. */
     public static IntakeStatusResponse disabled() {
         return new IntakeStatusResponse(false, null, null, null, null, null, null, null,
-                null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null, null);
     }
 }

@@ -3,19 +3,26 @@ import { Alert, Descriptions, Modal, Segmented, Space, Spin, Tag, Typography } f
 import { useQuery } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { mailboxApi } from '../api/mailbox';
+import { feedApi } from '../api/feed';
 import MessageBody from '../pages/mailbox/MessageBody';
 
 /**
  * One email a record came out of, reduced to what a picker needs.
  *
- * <b>Neutral on purpose.</b> Two features hand this list over and they store provenance in
+ * <b>Neutral on purpose.</b> Several features hand this list over and they store provenance in
  * different tables — a review item's arrivals in `intake_item_sources`, a cargo's in
  * `cargo_sources` — with different columns and different names for the sender. Teaching this
- * component either shape would mean teaching it both, so each caller maps into this instead.
+ * component any one shape would mean teaching it all of them, so each caller maps into this.
+ *
+ * <b>An arrival is a message or a post.</b> A circular read off ship.gr's open boards is the
+ * same document as a mailed one and is checked the same way, so it belongs behind the same
+ * button rather than a second one somewhere else. Exactly one of the two ids is set.
  */
 export interface EmailSource {
   /** Null where the mailbox no longer holds the message: it can be named but not opened. */
   mailMessageId?: number;
+  /** The board post, for an arrival that came off a page rather than out of the mailbox. */
+  feedItemId?: number;
   /** Who sent it, as the picker should label it. */
   label?: string;
   /** When it arrived, for telling two lists from the same broker apart. */
@@ -48,6 +55,7 @@ export interface EmailSource {
  */
 export default function OriginalEmail({
   mailMessageId,
+  feedItemId,
   sources,
   initialMailMessageId,
   open,
@@ -55,6 +63,8 @@ export default function OriginalEmail({
 }: {
   /** The item's own message — what to show when there is no source list (a list row). */
   mailMessageId?: number;
+  /** The item's own post, for the same case where the arrival came off a board. */
+  feedItemId?: number;
   /** Every arrival behind the record, newest first. */
   sources?: EmailSource[];
   /** Which of `sources` to open on, when the reader picked one from a list; else the newest. */
@@ -62,19 +72,24 @@ export default function OriginalEmail({
   open: boolean;
   onClose: () => void;
 }) {
-  // Only the ones the mailbox still holds can be opened; the rest are named but not readable,
-  // which is what ON DELETE SET NULL on the source row means in practice.
-  const readable = (sources ?? []).filter((s) => s.mailMessageId != null);
+  // Only the ones still held can be opened; the rest are named but not readable, which is
+  // what ON DELETE SET NULL on the source row means in practice — a mailbox folder emptied, a
+  // board whose source was removed.
+  const readable = (sources ?? []).filter((s) => s.mailMessageId != null || s.feedItemId != null);
   const choices: EmailSource[] = readable.length > 0
     ? readable
     : mailMessageId != null
       ? [{ mailMessageId, current: true }]
-      : [];
+      : feedItemId != null
+        ? [{ feedItemId, current: true }]
+        : [];
 
-  const opening = choices.some((c) => c.mailMessageId === initialMailMessageId)
-    ? initialMailMessageId
-    : choices[0]?.mailMessageId;
-  const [chosen, setChosen] = useState<number | undefined>(opening);
+  // A key over the pair, because the two ids are sequences of their own and message 12 and
+  // post 12 are different things. Nothing but this component ever sees it.
+  const keyOf = (s: EmailSource) => (s.feedItemId != null ? `post:${s.feedItemId}` : `mail:${s.mailMessageId}`);
+  const wanted = initialMailMessageId != null ? `mail:${initialMailMessageId}` : undefined;
+  const opening = choices.some((c) => keyOf(c) === wanted) ? wanted : (choices[0] && keyOf(choices[0]));
+  const [chosen, setChosen] = useState<string | undefined>(opening);
 
   // Back to the newest (or the one asked for) whenever the modal is opened on a different
   // item — a selection left over from the last hull would show somebody else's email under
@@ -84,16 +99,24 @@ export default function OriginalEmail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, opening, choices.length]);
 
-  const showing = chosen ?? choices[0]?.mailMessageId;
+  const showingKey = chosen ?? (choices[0] && keyOf(choices[0]));
+  const showing = choices.find((c) => keyOf(c) === showingKey);
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['intake', 'original-email', showing],
+    queryKey: ['intake', 'original-email', showingKey],
     // markRead false: see above.
-    queryFn: () => mailboxApi.get(showing!, false),
-    enabled: open && showing != null,
+    queryFn: () => mailboxApi.get(showing!.mailMessageId!, false),
+    enabled: open && showing?.mailMessageId != null,
+  });
+
+  const post = useQuery({
+    queryKey: ['intake', 'original-post', showingKey],
+    queryFn: () => feedApi.item(showing!.feedItemId!),
+    enabled: open && showing?.feedItemId != null,
   });
 
   const m = data?.message;
+  const p = post.data;
 
   return (
     <Modal
@@ -101,22 +124,22 @@ export default function OriginalEmail({
       onCancel={onClose}
       footer={null}
       width={900}
-      title={m?.subject || 'The original email'}
+      title={m?.subject || p?.title || (showing?.feedItemId != null ? 'The original post' : 'The original email')}
       destroyOnClose
     >
       {choices.length > 1 && (
         <Space direction="vertical" size={4} style={{ marginBottom: 12, width: '100%' }}>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {choices.length} emails. The figures on the record are from the newest.
+            {choices.length} arrivals. The figures on the record are from the newest.
           </Typography.Text>
           <Segmented
-            value={showing}
-            onChange={(v) => setChosen(v as number)}
+            value={showingKey}
+            onChange={(v) => setChosen(v as string)}
             options={choices.map((s) => ({
-              value: s.mailMessageId!,
+              value: keyOf(s),
               label: (
                 <Space size={4}>
-                  {s.label ?? 'Unknown sender'}
+                  {s.label ?? (s.feedItemId != null ? 'A board' : 'Unknown sender')}
                   {s.when && (
                     <Typography.Text type="secondary" style={{ fontSize: 11 }}>
                       {dayjs(s.when).format('D MMM')}
@@ -130,7 +153,7 @@ export default function OriginalEmail({
         </Space>
       )}
 
-      {isLoading && <Spin />}
+      {(isLoading || post.isLoading) && <Spin />}
 
       {isError && (
         <Alert
@@ -139,6 +162,43 @@ export default function OriginalEmail({
           message="That message is no longer in the mailbox"
           description="The sync mirrors a server whose folders get cleaned out, so an email can go while everything read out of it stays. What the model answered is still on the parse record."
         />
+      )}
+
+      {post.isError && (
+        <Alert
+          type="warning"
+          showIcon
+          message="That post is no longer stored"
+          description="Posts go when their source is removed. What was read out of this one stays, and the model's answer is still on the parse record."
+        />
+      )}
+
+      {p && (
+        <>
+          <Descriptions size="small" column={1} style={{ marginBottom: 12 }}>
+            <Descriptions.Item label="From">
+              {p.sourceName}
+              {p.url && (
+                <>
+                  {' · '}
+                  <Typography.Link href={p.url} target="_blank" rel="noreferrer">
+                    open the page
+                  </Typography.Link>
+                </>
+              )}
+            </Descriptions.Item>
+            <Descriptions.Item label="Posted">
+              {p.publishedAt ? dayjs(p.publishedAt).format('D MMM YYYY') : '—'}
+            </Descriptions.Item>
+          </Descriptions>
+
+          <MessageBody text={p.text} height="55vh" />
+
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            A copy taken when the board was read. Boards roll their entries off the bottom, so
+            the page may no longer show this one.
+          </Typography.Text>
+        </>
       )}
 
       {m && (

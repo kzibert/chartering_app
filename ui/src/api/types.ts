@@ -530,6 +530,15 @@ export interface VesselPositionResponse {
 
   fromMail: boolean;
   sourceMailMessageId?: number;
+  /**
+   * The board post she was read off, where she came off one.
+   *
+   * No `sourceKind` beside it, unlike a cargo: what a broker reads on Open Fleet is who
+   * reported her, and that is a field of its own, filled from the signature block off a board
+   * exactly as it is filled from the sender out of the mail.
+   */
+  sourceFeedItemId?: number;
+  sourceFeedName?: string;
   reportedAt?: string;
   /** Whole days since the reading. Computed by the API so every view agrees on it. */
   ageDays: number;
@@ -646,8 +655,11 @@ export interface CargoResponse {
   brokerPersonId?: number;
   brokerPersonName?: string;
 
-  fromMail: boolean;
+  /** Typed, mailed, or read off a board. Was a `fromMail` boolean while there were two. */
+  sourceKind: SourceKind;
   sourceMailMessageId?: number;
+  sourceFeedItemId?: number;
+  sourceFeedName?: string;
   receivedAt?: string;
   notes?: string;
   createdAt?: string;
@@ -839,8 +851,8 @@ export interface CargoFilter extends PageParams {
   minQuantity?: number;
   maxQuantity?: number;
   companyId?: number;
-  /** Read out of an email, or typed. */
-  fromMail?: boolean;
+  /** Typed in, read out of the mailbox, or read off an open board. */
+  sourceKind?: SourceKind;
 }
 
 export interface VesselFilter extends PageParams {
@@ -1515,11 +1527,25 @@ export interface VesselParticulars {
  * item rather than one row each. This list is what lets the drawer offer each original to read
  * and each sending firm to attach to the ship.
  */
+/**
+ * How a record reached this desk.
+ *
+ * Read as a fact about the arrival, not about the quality of what arrived: a cargo somebody
+ * typed out of a phone call is MANUAL and is the best-checked row in the table, while one the
+ * sweep read off a board is WEB and nobody has looked at it yet. Telling exactly those two
+ * apart is what the Cargoes tab's Source filter is for.
+ */
+export type SourceKind = 'MANUAL' | 'MAIL' | 'WEB';
+
 export interface IntakeItemSourceResponse {
   id: number;
   parsedEmailId?: number;
   /** Null where the mailbox no longer holds it — the sync mirrors a server that gets cleaned. */
   mailMessageId?: number;
+  sourceKind?: SourceKind;
+  feedItemId?: number;
+  feedSourceName?: string;
+  feedUrl?: string;
   mailSubject?: string;
   fromAddress?: string;
   fromName?: string;

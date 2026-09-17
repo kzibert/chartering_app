@@ -13,4 +13,9 @@ public interface FeedSourceRepository extends JpaRepository<FeedSource, Long> {
     List<FeedSource> findByEnabledTrueOrderByIdAsc();
 
     Optional<FeedSource> findByUrl(String url);
+
+    /** The boards the Intake tab lists and the sweep reads. */
+    List<FeedSource> findByIntoIntakeTrueOrderByNameAsc();
+
+    boolean existsByEnabledTrueAndIntoIntakeTrue();
 }

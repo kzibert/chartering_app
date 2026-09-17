@@ -15,7 +15,8 @@ public interface CargoSourceRepository extends JpaRepository<CargoSource, Long> 
      * drawer shows a broker's name and the subject of the mail it came out of, and a list of
      * five sources would otherwise be eleven queries to render one panel.
      */
-    @EntityGraph(attributePaths = {"mailMessage", "reportedByCompany", "reportedByPerson"})
+    @EntityGraph(attributePaths = {"mailMessage", "feedItem", "feedItem.source",
+            "reportedByCompany", "reportedByPerson"})
     List<CargoSource> findByCargoIdOrderByReportedAtDesc(Long cargoId);
 
     /** The same, for a page of cargoes at once - the Cargoes list prints a sender on every row. */
@@ -23,6 +24,9 @@ public interface CargoSourceRepository extends JpaRepository<CargoSource, Long> 
     List<CargoSource> findByCargoIdInOrderByReportedAtDesc(List<Long> cargoIds);
 
     boolean existsByCargoIdAndMailMessageId(Long cargoId, Long mailMessageId);
+
+    /** The same guard for an arrival that came off a board rather than out of the mailbox. */
+    boolean existsByCargoIdAndFeedItemId(Long cargoId, Long feedItemId);
 
     long countByCargoId(Long cargoId);
 }

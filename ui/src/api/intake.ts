@@ -1,5 +1,7 @@
 import { client, cleanParams } from './client';
+import type { FeedSource } from './feed';
 import type {
+  SourceKind,
   CargoRequest,
   CompanyRequest,
   IntakeItemSourceResponse,
@@ -33,8 +35,12 @@ export type {
  * becomes an item here.
  */
 
-/** Which question an item asks. The three want quite different answers. */
-export type IntakeItemKind = 'NEW_VESSEL' | 'VESSEL_FIELDS' | 'CARGO_MERGE';
+/** Which question an item asks. The four want quite different answers. */
+export type IntakeItemKind =
+  | 'NEW_VESSEL'
+  | 'VESSEL_FIELDS'
+  | 'CARGO_MERGE'
+  | 'COMPANY_DETAILS';
 
 export type IntakeItemStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED';
 
@@ -92,6 +98,10 @@ export interface IntakePayload {
   /** VESSEL_FIELDS. */
   vesselId?: number;
   vesselName?: string;
+  /**
+   * How it was identified. On VESSEL_FIELDS: IMO, NAME, EX_NAME or LOOKUP_IMO. On
+   * COMPANY_DETAILS: email, name or phone, and absent when nothing identified the firm.
+   */
   matchedBy?: string;
   diffs?: FieldDiff[];
   /** Fields that were empty and have already been written — no decision needed. */
@@ -103,6 +113,18 @@ export interface IntakePayload {
   reasons?: string[];
   wouldFill?: string[];
   differing?: FieldDiff[];
+  /** COMPANY_DETAILS: the signature, in the shape the paste review already renders. */
+  draft?: PasteCompanyDraft;
+  companyId?: number;
+  companyName?: string;
+  /** What there is to decide, in the words the queue row prints. */
+  changes?: string[];
+  /**
+   * The comparison against the firm as it stands, worked out when the drawer opened rather
+   * than when the item was raised. Absent on an item about a firm not on file, and on an
+   * answered one, which keeps what it was decided against.
+   */
+  comparison?: IntakePasteCompanyComparison;
 }
 
 export interface IntakeItemResponse {
@@ -115,7 +137,19 @@ export interface IntakeItemResponse {
   summary?: string;
   vesselId?: number;
   cargoId?: number;
+  /** COMPANY_DETAILS: the firm it is about, when it is one already on file. */
+  companyId?: number;
   mailMessageId?: number;
+  /**
+   * Which door it came in through, and the post where it was a board rather than the mailbox.
+   *
+   * The sender, subject and date fields are filled either way — a post's title stands in for
+   * the subject and the board's name for the sender — so a row renders without knowing which.
+   */
+  sourceKind?: SourceKind;
+  feedItemId?: number;
+  feedSourceName?: string;
+  feedUrl?: string;
   fromAddress?: string;
   fromName?: string;
   /** The company the mail sync resolved the sender to — what a link is offered against. */
@@ -177,6 +211,16 @@ export interface IntakeResolveRequest {
 export interface ParsedEmailResponse {
   id: number;
   mailMessageId?: number;
+  /**
+   * Which door it came in through, and the post where it was a board rather than the mailbox.
+   *
+   * The sender, subject and date fields are filled either way — a post's title stands in for
+   * the subject and the board's name for the sender — so a row renders without knowing which.
+   */
+  sourceKind?: SourceKind;
+  feedItemId?: number;
+  feedSourceName?: string;
+  feedUrl?: string;
   status: ParseStatus;
   /** The model's own classification: cargo_offer, vessel_opening, mixed, other. */
   emailType?: string;
@@ -208,6 +252,10 @@ export interface IntakeStatusResponse {
   acceptedItems?: number;
   rejectedItems?: number;
   unparsed?: number;
+  /** Posts off the open boards waiting to be read, counted apart from the mail. */
+  unparsedPosts?: number;
+  /** Enabled sources marked to be read in. 0 is what the Sources card explains. */
+  intakeSources?: number;
   parsedTotal?: number;
   failedTotal?: number;
   sweepIntervalMinutes?: number;
@@ -229,6 +277,8 @@ export interface SweepResponse {
   positions?: number;
   cargoes?: number;
   items?: number;
+  /** How many of `read` came off a board rather than out of the mailbox. */
+  posts?: number;
   /** "Nothing to read" and "could not read" look identical in a count of zero. */
   unreachable?: boolean;
   message?: string;
@@ -261,6 +311,16 @@ export interface CargoSourceResponse {
   personName?: string;
   fromAddress?: string;
   mailMessageId?: number;
+  /**
+   * Which door it came in through, and the post where it was a board rather than the mailbox.
+   *
+   * The sender, subject and date fields are filled either way — a post's title stands in for
+   * the subject and the board's name for the sender — so a row renders without knowing which.
+   */
+  sourceKind?: SourceKind;
+  feedItemId?: number;
+  feedSourceName?: string;
+  feedUrl?: string;
   mailSubject?: string;
   reportedAt?: string;
   notes?: string;
@@ -501,12 +561,32 @@ export const intakeApi = {
   parsedDetail: (id: number) =>
     client.get<ParsedEmailResponse>(`/intake/parsed/${id}`).then((r) => r.data),
 
-  reopen: (mailMessageId: number) =>
-    client.post<void>(`/intake/parsed/${mailMessageId}/reopen`).then((r) => r.data),
+  /** By the parse row's id, not the message's — which is what makes it work for a post too. */
+  reopen: (parsedEmailId: number) =>
+    client.post<void>(`/intake/parsed/${parsedEmailId}/reopen`).then((r) => r.data),
 
-  ignoreParsed: (mailMessageId: number, note?: string) =>
+  ignoreParsed: (parsedEmailId: number, note?: string) =>
     client
-      .post<void>(`/intake/parsed/${mailMessageId}/ignore`, { note })
+      .post<void>(`/intake/parsed/${parsedEmailId}/ignore`, { note })
+      .then((r) => r.data),
+
+  /** The boards read into this queue — feed sources with one flag set. */
+  sources: () => client.get<FeedSource[]>('/intake/sources').then((r) => r.data),
+
+  /** Fetch the boards now. Fetching is not parsing: the sweep reads what this stores. */
+  fetchSources: (sourceId?: number) =>
+    client
+      .post<void>('/intake/sources/fetch', undefined, { params: cleanParams({ sourceId }) })
+      .then((r) => r.data),
+
+  /**
+   * Answer a company question with what was ticked — the same body the paste review sends,
+   * through the same service, so a signature is allowed to write exactly the same things
+   * whichever screen it was reviewed on.
+   */
+  acceptCompany: (id: number, body: IntakePasteCompanyRequest) =>
+    client
+      .post<IntakePasteCompanyResponse>(`/intake/items/${id}/company`, body)
       .then((r) => r.data),
 
   cargoSources: (cargoId: number) =>

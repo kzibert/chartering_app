@@ -39,6 +39,14 @@ public class CargoSource {
     @JoinColumn(name = "mail_message_id")
     private MailMessage mailMessage;
 
+    /**
+     * The board post, where this arrival was one. Never set together with the message above:
+     * an arrival came in through one door.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "feed_item_id")
+    private FeedItem feedItem;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "reported_by_company_id")
     private Company reportedByCompany;

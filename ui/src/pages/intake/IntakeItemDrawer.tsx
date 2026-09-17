@@ -26,6 +26,8 @@ import FromTheWeb from './FromTheWeb';
 import OriginalEmail from '../../components/OriginalEmail';
 import LinkSender from './LinkSender';
 import CreateHerModal from './CreateHerModal';
+import CompanyCard from './CompanyStyleCard';
+import { intakeApi } from '../../api/intake';
 import { ROLE_WORDS } from './capacities';
 import { kindMeta } from './labels';
 import type {
@@ -210,10 +212,12 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
         )
       }
       extra={
-        item?.mailMessageId ? (
+        item?.mailMessageId || item?.feedItemId ? (
           <Tooltip title="What the model actually read. The only thing that settles whether a figure on this screen is right.">
             <Button size="small" icon={<MailOutlined />} onClick={() => setEmailOpen(true)}>
-              Original email
+              {item.sourceKind === 'WEB' && (item.sources?.length ?? 0) <= 1
+                ? 'Original post'
+                : 'Original email'}
               {(item.sources?.length ?? 0) > 1 ? `s (${item.sources!.length})` : ''}
             </Button>
           </Tooltip>
@@ -286,8 +290,15 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
               onOpenVessel={setVesselOpen}
               editable={pending}
             />
-          ) : (
+          ) : item.kind === 'CARGO_MERGE' ? (
             <CargoMergeBody item={item} />
+          ) : (
+            <CompanyDetailsBody
+              item={item}
+              editable={pending}
+              onDone={onClose}
+              onOpenCompany={setCompanyId}
+            />
           )}
 
           {/* Every arrival behind the item, not just the one that raised it first: the same
@@ -295,9 +306,11 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
               between two brokers is reading what each of them actually wrote. */}
           <OriginalEmail
             mailMessageId={item.mailMessageId}
+            feedItemId={item.feedItemId}
             sources={(item.sources ?? []).map((s) => ({
               mailMessageId: s.mailMessageId,
-              label: s.senderCompanyName ?? s.fromName ?? s.fromAddress,
+              feedItemId: s.feedItemId,
+              label: s.senderCompanyName ?? s.fromName ?? s.fromAddress ?? s.feedSourceName,
               when: s.receivedAt,
               current: s.current,
             }))}
@@ -986,6 +999,124 @@ function CargoMergeBody({ item }: { item: IntakeItemResponse }) {
 }
 
 /** The three answers, worded per kind so no button says "accept" without saying to what. */
+/**
+ * The firm that signed the circular, set against the firm on file.
+ *
+ * <b>The paste modal's own card, unchanged.</b> A signature read off a board asks exactly what
+ * a pasted one asks — which firm is this, what does the record say, what should change — and
+ * is allowed to write exactly the same things. What differs is only where the accept goes:
+ * here it posts against the item, which is then marked answered and leaves the queue.
+ *
+ * <b>Why there is no Accept in the footer.</b> Every other kind is answered by one button over
+ * a table of ticks; this one is a form — a firm to pick or create, fields to tick, people and
+ * addresses to attach to each other — and its save has to be the button that knows what state
+ * the form is in. A second accept in the footer would be a second, less informed way to write
+ * the same rows. Discard stays in the footer, because refusing is the same act it is
+ * everywhere else, and it is what stops this signature being raised again.
+ */
+function CompanyDetailsBody({
+  item,
+  editable,
+  onDone,
+  onOpenCompany,
+}: {
+  item: IntakeItemResponse;
+  editable: boolean;
+  onDone: () => void;
+  onOpenCompany: (id: number) => void;
+}) {
+  const draft = item.payload?.draft;
+  const comparison = item.payload?.comparison;
+
+  if (!draft) {
+    return (
+      <Alert
+        type="warning"
+        showIcon
+        message="This question was raised by an older version and can no longer be applied."
+        description="Discard it and read the circular again from the log."
+      />
+    );
+  }
+
+  if (!editable) {
+    // Answered: what was proposed, not a form. The rows it wrote are on the company's own
+    // record and its History tab, which is where a decision belongs after it is made.
+    return (
+      <Space direction="vertical" size={8} style={{ width: '100%' }}>
+        <Typography.Text strong>{draft.company.name}</Typography.Text>
+        {item.companyId && (
+          <Button size="small" onClick={() => onOpenCompany(item.companyId!)}>
+            Open the company
+          </Button>
+        )}
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {(item.payload?.changes ?? []).join(' · ') || 'Nothing further was proposed.'}
+        </Typography.Text>
+      </Space>
+    );
+  }
+
+  return (
+    <Space direction="vertical" size={12} style={{ width: '100%' }}>
+      {item.payload?.companyName ? (
+        <Alert
+          type="info"
+          showIcon
+          message={`This looks like ${item.payload.companyName}`}
+          description={
+            <>
+              Matched on {matchWords(item.payload.matchedBy)}, and the signature says something
+              the record does not: {(item.payload.changes ?? []).join('; ')}. Nothing changes
+              until you tick it — the block at the foot of a circular is a lead sheet, not a
+              source of record.
+            </>
+          }
+        />
+      ) : (
+        <Alert
+          type="info"
+          showIcon
+          message="No firm on file carries this signature"
+          description={
+            draft.matches.length > 0
+              ? 'Some resemble it — pick one if it is the same firm, or create it. Two firms a broker keeps apart must not be merged by a parser, which is why nothing was chosen for you.'
+              : 'Nothing on file resembles it by address, name, number, domain or spelling. Creating it files what the signature carried and nothing else.'
+          }
+        />
+      )}
+
+      {/* The comparison rides on the response and is worked out when the drawer opens rather
+          than when the item was raised: these questions are the slowest in the queue to be
+          answered and the likeliest to be answered elsewhere, so an address somebody added on
+          the People tab last week should not still be offered here. The card re-compares on
+          its own as soon as a firm is picked, so this is only the count on screen before that. */}
+      {comparison && comparison.fields.length === 0 && (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          The record already agrees on every field the signature states; what is left is the
+          people and the addresses below.
+        </Typography.Text>
+      )}
+
+      <CompanyCard
+        bare
+        draft={draft}
+        saveLabel="Save to this company and close the question"
+        save={(body) => intakeApi.acceptCompany(item.id, body)}
+        onDone={onDone}
+      />
+    </Space>
+  );
+}
+
+/** The matcher's code in words. Unknown values print as they stand — see IntakePayloads. */
+function matchWords(how?: string) {
+  if (how === 'email') return 'an address it already has';
+  if (how === 'name') return 'the same name';
+  if (how === 'phone') return 'the same number';
+  return how ?? 'what the signature said';
+}
+
 function Footer({
   item,
   busy,
@@ -1022,8 +1153,33 @@ function Footer({
       alternative: 'Keep separate',
       discard: 'Discard',
     },
+    COMPANY_DETAILS: {
+      // Saving is the card's own button, which is the only one that knows what is ticked.
+      accept: '',
+      alternative: '',
+      discard: 'Not these details',
+    },
   };
   const w = words[item.kind];
+
+  // A company question is a form rather than a table of ticks, so the footer carries only the
+  // refusal. Kept there rather than moved into the card because refusing is the same act on
+  // every kind, and because it is what stops this signature being raised again next Monday.
+  if (item.kind === 'COMPANY_DETAILS') {
+    return (
+      <Popconfirm
+        title={w.discard}
+        description="Nothing will be written, and this signature will not be raised again unless it changes."
+        onConfirm={() => onAnswer('DISCARD')}
+        okText="Yes"
+        cancelText="No"
+      >
+        <Button danger loading={busy}>
+          {w.discard}
+        </Button>
+      </Popconfirm>
+    );
+  }
 
   return (
     <Space wrap>

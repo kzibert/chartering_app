@@ -265,7 +265,14 @@ public class IntakePasteService {
         return p;
     }
 
-    private static CompanyDraft companyDraft(CompanyStyleReader.Style style, List<CompanyMatcher.Match> matches) {
+    /**
+     * The firm as the review screens render it.
+     *
+     * <p>Not private, because the Intake queue's own company question builds the same draft out
+     * of a circular's signature — see {@link CompanyStyleIntake}. One method, so a block read
+     * off a board and the same block pasted into the modal produce the same rows.
+     */
+    public static CompanyDraft companyDraft(CompanyStyleReader.Style style, List<CompanyMatcher.Match> matches) {
         CompanyRequest company = new CompanyRequest();
         company.setName(style.name());
         company.setCityName(style.city());

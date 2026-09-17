@@ -4,6 +4,7 @@ import com.chartering.dto.CargoRequest;
 import com.chartering.dto.CargoResponse;
 import com.chartering.dto.PageResponse;
 import com.chartering.model.CargoStatus;
+import com.chartering.model.SourceKind;
 import com.chartering.service.CargoService;
 import com.chartering.service.CargoService.CargoFilter;
 import io.swagger.v3.oas.annotations.Operation;
@@ -57,7 +58,7 @@ public class CargoController {
             @RequestParam(required = false) BigDecimal maxQuantity,
             @RequestParam(required = false) LocalDate sentSince,
             @RequestParam(required = false) Long companyId,
-            @RequestParam(required = false) Boolean fromMail,
+            @RequestParam(required = false) SourceKind sourceKind,
             @PageableDefault(size = 20, sort = "id", direction = org.springframework.data.domain.Sort.Direction.DESC)
             Pageable pageable) {
 
@@ -65,7 +66,7 @@ public class CargoController {
                 : status.stream().map(CargoService::parseStatus).toList();
         CargoFilter filter = new CargoFilter(commodity, statuses, loadAreaId, dischargeAreaId,
                 loadPortId, loadPlace, dischargePlace, laycanFrom, laycanTo, minQuantity,
-                maxQuantity, sentSince, companyId, fromMail);
+                maxQuantity, sentSince, companyId, sourceKind);
         return ResponseEntity.ok(cargoService.search(filter, pageable));
     }
 

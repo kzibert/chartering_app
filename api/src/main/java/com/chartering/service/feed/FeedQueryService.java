@@ -78,6 +78,14 @@ public class FeedQueryService {
     }
 
     @Transactional(readOnly = true)
+    public FeedItemResponse item(Long id) {
+        return items.findById(id)
+                .map(mapper::toFeedItemResponse)
+                .orElseThrow(() -> new com.chartering.exception.ResourceNotFoundException(
+                        "Feed item", id));
+    }
+
+    @Transactional(readOnly = true)
     public PageResponse<FeedItemResponse> items(Long sourceId, String q, LocalDate from, LocalDate to, int page, int size) {
         Page<FeedItemResponse> result = items.findAll(FeedItemSpecification.filter(sourceId, q, from, to),
                         PageRequest.of(page, Math.min(Math.max(size, 1), 200)))

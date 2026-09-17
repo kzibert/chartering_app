@@ -187,16 +187,23 @@ public class Cargo {
     private Person brokerPerson;
 
     /**
-     * Read out of an email rather than typed. Stays true after the message is gone:
-     * {@code mail_messages} mirrors a server whose folders get cleaned out, and how this
-     * cargo reached the desk is a fact about the cargo.
+     * Typed, mailed, or read off a board. Stays right after the source is gone:
+     * {@code mail_messages} mirrors a server whose folders get cleaned out and a board rolls
+     * its entries off the bottom, while how this cargo reached the desk is a fact about the
+     * cargo. Was a {@code fromMail} boolean until there were three answers to it.
      */
-    @Column(name = "from_mail", nullable = false)
-    private boolean fromMail = false;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "source_kind", nullable = false, length = 10)
+    private SourceKind sourceKind = SourceKind.MANUAL;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "source_mail_message_id")
     private MailMessage sourceMailMessage;
+
+    /** The board post it was read off, while the fetcher still holds a copy of it. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "source_feed_item_id")
+    private FeedItem sourceFeedItem;
 
     @Column(name = "received_at")
     private OffsetDateTime receivedAt;

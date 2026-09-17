@@ -18,6 +18,8 @@ export interface FeedSource {
   url: string;
   parserKey?: string;
   enabled: boolean;
+  /** Its posts are read as circulars by the parser. Separate from `enabled` — see the request. */
+  intoIntake: boolean;
   lastFetchedAt?: string;
   /** Why the last fetch failed; absent once one succeeds. */
   lastError?: string;
@@ -25,12 +27,19 @@ export interface FeedSource {
   itemCount: number;
 }
 
+/**
+ * @param intoIntake read this source's posts as circulars, through the parser the mailbox
+ *   goes through. Separate from `enabled`: that is whether the page is fetched at all, this
+ *   is what is done with what comes back. Worth it for a board of pasted circulars and not
+ *   for a trade-press feed, where the extraction model would spend GPU to produce nothing.
+ */
 export interface FeedSourceRequest {
   name?: string;
   kind: FeedSourceKind;
   url: string;
   parserKey?: string;
   enabled?: boolean;
+  intoIntake?: boolean;
 }
 
 export interface FeedParser {
@@ -181,6 +190,9 @@ export const feedApi = {
   fetchAll: () => client.post<FeedStatus>('/feed/fetch').then((r) => r.data),
   fetchSource: (id: number) =>
     client.post<FeedStatus>(`/feed/sources/${id}/fetch`).then((r) => r.data),
+
+  /** One post, whole — what the Intake screens show beside a reading taken off a board. */
+  item: (id: number) => client.get<FeedItem>(`/feed/items/${id}`).then((r) => r.data),
 
   items: (filter: FeedItemFilter) =>
     client
