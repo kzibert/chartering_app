@@ -19,6 +19,7 @@ import com.chartering.model.MailMessage;
 import com.chartering.model.MailRule;
 import com.chartering.model.ParsedEmail;
 import com.chartering.model.Person;
+import com.chartering.model.SourceKind;
 import com.chartering.model.Port;
 import com.chartering.model.TradeArea;
 import com.chartering.model.Vessel;
@@ -100,6 +101,9 @@ public class DtoMapper {
                 reporterPerson != null ? reporterPerson.getId() : null,
                 reporterPerson != null ? reporterPerson.getFullName() : null,
                 p.isFromMail(),
+                p.getSourceFeedItem() != null ? p.getSourceFeedItem().getId() : null,
+                p.getSourceFeedItem() != null && p.getSourceFeedItem().getSource() != null
+                        ? p.getSourceFeedItem().getSource().getName() : null,
                 p.getSourceMailMessage() != null ? p.getSourceMailMessage().getId() : null,
                 p.getReportedAt(),
                 ageDays(p.getReportedAt()),
@@ -365,10 +369,37 @@ public class DtoMapper {
                 broker != null ? broker.getName() : null,
                 brokerPerson != null ? brokerPerson.getId() : null,
                 brokerPerson != null ? brokerPerson.getFullName() : null,
-                c.isFromMail(),
+                c.getSourceKind(),
                 c.getSourceMailMessage() != null ? c.getSourceMailMessage().getId() : null,
+                c.getSourceFeedItem() != null ? c.getSourceFeedItem().getId() : null,
+                c.getSourceFeedItem() != null && c.getSourceFeedItem().getSource() != null
+                        ? c.getSourceFeedItem().getSource().getName() : null,
                 c.getReceivedAt(), c.getNotes(), c.getCreatedAt(), c.getUpdatedAt(),
                 c.getLastSentAt(), lastSentBy, senderCount);
+    }
+
+    /**
+     * What a board post stands in as, wherever a screen expects a message.
+     *
+     * <p>A post has no sender and no subject, and leaving both blank would make every arrival
+     * off a board render as an empty row on four screens that already know how to print one.
+     * The board's name is who told us as far as a reader is concerned; the post's title, or
+     * its date line, is what the row is called.
+     */
+    private static String boardName(FeedItem post) {
+        return post == null || post.getSource() == null ? null : post.getSource().getName();
+    }
+
+    private static String postSubject(FeedItem post) {
+        if (post == null) return null;
+        if (post.getTitle() != null && !post.getTitle().isBlank()) return post.getTitle();
+        return post.getPublishedAt() != null
+                ? "Board post of " + post.getPublishedAt().toLocalDate() : "Board post";
+    }
+
+    private static LocalDateTime postDate(FeedItem post) {
+        if (post == null) return null;
+        return post.getPublishedAt() != null ? post.getPublishedAt() : post.getFetchedAt();
     }
 
     /** The firm, else the person, else the bare address: the most a source row can name. */
@@ -410,21 +441,29 @@ public class DtoMapper {
                                                    List<IntakeSuggestionResponse> suggestions) {
         MailMessage m = item.getParsedEmail() != null
                 ? item.getParsedEmail().getMailMessage() : null;
+        FeedItem post = item.getParsedEmail() != null
+                ? item.getParsedEmail().getFeedItem() : null;
         // The sender's company is read off the message's own link, which the mail sync
         // resolved from the envelope against the contacts table - a better answer than any
-        // name in a signature block, and already loaded.
+        // name in a signature block, and already loaded. A post has no envelope, so the firm
+        // is whatever its signature was matched to when the item was raised, which is the
+        // company on the arrival row rather than anything on the item.
         Company sender = m != null ? m.getCompany() : null;
         return new IntakeItemResponse(
                 item.getId(), item.getKind(), item.getStatus(),
                 item.getSubjectLabel(), summary,
-                item.getVesselId(), item.getCargoId(),
+                item.getVesselId(), item.getCargoId(), item.getCompanyId(),
                 m != null ? m.getId() : null,
                 m != null ? m.getFromAddress() : null,
-                m != null ? m.getFromName() : null,
+                m != null ? m.getFromName() : boardName(post),
                 sender != null ? sender.getId() : null,
                 sender != null ? sender.getName() : null,
-                m != null ? m.getSubject() : null,
-                m != null ? m.getReceivedAt() : null,
+                m != null ? m.getSubject() : postSubject(post),
+                m != null ? m.getReceivedAt() : postDate(post),
+                post != null ? SourceKind.WEB : SourceKind.MAIL,
+                post != null ? post.getId() : null,
+                boardName(post),
+                post != null ? post.getUrl() : null,
                 payload,
                 lookup,
                 suggestions,
@@ -445,17 +484,22 @@ public class DtoMapper {
         for (int i = 0; i < sources.size(); i++) {
             IntakeItemSource s = sources.get(i);
             MailMessage m = s.getMailMessage();
+            FeedItem post = s.getFeedItem();
             Company c = s.getReportedByCompany();
             out.add(new IntakeItemSourceResponse(
                     s.getId(),
                     s.getParsedEmail() != null ? s.getParsedEmail().getId() : null,
                     m != null ? m.getId() : null,
-                    m != null ? m.getSubject() : null,
+                    post != null ? SourceKind.WEB : SourceKind.MAIL,
+                    post != null ? post.getId() : null,
+                    boardName(post),
+                    post != null ? post.getUrl() : null,
+                    m != null ? m.getSubject() : postSubject(post),
                     m != null ? m.getFromAddress() : null,
-                    m != null ? m.getFromName() : null,
+                    m != null ? m.getFromName() : boardName(post),
                     c != null ? c.getId() : null,
                     c != null ? c.getName() : null,
-                    m != null ? m.getReceivedAt() : null,
+                    m != null ? m.getReceivedAt() : postDate(post),
                     s.getReportedAt(),
                     i == 0));
         }
@@ -471,14 +515,19 @@ public class DtoMapper {
      */
     public ParsedEmailResponse toParsedEmailResponse(ParsedEmail p, String rawJson) {
         MailMessage m = p.getMailMessage();
+        FeedItem post = p.getFeedItem();
         return new ParsedEmailResponse(
                 p.getId(),
                 m != null ? m.getId() : null,
+                post != null ? SourceKind.WEB : SourceKind.MAIL,
+                post != null ? post.getId() : null,
+                boardName(post),
+                post != null ? post.getUrl() : null,
                 p.getStatus(), p.getEmailType(),
                 m != null ? m.getFromAddress() : null,
-                m != null ? m.getFromName() : null,
-                m != null ? m.getSubject() : null,
-                m != null ? m.getReceivedAt() : null,
+                m != null ? m.getFromName() : boardName(post),
+                m != null ? m.getSubject() : postSubject(post),
+                m != null ? m.getReceivedAt() : postDate(post),
                 p.getPositionsApplied(), p.getCargoesApplied(), p.getItemsRaised(),
                 p.getModelName(), p.getDurationMs(), p.getPromptChars(),
                 p.getAttempts(), p.getError(), p.getParsedAt(), rawJson);
@@ -495,6 +544,7 @@ public class DtoMapper {
         Company company = s.getReportedByCompany();
         Person person = s.getReportedByPerson();
         MailMessage m = s.getMailMessage();
+        FeedItem post = s.getFeedItem();
         return new CargoSourceResponse(
                 s.getId(),
                 company != null ? company.getId() : null,
@@ -503,13 +553,18 @@ public class DtoMapper {
                 person != null ? person.getFullName() : null,
                 s.getFromAddress(),
                 m != null ? m.getId() : null,
-                m != null ? m.getSubject() : null,
+                post != null ? SourceKind.WEB : SourceKind.MAIL,
+                post != null ? post.getId() : null,
+                boardName(post),
+                post != null ? post.getUrl() : null,
+                m != null ? m.getSubject() : postSubject(post),
                 s.getReportedAt(), s.getNotes());
     }
 
     public FeedSourceResponse toFeedSourceResponse(FeedSource s, long itemCount) {
         return new FeedSourceResponse(s.getId(), s.getName(), s.getKind(), s.getUrl(), s.getParserKey(),
-                s.isEnabled(), s.getLastFetchedAt(), s.getLastError(), s.getLastNewItems(), itemCount);
+                s.isEnabled(), s.isIntoIntake(), s.getLastFetchedAt(), s.getLastError(),
+                s.getLastNewItems(), itemCount);
     }
 
     /** The source is read for its name; within one page the few sources load once each. */

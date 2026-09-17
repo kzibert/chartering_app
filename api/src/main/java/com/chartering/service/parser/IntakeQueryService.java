@@ -69,9 +69,12 @@ public class IntakeQueryService {
     private final EmailParserClient client;
     private final IntakeItemRepository items;
     private final ParsedEmailRepository parsedEmails;
+    private final com.chartering.repository.FeedItemRepository feedItems;
+    private final com.chartering.repository.FeedSourceRepository sources;
     private final CargoSourceRepository cargoSources;
     private final SettingsService settingsService;
     private final IntakeService intake;
+    private final IntakePasteService paste;
     private final VesselLookupService lookups;
     private final VesselRepository vessels;
     private final VesselExNameRepository exNames;
@@ -101,6 +104,9 @@ public class IntakeQueryService {
         ParserSettings.Values values = settings.values();
         IntakeService.Counts counts = intake.counts();
         long unparsed = parsedEmails.countUnparsed(values.receivedSince());
+        long unparsedPosts = feedItems.countUnparsedForIntake(values.receivedSince());
+        long intakeSources = sources.findByIntoIntakeTrueOrderByNameAsc().stream()
+                .filter(com.chartering.model.FeedSource::isEnabled).count();
         ParserSweepService.SweepReport last = sweeps.lastReport();
 
         // Each one is the next thing to do rather than an error, because every one of them is
@@ -117,6 +123,14 @@ public class IntakeQueryService {
         } else if (unparsed == 0 && parsedEmails.count() == 0) {
             warnings.add("No mail has been read yet — run a sync on the Mailbox tab, then "
                     + "press Parse now.");
+        }
+        if (intakeSources == 0) {
+            // Not an error: reading the open boards is a thing to switch on, not a thing that
+            // has broken. Said here because the Sources card is otherwise an empty box with no
+            // explanation of what it would be for.
+            warnings.add("No web sources are being read. ship.gr's Open Cargoes and Open Ships "
+                    + "boards carry the same circulars this mailbox does — add them under "
+                    + "Sources to have them read in too.");
         }
         if (values.sweepMaxAgeDays() > 0 && unparsed == 0
                 && parsedEmails.countUnparsed(ParserSettings.NO_LIMIT_SINCE) > 0) {
@@ -139,6 +153,8 @@ public class IntakeQueryService {
                 sweeps.isRunning(),
                 counts.pending(), counts.accepted(), counts.rejected(),
                 unparsed,
+                unparsedPosts,
+                intakeSources,
                 parsedEmails.countByStatus(ParseStatus.PARSED),
                 parsedEmails.countByStatus(ParseStatus.FAILED),
                 values.sweepIntervalMinutes(),
@@ -176,7 +192,9 @@ public class IntakeQueryService {
     public IntakeItemResponse get(Long id) {
         requireEnabled();
         IntakeItem item = load(id);
-        JsonNode payload = refreshed(item, payloadOf(item));
+        // The detail call is the one that drops what these senders have already settled: it
+        // costs a query per item and this is the screen that writes. See refreshed.
+        JsonNode payload = refreshed(item, payloadOf(item), true);
         // Sources on the detail call only: the list row prints one line, and a join per row
         // would buy it nothing. Same rule the lookup and the shortlist follow.
         return mapper.toIntakeItemResponse(item, payload, summarise(item, payload),
@@ -263,6 +281,24 @@ public class IntakeQueryService {
         return VesselFieldDiff.fields();
     }
 
+    /**
+     * The boards this queue reads.
+     *
+     * <p>Feed sources with one flag set, listed here so the Intake tab does not need a second
+     * table of the same bookmarks. What the tab shows of them is deliberately narrow — the
+     * name, whether it is on, when it last fetched and what came of it — because a source is
+     * edited on the Feed tab, where the kinds it does not read live beside it.
+     */
+    @Transactional(readOnly = true)
+    public List<com.chartering.dto.FeedSourceResponse> sources() {
+        requireEnabled();
+        Map<Long, Long> counts = feedItems.countBySource().stream()
+                .collect(Collectors.toMap(r -> (Long) r[0], r -> (Long) r[1]));
+        return sources.findByIntoIntakeTrueOrderByNameAsc().stream()
+                .map(s -> mapper.toFeedSourceResponse(s, counts.getOrDefault(s.getId(), 0L)))
+                .toList();
+    }
+
     // ------------------------------------------------------------------ the log
 
     @Transactional(readOnly = true)
@@ -334,7 +370,7 @@ public class IntakeQueryService {
             log.warn("Intake item {} has an unreadable payload: {}", item.getId(), e.getMessage());
             payload = null;
         }
-        payload = refreshed(item, payload);
+        payload = refreshed(item, payload, false);
         return mapper.toIntakeItemResponse(item, payload, summarise(item, payload), lookup);
     }
 
@@ -345,22 +381,73 @@ public class IntakeQueryService {
      * asked about today's record, in today's terms. Answered items keep their stored rows,
      * which are the record of what was decided.
      *
+     * <p><b>{@code dropSettled} is the detail call only, and the split is the one the sources
+     * and the lookup already make.</b> Leaving out what these senders have settled needs this
+     * item's arrivals and the hull's decisions - two more queries per row, on a page of twenty
+     * rows that print one line each. It matters on the drawer, which is where an accept is
+     * answered against exactly the rows on screen; a decision is normally made by answering the
+     * very item that raised it, so a list row that counts one extra is both rare and harmless.
+     *
      * <p>Only the response changes: the payload in the table is left as it was.
      */
-    private JsonNode refreshed(IntakeItem item, JsonNode payload) {
-        if (payload == null || item.getKind() != IntakeItemKind.VESSEL_FIELDS
-                || item.getStatus() != IntakeItemStatus.PENDING
+    private JsonNode refreshed(IntakeItem item, JsonNode payload, boolean dropSettled) {
+        if (payload == null || item.getStatus() != IntakeItemStatus.PENDING
                 || !(payload instanceof com.fasterxml.jackson.databind.node.ObjectNode obj)) {
             return payload;
         }
+        if (item.getKind() == IntakeItemKind.COMPANY_DETAILS) return refreshedCompany(item, obj);
+        if (item.getKind() != IntakeItemKind.VESSEL_FIELDS) return payload;
         try {
             IntakePayloads.VesselFields stored = json.treeToValue(payload, IntakePayloads.VesselFields.class);
             if (stored.vessel() == null || stored.vesselId() == null) return payload;
             Vessel vessel = vessels.findById(stored.vesselId()).orElse(null);
             if (vessel == null) return payload;
-            obj.set("diffs", json.valueToTree(VesselFieldDiff.preview(vessel, stored.vessel()).conflicts()));
+            // Asked of the service, which is also what an accept answers against: two copies of
+            // "which rows is this item still asking about" would agree until one was edited.
+            obj.set("diffs", json.valueToTree(dropSettled
+                    ? intake.shown(item, vessel, stored)
+                    : VesselFieldDiff.preview(vessel, stored.vessel()).conflicts()));
         } catch (Exception e) {
             log.warn("Intake item {}: could not recompare with the record: {}", item.getId(), e.getMessage());
+        }
+        return payload;
+    }
+
+    /**
+     * A waiting company question, compared again against the firm as it stands.
+     *
+     * <p>The same argument the vessel rows make, and it bites harder here: these items are the
+     * slowest in the queue to be answered and the likeliest to be answered <em>elsewhere</em> —
+     * somebody adds the address on the People tab because they needed it that morning, and the
+     * item is still asking a week later. Re-reading the comparison means what the drawer offers
+     * is what is genuinely missing now, and an item with nothing left in it says so instead of
+     * proposing writes that would change nothing.
+     *
+     * <p>Only the response changes; the stored payload is left as it was raised.
+     */
+    private JsonNode refreshedCompany(IntakeItem item,
+                                      com.fasterxml.jackson.databind.node.ObjectNode payload) {
+        if (item.getCompanyId() == null) return payload;
+        try {
+            IntakePayloads.CompanyDetails stored =
+                    json.treeToValue(payload, IntakePayloads.CompanyDetails.class);
+            if (stored.draft() == null) return payload;
+            com.chartering.dto.IntakePasteCompanyRequest req =
+                    new com.chartering.dto.IntakePasteCompanyRequest();
+            req.setCompanyId(item.getCompanyId());
+            req.setCompany(stored.draft().company());
+            req.setPeople(stored.draft().people().stream()
+                    .map(p -> new com.chartering.dto.IntakePasteCompanyRequest.PersonChange(
+                            p.fullName(), p.title(), p.jobTitle(), null))
+                    .toList());
+            req.setContacts(stored.draft().contacts().stream()
+                    .map(c -> new com.chartering.dto.IntakePasteCompanyRequest.ContactChange(
+                            c.kind(), c.value(), c.label(), c.personName(), null))
+                    .toList());
+            payload.set("comparison", json.valueToTree(paste.compare(req)));
+        } catch (Exception e) {
+            log.warn("Intake item {}: could not recompare with the company: {}",
+                    item.getId(), e.getMessage());
         }
         return payload;
     }
@@ -398,6 +485,16 @@ public class IntakeQueryService {
                 reasons.forEach(r -> parts.add(r.asText()));
                 yield parts.isEmpty() ? "Looks like a cargo already in hand."
                         : String.join("; ", parts);
+            }
+            case COMPANY_DETAILS -> {
+                JsonNode changes = payload.path("changes");
+                List<String> parts = new ArrayList<>();
+                changes.forEach(c -> parts.add(c.asText()));
+                // The firm this is about, named on the row: the queue is read as a list of
+                // things, and "3 fields differ" about nobody in particular is not one.
+                String firm = payload.path("companyName").asText(null);
+                String head = parts.isEmpty() ? "Signed a circular." : String.join("; ", parts);
+                yield firm == null ? head : "Against " + firm + " — " + head;
             }
         };
     }

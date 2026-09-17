@@ -1,5 +1,6 @@
 package com.chartering.dto;
 
+import com.chartering.model.SourceKind;
 import com.fasterxml.jackson.annotation.JsonInclude;
 
 import java.math.BigDecimal;
@@ -77,8 +78,19 @@ public record CargoResponse(
         Long brokerPersonId,
         String brokerPersonName,
 
-        boolean fromMail,
+        /**
+         * Typed, mailed, or read off a board. Was a {@code fromMail} boolean while there were
+         * two answers; the Cargoes tab's Source filter is what wanted the third.
+         */
+        SourceKind sourceKind,
         Long sourceMailMessageId,
+
+        /**
+         * The board post it was read off, and the board's name — so the drawer can offer the
+         * original to read exactly as it offers the original email.
+         */
+        Long sourceFeedItemId,
+        String sourceFeedName,
         OffsetDateTime receivedAt,
         String notes,
         OffsetDateTime createdAt,

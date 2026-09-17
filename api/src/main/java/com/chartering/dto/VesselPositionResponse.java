@@ -39,6 +39,15 @@ public record VesselPositionResponse(
         String reportedByPersonName,
 
         boolean fromMail,
+        /**
+         * The board post she was read off, and the board's name.
+         *
+         * <p>No source kind beside it, unlike a cargo: what a broker reads on Open Fleet is who
+         * reported her, and that is a column of its own — filled from the signature block off a
+         * board exactly as it is filled from the sender out of the mail.
+         */
+        Long sourceFeedItemId,
+        String sourceFeedName,
         Long sourceMailMessageId,
         OffsetDateTime reportedAt,
 

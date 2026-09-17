@@ -98,7 +98,8 @@ Three things bite here:
   `V19__seed_sea_routes_and_port_geography.sql`, `V20__add_intake_item_sources.sql` and
   `V21__collapse_duplicate_pending_vessel_items.sql` and
   `V22__recover_former_names_from_change_log.sql` and
-  `V23__add_cargo_max_ballast_days.sql` and `V24__add_feed.sql` exist; the next one is V25.
+  `V23__add_cargo_max_ballast_days.sql` and `V24__add_feed.sql` and
+  `V25__add_intake_decisions.sql` and `V26__add_web_intake.sql` exist; the next one is V27.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
@@ -366,6 +367,20 @@ Flyway builds one schema, not one per environment.
 Three tabs and one rule engine. A day here is cargoes arriving, tonnage positions arriving,
 and the two being put against each other; these are those three things.
 
+**Where a cargo came from is one column with three answers.** `cargoes.source_kind` is
+`MANUAL`, `MAIL` or `WEB` — typed on a form, read out of the mailbox by the sweep, or read off
+an open board by the same sweep. It replaced a `from_mail` boolean in V26 rather than gaining a
+second boolean beside it, because two columns for one fact are two columns free to disagree and
+the one nobody thought about is the one that ends up wrong. It is a fact about the *arrival* and
+not about the quality of what arrived: a cargo typed out of a phone call is `MANUAL` and is the
+best-checked row in the table, while one read off a board is `WEB` and nobody has looked at it
+yet — which is exactly what the Cargoes tab's Source filter exists to tell apart.
+`source_feed_item_id` is the post itself, so the drawer offers the original to read the way it
+offers the original email. A position carries no such column: what a broker reads on Open Fleet
+is *who reported her*, which is already a column and is filled from the signature block off a
+board exactly as it is filled from the sender out of the mail — provenance there is a link
+(`vessel_positions.source_feed_item_id`) rather than a category.
+
 **A `Cargo` is a charterer's requirement as it arrived, and almost every field is nullable.**
 A real first email says "25,000 MT Wheat +/- 10%, Chornomorsk to Spain Med, geared bulker abt
 28-35,000 DWT, laycan please advise" and stops. A record that cannot be saved until it is
@@ -613,7 +628,8 @@ The vessel record also gained `geared`, `gear_description`, `holds`, `hatches`,
 the position lists this mailbox already receives, and every one nullable, because null is
 "not on file" and false would be a claim about four thousand rows nobody has checked.
 
-**Grain and bale are stored in m³, and the unit of a figure is read off the ship's size.**
+**Grain and bale are stored in m³, and the unit of a figure is read off the ship's size,
+one figure at a time.**
 Circulars write cbm and cbft in the same week, thirty-five apart, and often write neither. A
 hold carries about 0.7–2.6 m³ per tonne of deadweight (this fleet: 3,072 of 3,221 grain figures
 between 1.0 and 1.7), which is 25–92 in cubic feet, and nothing real falls between the bands —
@@ -623,6 +639,17 @@ whatever the text wrote beside it; only where the size cannot decide is a stated
 and a figure with neither is still dropped rather than guessed. `VesselFieldDiff` settles the
 unit before comparing — the email's deadweight, else the vessel's own — so the sweep, the review
 queue and the paste read one rule.
+
+The two figures used to share one unit, judged on grain and applied to bale, on the reasoning
+that a list quotes a ship's holds in one unit throughout. One broker here disproves it: JELENA's
+grain arrives in cubic metres (8,267 against 5,000 DWCC) and her bale in cubic feet (291,000) in
+the same paragraph, so the pair settled as cbm and her bale read as 291,000 m³ — fifty times what
+a 5,700-tonner holds, put to a person as a disagreement to arbitrate every morning for a week.
+Each figure is asked about its own size first; what the old rule bought is the fallback rather
+than the rule, so a figure its own size cannot place still takes the other capacity's answer,
+and the stated label only after that. Where the size genuinely cannot decide, the review row
+carries an **m³/cbft switch** that reinterprets the figure and drops the converted value into
+the correction box — the manual override for the case the arithmetic cannot settle.
 
 The storage unit stayed m³ on purpose. Match's cubic check, the parser and the columns'
 names all read m³, and converting every figure would bury the handful of real corrections in
@@ -660,6 +687,31 @@ The other half of the Analysis tab, and what the corpus was collected for. A mod
 incoming email and the app files what it found — positions onto Open Fleet, cargoes onto
 Cargoes — so Match has both sides to work with without anybody typing a circular in.
 
+**Mail is not the only door.** ship.gr's Open Cargoes and Open Ships boards are circulars the
+same firms paste by hand — "25,000 MT +/-10% MOLCO Wheat, St Petersburg / Durres", signed with
+a full style — so they are read by the same model on the same corpus and land in the same
+places. The Feed tab already fetched those pages to summarise them, so a source is *marked*
+rather than duplicated (`feed_sources.into_intake`) and the Intake tab's Sources card lists the
+marked ones. Everything downstream works on an `Arrival`: a message or a post, with the four
+questions the rest of the code asks of one — who told us, when, what to file it against, what to
+call the change set. What differs is only where "who told us" comes from. Out of the mail it is
+the envelope, which the sync already matched against the contacts table and which beats any
+reading of the prose below it; off a board there is no envelope, so it is the signature block,
+matched the way the paste screen matches one, and null where nothing on file carries identity
+evidence for the firm. A null reporter is honest rather than broken — the position is still
+worth filing, and it is the case the `COMPANY_DETAILS` question raised beside it exists to
+close.
+
+`parsed_emails` grew a nullable `feed_item_id` beside its now-nullable `mail_message_id`, with a
+check that exactly one is set. A post needs everything a message needs and for the same reasons:
+the row is what stops the sweep reading it again, it is what every review item hangs off, and
+`raw_json` is the only thing that can settle whether the model read it wrong or we filed its
+answer wrong. A parallel table would have had to repeat all three and then fork the queue, the
+log, and `intake_items.parsed_email_id` behind them. **The sweep takes posts first and lets mail
+fill the rest of the batch** — a board adds a dozen entries a day against a mailbox that can hold
+a backlog of thousands, and the other order would starve the boards for as long as the backlog
+lasted.
+
 **The model is not in this application and not in this repository.** It is an HTTP endpoint:
 the sibling `chartering-ml` project serving a finetuned Qwen3-4B through llama.cpp behind a
 JSON schema (`make serve-docker`, port 8090). `PARSER_ENABLED` is the switch, true in compose
@@ -690,6 +742,21 @@ So three things stop and become `intake_items`:
   is within 5% or whose name starts the same, each carrying its figures, so linking is a click
   rather than a search. Accepting creates her; linking to an existing hull also files the name
   the email used as an ex-name, which is what stops the next circular asking again.
+  **Where an ex-name cannot carry it, `intake_vessel_aliases` does.** Two hulls on this desk
+  are called PHANTOM and neither has an IMO, so the name tier finds two rows and treats that
+  as no match — correctly, since picking one would file an owner's position on another
+  owner's ship. Answering it could record nothing: the name the email used is the one she
+  already carries, so there was no former name to file, and filing it anyway would have said
+  something false about the other PHANTOM too. The reviewer pointed the item at the right
+  hull on three separate mornings and the fourth asked again. An alias is deliberately **not**
+  a former name and must not be folded into that table: a former name is a fact about the
+  *ship* and true for everyone, while this is a fact about one correspondent's vocabulary —
+  which is exactly what can settle a name two hulls share, ambiguous in the fleet and
+  unambiguous in one broker's list. It is written by linking, by creating her, and by "not
+  this ship — create her", and it is asked **last**, only where the exact tiers found nothing
+  or found too much, so a broker's habit can never overrule a hull's own name. One hull per
+  firm per name, replaced rather than added to, because an owner sells a ship and takes the
+  name to the next one.
 - **`VESSEL_FIELDS`** — she is on file and the email disagrees. One item per vessel per email,
   accepted whole or per field. Gap fills are *not* queued: an empty column is written straight
   away, on the importer's rule that a matched record is never overwritten, only gap-filled.
@@ -712,6 +779,44 @@ So three things stop and become `intake_items`:
   strings genuinely differ — because the mistake was treating it as two questions.
   Only *pending* items merge: an answered question is history, and an email disagreeing
   afterwards is a new question about a record that has since been decided.
+  **An answer is remembered, and until it was the queue asked the same question daily.**
+  Merging only covers arrivals that reach a question still waiting; once it is answered the
+  item closes, and the next morning's copy of the same list raises the same disagreement
+  again. ANGORA asked about JELENA's bale four days running. So an answer that leaves the
+  email as wrong tomorrow as it is today writes `intake_field_decisions` — a row left
+  unticked (`KEPT`) or one the reviewer overrode (`CORRECTED`) — and a later reading of that
+  value from that firm is dropped before an item is raised. **Accepting writes no row**: the
+  record now holds the figure, so tomorrow's list agrees and there is nothing to raise.
+  Scoped to the correspondent, which is the judgement in it — that one broker is wrong about
+  her bale says nothing about the next one, and a second firm carrying the same figure is a
+  second opinion nobody here has weighed. The value is stored as it was *compared* (a
+  capacity already in m³, no unit on it) and matched back through the same half-percent
+  tolerance, so a broker who re-rounds on Wednesday is still reporting Tuesday's figure.
+  **A third answer, beside the record and the email: correct the row.** A list is regularly
+  wrong in a way that does not make the record right, and answering that used to mean
+  discarding the item and then going to edit the hull — the half that gets forgotten. The
+  typed value is read into the field's own type (a value that cannot be one is refused by
+  name, never skipped), written through the same writer an accepted value uses, and recorded
+  as a decision so the email's own figure stops coming back. The drawer drops settled rows on
+  the **detail call only** — it costs a query per item, and the list row prints one line.
+- **`COMPANY_DETAILS`** — the firm that signed it, against the firm on file. Every circular
+  ends in a full style, and it is the one part of the mail that is *about the sender* rather
+  than about the market; the contacts database goes stale in exactly that place while the market
+  keeps posting its current details through the door. Raised from mail as well as from a board,
+  because the same document goes stale the same way through either door. **Silence is the normal
+  answer and it has to be**, or a signature arriving with every list would bury the other three
+  kinds inside a week. Three things keep it quiet: a firm whose record already holds everything
+  the block says raises nothing (which, after the first answer, is every regular correspondent
+  for ever); **one pending item per firm**, on `intake_items.company_id`, or on the name as
+  signed for a firm not on file yet; and **a discarded reading stays discarded** — the payload
+  carries a fingerprint of what the block actually said, so only a signature that has *moved*
+  comes back. Our own outgoing mail is skipped on `mail.ownAddresses`, the same list the cargo
+  sources screen filters on: the sweep reads the Sent folder, and a queue asking whether to
+  create the firm you work for is a queue with an obvious bug in it. Accepting is the paste
+  modal's own card (`CompanyStyleCard`) posting to `POST /intake/items/{id}/company`, which
+  delegates to `IntakePasteService.acceptCompany` — the same service, so a signature is allowed
+  to write exactly the same things whichever screen reviewed it: only what was ticked, nothing
+  flagged main or `circ`, notes appended rather than replaced.
 - **`CARGO_MERGE`** — a cargo that looks like one in hand. Never merged silently: two cargoes
   cannot be un-merged. The key is same commodity + the load point actually agreeing +
   quantity within 20% + laycans overlapping, where **an absent field abstains rather than
@@ -872,7 +977,8 @@ arrives, one class is written, one setting changes.
   `DWT 0 → 6,977 · Web lookup (vesselfinder) IMO 9014561 — <url>`. Folding them together would
   save a click and lose the only answer to "where did this figure come from".
 
-Nothing in `parsed_emails`, `intake_items` or `cargo_sources` is audited — they are machine
+Nothing in `parsed_emails`, `intake_items`, `intake_field_decisions`,
+`intake_vessel_aliases` or `cargo_sources` is audited — they are machine
 writes and each is already a record of its own event. What a person *decides* is, because
 accepting writes to `Vessel` or `Cargo`, with the change set named so a merge reads as one
 event.
@@ -893,6 +999,18 @@ Hellenic Shipping News is not one because it answers 403 to anything but a brows
 robots.txt says `ai-train=no, use=reference`: the reader names itself (`FEED_USER_AGENT`) and a
 source that refuses that is dropped, not worked around.
 
+- **A source can be read twice over, and is fetched once.** `feed_sources.into_intake` marks a
+  board whose posts the *parser* reads as circulars — ship.gr's two pages are exactly that, and
+  a trade-press feed is not, since running the extraction model over a news article spends GPU
+  to produce nothing. It is separate from `enabled`, which is whether the page is fetched at
+  all. One fetch, one stored copy of each post, two readers of it: a second source at the same
+  address would read somebody else's server twice for the same bytes. It also means the fetch
+  timer runs when `FEED_ANALYSIS_ENABLED` is off but `PARSER_ENABLED` is on and a source is
+  marked — otherwise the Intake queue would be permanently empty with nothing on screen saying
+  why. Both switches are false on the hosted instance, so the condition is an or of two falses
+  there. Deleting a source that still has unanswered Intake questions is refused, because the
+  delete cascades through its posts to the parse records and the items behind them; disabling
+  is the reversible way to stop a board.
 - **The tab is on every deployment; only the analysis is switched.** Sources, topics, the prompts
   and summaries are rows in the shared database, so the hosted instance reads and edits them.
   `FEED_ANALYSIS_ENABLED` covers fetching, summarising and `detect-context` — pinned false in

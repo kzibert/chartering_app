@@ -27,6 +27,7 @@ public class FeedSourceService {
 
     private final FeedSourceRepository sources;
     private final FeedItemRepository items;
+    private final com.chartering.repository.IntakeItemRepository intakeItems;
     private final WebsiteReader websites;
     private final DtoMapper mapper;
 
@@ -60,9 +61,27 @@ public class FeedSourceService {
         return mapper.toFeedSourceResponse(s, count);
     }
 
+    /**
+     * Remove a source, and everything it collected with it.
+     *
+     * <p><b>Refused while it still has questions waiting.</b> Deleting a source cascades to its
+     * posts, and from there to the parse records and the review items raised off them — so a
+     * board removed on a whim would take a queue of unanswered questions about ships and firms
+     * with it, silently. That is a far worse loss than the posts themselves, which are copies
+     * of a page anyone can reload. Disabling is the reversible way to stop a source, and it is
+     * what the message points at.
+     */
     @Transactional
     public void delete(Long id) {
         if (!sources.existsById(id)) throw new ResourceNotFoundException("Feed source", id);
+        long pending = intakeItems.countPendingFromSource(id);
+        if (pending > 0) {
+            throw new IllegalArgumentException(
+                    "This source still has " + pending + " unanswered question(s) in the Intake "
+                            + "queue, and deleting it would take them with it. Answer them, or "
+                            + "switch the source off instead — that keeps everything it has "
+                            + "collected.");
+        }
         sources.deleteById(id);
     }
 
@@ -87,6 +106,7 @@ public class FeedSourceService {
         s.setParserKey(parserKey);
         s.setName(req.getName() == null || req.getName().isBlank() ? defaultName(req.getKind(), url) : req.getName().strip());
         if (req.getEnabled() != null) s.setEnabled(req.getEnabled());
+        if (req.getIntoIntake() != null) s.setIntoIntake(req.getIntoIntake());
     }
 
     private static String httpUrl(String raw) {

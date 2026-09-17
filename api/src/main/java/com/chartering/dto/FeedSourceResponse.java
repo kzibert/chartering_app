@@ -13,6 +13,11 @@ public record FeedSourceResponse(
         String url,
         String parserKey,
         boolean enabled,
+        /**
+         * Whether the parser reads this source's posts as circulars. Separate from
+         * {@code enabled}: that is whether the page is fetched, this is what is done with it.
+         */
+        boolean intoIntake,
         LocalDateTime lastFetchedAt,
         /** Why the last fetch failed; absent once one succeeds. */
         String lastError,

@@ -4,6 +4,7 @@ import com.chartering.dto.ApplyLookupRequest;
 import com.chartering.dto.CargoSourceResponse;
 import com.chartering.dto.LinkSenderRequest;
 import com.chartering.dto.IgnoreRequest;
+import com.chartering.dto.FeedSourceResponse;
 import com.chartering.dto.IntakeItemResponse;
 import com.chartering.dto.IntakePasteCompanyComparison;
 import com.chartering.dto.IntakePasteCompanyRequest;
@@ -74,6 +75,7 @@ public class IntakeController {
     private final ParserSettings settings;
     private final VesselLookupService lookupService;
     private final IntakePasteService paste;
+    private final com.chartering.service.feed.FeedFetchService fetches;
 
     // ------------------------------------------------------------------ pasted text
 
@@ -193,15 +195,64 @@ public class IntakeController {
                     + "and withdraws the reading this email put on the other one — and it writes too, which is why it is not called a "
                     + "rejection. DISCARD writes nothing.\n\n"
                     + "On a VESSEL_FIELDS item, `fields` names which differences to accept; "
-                    + "leaving it out accepts all of them.")
+                    + "leaving it out accepts all of them, and `corrections` carries a value "
+                    + "typed by hand for any of them, which is written instead of the email's.\n\n"
+                    + "What is *not* accepted is remembered: a row left unticked, and a row "
+                    + "corrected, record that value as declined from the firms that sent it, so "
+                    + "tomorrow's copy of the same list does not ask again.")
     public ResponseEntity<IntakeItemResponse> resolve(@PathVariable Long id,
                                                       @Valid @RequestBody IntakeResolveRequest req) {
-        intake.resolve(id, req.getAction(), req.getFields(), req.getVesselId(), req.getNote(),
-                currentUser());
+        intake.resolve(id, req.getAction(), req.getFields(), req.getCorrections(),
+                req.getVesselId(), req.getNote(), currentUser());
         // Re-read rather than mapping what the write returned: accepting can change the row
         // it is about, and the screen should show what is now on file rather than what the
         // service was holding half way through.
         return ResponseEntity.ok(queries.get(id));
+    }
+
+    @PostMapping("/items/{id}/company")
+    @Operation(summary = "Answer a company question with what was ticked",
+            description = "The accept half of a COMPANY_DETAILS item. It takes the same body "
+                    + "the paste review sends and goes through the same service, so a "
+                    + "signature read off a board and the same signature pasted into the "
+                    + "modal are allowed to write exactly the same things: a company on file "
+                    + "changes only in the fields named in companyChanges, a person only "
+                    + "where existingPersonId says which, a contact only where "
+                    + "existingContactId does. Everything else adds, and nothing arrives "
+                    + "flagged main or for circulation.\n\n"
+                    + "Refusing one goes through /resolve with DISCARD, which also stops the "
+                    + "same signature being raised again.")
+    public ResponseEntity<IntakePasteCompanyResponse> acceptCompany(
+            @PathVariable Long id,
+            @Valid @RequestBody IntakePasteCompanyRequest req) {
+        return ResponseEntity.ok(intake.acceptCompanyDetails(id, req, currentUser()));
+    }
+
+    // ------------------------------------------------------------------ web sources
+
+    @GetMapping("/sources")
+    @Operation(summary = "The open boards read into this queue",
+            description = "ship.gr's Open Cargoes and Open Ships pages are circulars the same "
+                    + "firms paste by hand, so they are read by the same model as the "
+                    + "mailbox. They are ordinary feed sources with one flag set: the Feed "
+                    + "tab fetches them once and both features read the same stored copy, "
+                    + "rather than two fetchers asking somebody else's server for the same "
+                    + "bytes.")
+    public ResponseEntity<java.util.List<FeedSourceResponse>> sources() {
+        return ResponseEntity.ok(queries.sources());
+    }
+
+    @PostMapping("/sources/fetch")
+    @Operation(summary = "Fetch the boards now",
+            description = "Reads the pages and stores what is new. It does not parse: the "
+                    + "sweep does that, and the two are apart for the reason the mail sync "
+                    + "and the sweep are — one is seconds of somebody else's web server, the "
+                    + "other is minutes of a GPU. Returns at once; the tab watches the "
+                    + "source list for what arrived.")
+    public ResponseEntity<Void> fetchSources(
+            @RequestParam(required = false) Long sourceId) {
+        fetches.requestIntakeFetch(sourceId);
+        return ResponseEntity.accepted().build();
     }
 
     // ------------------------------------------------------------- the outside source
@@ -299,18 +350,21 @@ public class IntakeController {
         return ResponseEntity.ok(queries.parsedDetail(id));
     }
 
-    @PostMapping("/parsed/{mailMessageId}/reopen")
-    @Operation(summary = "Queue a message to be read again",
+    @PostMapping("/parsed/{id}/reopen")
+    @Operation(summary = "Queue an arrival to be read again",
             description = "Resets the attempt count on a failed row. A message that hit the "
                     + "retry ceiling while the workstation was switched off is not a message "
                     + "the model cannot read, and saying so should not mean editing the "
-                    + "database by hand.")
-    public ResponseEntity<Void> reopen(@PathVariable Long mailMessageId) {
-        runner.reopen(mailMessageId);
+                    + "database by hand.\n\n"
+                    + "Takes the id of the parse row rather than of the message, which is "
+                    + "what lets it serve a board post as well — the Log lists these rows, so "
+                    + "whatever is on screen has one.")
+    public ResponseEntity<Void> reopen(@PathVariable Long id) {
+        runner.reopen(id);
         return ResponseEntity.noContent().build();
     }
 
-    @PostMapping("/parsed/{mailMessageId}/ignore")
+    @PostMapping("/parsed/{id}/ignore")
     @Operation(summary = "Take a message out of the parser's hands for good",
             description = "The answer to a failure a person has looked at and does not want "
                     + "retried: the email that defeats the model every time, the forwarded "
@@ -318,10 +372,10 @@ public class IntakeController {
                     + "deleted - a row is what stops tomorrow's sweep finding the message "
                     + "again and spending another model call on it. Reversible: reopen puts "
                     + "it back in the queue.")
-    public ResponseEntity<Void> ignoreParsed(@PathVariable Long mailMessageId,
+    public ResponseEntity<Void> ignoreParsed(@PathVariable Long id,
                                              @org.springframework.web.bind.annotation.RequestBody(required = false)
                                              @Valid IgnoreRequest req) {
-        runner.ignore(mailMessageId, req == null ? null : req.getNote());
+        runner.ignore(id, req == null ? null : req.getNote());
         return ResponseEntity.noContent().build();
     }
 

@@ -28,7 +28,16 @@ export default function SourcesTab({ analysis }: { analysis: boolean }) {
   const setEnabled = (s: FeedSource, enabled: boolean) =>
     updateSource.mutate({
       id: s.id,
-      body: { name: s.name, kind: s.kind, url: s.url, parserKey: s.parserKey, enabled },
+      body: {
+        name: s.name,
+        kind: s.kind,
+        url: s.url,
+        parserKey: s.parserKey,
+        enabled,
+        // Sent as it stands rather than left out: the update applies what it is given, and a
+        // toggle of one flag must not quietly clear the other.
+        intoIntake: s.intoIntake,
+      },
     });
 
   const lastFetch = (s: FeedSource) =>
@@ -91,6 +100,11 @@ export default function SourcesTab({ analysis }: { analysis: boolean }) {
             </a>
             {s.parserKey ? ` · ${parserLabel(s.parserKey)}` : ''}
           </Typography.Text>
+          {s.intoIntake && (
+            <Tooltip title="Its posts go through the email parser as circulars: cargoes onto the Cargoes tab, positions onto Open fleet, and a question in the Intake queue where the firm that signed is not on file.">
+              <Tag color="cyan" style={{ marginTop: 2 }}>read into Intake</Tag>
+            </Tooltip>
+          )}
         </Space>
       ),
     },
@@ -123,6 +137,7 @@ export default function SourcesTab({ analysis }: { analysis: boolean }) {
           subtitle: (s) => s.url,
           fields: (s) => [
             { label: 'On', value: <Switch size="small" checked={s.enabled} onChange={(v) => setEnabled(s, v)} /> },
+            s.intoIntake && { label: 'Read into Intake', value: 'yes' },
             { label: 'Items', value: s.itemCount },
             { label: 'Last fetch', value: lastFetch(s) },
           ],
@@ -160,7 +175,15 @@ function SourceModal({
   const parserKey = Form.useWatch('parserKey', form);
 
   useEffect(() => {
-    if (source === 'new') form.setFieldsValue({ kind: 'TELEGRAM', url: '', name: '', parserKey: undefined, enabled: true });
+    if (source === 'new')
+      form.setFieldsValue({
+        kind: 'TELEGRAM',
+        url: '',
+        name: '',
+        parserKey: undefined,
+        enabled: true,
+        intoIntake: false,
+      });
     else if (source) form.setFieldsValue({ ...source });
   }, [source, form]);
 
@@ -212,6 +235,19 @@ function SourceModal({
           <Input maxLength={200} />
         </Form.Item>
         <Form.Item name="enabled" label="Fetch on the timer" valuePropName="checked">
+          <Switch />
+        </Form.Item>
+        <Form.Item
+          name="intoIntake"
+          label="Read into Intake"
+          valuePropName="checked"
+          extra={
+            "Send its posts through the email parser as circulars — cargoes, open positions " +
+            "and the firm that signed them. Worth it for a board of pasted circulars like " +
+            "ship.gr's; not for a news feed, where the extraction model spends GPU to produce " +
+            "nothing. Summarising is separate and unaffected."
+          }
+        >
           <Switch />
         </Form.Item>
       </Form>

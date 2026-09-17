@@ -18,6 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -45,6 +46,8 @@ class IntakeServiceTest {
     private VesselPositionRepository positions;
     private IntakeResolver resolver;
     private com.chartering.repository.IntakeItemSourceRepository itemSources;
+    private CompanyStyleIntake styles;
+    private com.chartering.service.SettingsService settingsService;
     private com.chartering.service.lookup.VesselLookupService lookupService;
     private IntakeService service;
 
@@ -53,6 +56,8 @@ class IntakeServiceTest {
     private MailMessage message;
     private ParsedEmail parsed;
     private List<VesselPosition> onFile;
+    private com.chartering.repository.IntakeFieldDecisionRepository decisions;
+    private com.chartering.repository.IntakeVesselAliasRepository aliases;
 
     @BeforeEach
     void setUp() {
@@ -65,8 +70,21 @@ class IntakeServiceTest {
         resolver = mock(IntakeResolver.class);
         itemSources = mock(com.chartering.repository.IntakeItemSourceRepository.class);
         lookupService = mock(com.chartering.service.lookup.VesselLookupService.class);
+        decisions = mock(com.chartering.repository.IntakeFieldDecisionRepository.class);
+        aliases = mock(com.chartering.repository.IntakeVesselAliasRepository.class);
+        when(decisions.forVessel(any())).thenReturn(List.of());
+        when(aliases.find(any(), any())).thenReturn(java.util.Optional.empty());
+        styles = mock(CompanyStyleIntake.class);
+        settingsService = mock(com.chartering.service.SettingsService.class);
         service = new IntakeService(items, cargoSources, cargoes, vessels, exNames, itemSources,
-                positions, resolver, lookupService,
+                decisions, aliases, positions, resolver,
+                styles,
+                new com.chartering.config.ParserProperties(),
+                mock(com.chartering.repository.CompanyRepository.class),
+                mock(IntakePasteService.class),
+                mock(com.chartering.repository.PersonRepository.class),
+                settingsService,
+                lookupService,
                 mock(com.chartering.service.VesselService.class), new ObjectMapper());
         // The item is saved and then a source row is attached to it, so the mock has to hand
         // the entity back rather than null.
@@ -98,6 +116,89 @@ class IntakeServiceTest {
         when(resolver.resolvePort(any())).thenReturn(null);
         when(resolver.resolveArea(any(), any(), any())).thenReturn(null);
         when(resolver.suggest(any())).thenReturn(List.of());
+        when(items.pendingForCompany(anyLong())).thenReturn(List.of());
+        when(items.pendingNewCompany(any())).thenReturn(List.of());
+        when(settingsService.ownAddresses()).thenReturn(java.util.Set.of());
+    }
+
+    // ---------------------------------------------------------- the firm that signed it
+
+    /** A question about a firm on file, as CompanyStyleIntake would hand one over. */
+    private void signatureRaises(Long companyId, String name, String hash) {
+        com.chartering.dto.CompanyRequest company = new com.chartering.dto.CompanyRequest();
+        company.setName(name);
+        IntakePayloads.CompanyDetails payload = new IntakePayloads.CompanyDetails(
+                new com.chartering.dto.IntakePasteDraftResponse.CompanyDraft(
+                        company, null, List.of(), List.of(), List.of()),
+                companyId, companyId == null ? null : name, "email",
+                List.of("1 address not on file"), hash);
+        when(styles.question(any())).thenReturn(java.util.Optional.of(payload));
+    }
+
+    private static Extraction emptyEmail() {
+        return new Extraction("other", List.of(), List.of(), null, null);
+    }
+
+    @Test
+    void raisesTheFirmThatSignedWhenTheRecordDisagrees() {
+        signatureRaises(3L, "Interscan", "hash-a");
+
+        IntakeService.ApplyOutcome outcome = service.apply(parsed, emptyEmail());
+
+        assertThat(outcome.itemsRaised()).isEqualTo(1);
+        ArgumentCaptor<IntakeItem> saved = ArgumentCaptor.forClass(IntakeItem.class);
+        verify(items, atLeastOnce()).save(saved.capture());
+        IntakeItem item = saved.getAllValues().get(0);
+        assertThat(item.getKind()).isEqualTo(IntakeItemKind.COMPANY_DETAILS);
+        assertThat(item.getSubjectLabel()).isEqualTo("Interscan");
+        assertThat(item.getCompanyId()).isEqualTo(3L);
+    }
+
+    @Test
+    void doesNotAskTwiceAboutOneFirm() {
+        // A broker signs every list he sends, not only when something has changed. Without
+        // this the queue would carry a row per circular per firm and would stop being read -
+        // the failure the vessel rule already prevents, at ten times the rate.
+        signatureRaises(3L, "Interscan", "hash-a");
+        IntakeItem waiting = new IntakeItem();
+        waiting.setId(77L);
+        waiting.setKind(IntakeItemKind.COMPANY_DETAILS);
+        waiting.setCompanyId(3L);
+        waiting.setPayload("{}");
+        when(items.pendingForCompany(3L)).thenReturn(List.of(waiting));
+
+        IntakeService.ApplyOutcome outcome = service.apply(parsed, emptyEmail());
+
+        // Not a new question, so the queue is no longer than it was - but the newer reading
+        // wins the payload, and this arrival is recorded against the item that was waiting.
+        assertThat(outcome.itemsRaised()).isZero();
+        assertThat(waiting.getPayload()).contains("Interscan");
+        verify(itemSources).save(any());
+    }
+
+    @Test
+    void doesNotAskAgainAboutASignatureAlreadyTurnedDown() {
+        // "Do not file these details" would be worthless if the same broker's next list undid
+        // it. Only a signature that has actually moved comes back.
+        signatureRaises(3L, "Interscan", "hash-a");
+        when(items.countRejectedWithStyle("hash-a")).thenReturn(1L);
+
+        assertThat(service.apply(parsed, emptyEmail()).itemsRaised()).isZero();
+        verify(items, never()).save(any(IntakeItem.class));
+    }
+
+    @Test
+    void neverProposesTheDesksOwnSignature() {
+        // The sweep reads the Sent folder as well as the inbox, so our own replies arrive
+        // carrying our own block. A queue asking whether to create the firm you work for is a
+        // queue with an obvious bug in it.
+        signatureRaises(null, "Our Own Desk", "hash-b");
+        message.setFromAddress("chartering@ourdesk.example");
+        when(settingsService.ownAddresses())
+                .thenReturn(java.util.Set.of("chartering@ourdesk.example"));
+
+        assertThat(service.apply(parsed, emptyEmail()).itemsRaised()).isZero();
+        verify(items, never()).save(any(IntakeItem.class));
     }
 
     private static Extraction.ExtractedVessel opening(String name, String openText,
@@ -130,7 +231,7 @@ class IntakeServiceTest {
 
     @Test
     void filesAPositionForAHullAlreadyOnFileWithoutAsking() {
-        when(resolver.resolveVessel(any()))
+        when(resolver.resolveVessel(any(), any()))
                 .thenReturn(new IntakeResolver.ResolvedVessel(pacificDawn, IntakeResolver.VesselMatch.NAME));
 
         IntakeService.ApplyOutcome outcome = service.apply(parsed,
@@ -152,7 +253,7 @@ class IntakeServiceTest {
 
     @Test
     void treatsAnIdenticalRepeatFromTheSameBrokerAsAReConfirmation() {
-        when(resolver.resolveVessel(any()))
+        when(resolver.resolveVessel(any(), any()))
                 .thenReturn(new IntakeResolver.ResolvedVessel(pacificDawn, IntakeResolver.VesselMatch.NAME));
         // Told on the 3rd; the email under test was sent on the 4th.
         VesselPosition yesterday = live(interscan, LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 3),
@@ -173,7 +274,7 @@ class IntakeServiceTest {
 
     @Test
     void neverDragsAFresherReadingBackwardsWithAnOlderEmail() {
-        when(resolver.resolveVessel(any()))
+        when(resolver.resolveVessel(any(), any()))
                 .thenReturn(new IntakeResolver.ResolvedVessel(pacificDawn, IntakeResolver.VesselMatch.NAME));
         // Already told on the 6th; the email being read was sent on the 4th, which happens
         // whenever a backlog is swept or an old thread is re-synced.
@@ -192,7 +293,7 @@ class IntakeServiceTest {
 
     @Test
     void recordsANewRowAndSupersedesTheSameBrokersPreviousOneWhenTheDatesMove() {
-        when(resolver.resolveVessel(any()))
+        when(resolver.resolveVessel(any(), any()))
                 .thenReturn(new IntakeResolver.ResolvedVessel(pacificDawn, IntakeResolver.VesselMatch.NAME));
         VesselPosition yesterday = live(interscan, LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 3),
                 "1/3 SEPT", OffsetDateTime.now().minusDays(1));
@@ -207,7 +308,7 @@ class IntakeServiceTest {
 
     @Test
     void leavesAnotherBrokersDisagreeingPositionAlone() {
-        when(resolver.resolveVessel(any()))
+        when(resolver.resolveVessel(any(), any()))
                 .thenReturn(new IntakeResolver.ResolvedVessel(pacificDawn, IntakeResolver.VesselMatch.NAME));
         Company gn = new Company();
         gn.setId(88L);
@@ -226,7 +327,7 @@ class IntakeServiceTest {
 
     @Test
     void raisesAnItemForAHullNothingOnFileAnswersTo() {
-        when(resolver.resolveVessel(any()))
+        when(resolver.resolveVessel(any(), any()))
                 .thenReturn(new IntakeResolver.ResolvedVessel(null, IntakeResolver.VesselMatch.NONE));
 
         IntakeService.ApplyOutcome outcome = service.apply(parsed,
@@ -247,7 +348,7 @@ class IntakeServiceTest {
     @Test
     void filesThePositionAndRaisesTheDisagreementSeparately() {
         pacificDawn.setDeadweightTonnage(new BigDecimal("28500"));
-        when(resolver.resolveVessel(any()))
+        when(resolver.resolveVessel(any(), any()))
                 .thenReturn(new IntakeResolver.ResolvedVessel(pacificDawn, IntakeResolver.VesselMatch.NAME));
 
         Extraction.ExtractedVessel v = new Extraction.ExtractedVessel(
@@ -268,10 +369,76 @@ class IntakeServiceTest {
         assertThat(raised.getValue().getVesselId()).isEqualTo(42L);
     }
 
+    /**
+     * The JELENA repeat: a figure this firm has already had turned down is not a question.
+     *
+     * <p>ANGORA re-sends the same list every morning. The reviewer answered its reading of her
+     * bale once; nothing recorded that, so the identical email raised the identical item four
+     * days running. The decision is what makes the fifth morning quiet.
+     */
+    @Test
+    void doesNotRaiseAValueThisSenderHasAlreadyHadTurnedDown() {
+        pacificDawn.setDeadweightTonnage(new BigDecimal("28500"));
+        when(resolver.resolveVessel(any(), any()))
+                .thenReturn(new IntakeResolver.ResolvedVessel(pacificDawn, IntakeResolver.VesselMatch.NAME));
+        when(decisions.forVessel(42L)).thenReturn(List.of(
+                settled(interscan, "deadweightTonnage", "32000")));
+
+        IntakeService.ApplyOutcome outcome = service.apply(parsed, positionEmail(disagreeing()));
+
+        // The position still lands - it is an add, and it is the half the desk is waiting for.
+        assertThat(outcome.positionsApplied()).isEqualTo(1);
+        assertThat(outcome.itemsRaised()).isZero();
+        verify(items, never()).save(any());
+    }
+
+    /**
+     * A second firm saying the same thing is a second opinion, and it is still asked.
+     *
+     * <p>That one broker was wrong about her deadweight says nothing about the next one, and
+     * suppressing the second would hide exactly the corroboration that would settle the
+     * question the other way.
+     */
+    @Test
+    void stillAsksWhenADifferentFirmReportsTheSameFigure() {
+        pacificDawn.setDeadweightTonnage(new BigDecimal("28500"));
+        when(resolver.resolveVessel(any(), any()))
+                .thenReturn(new IntakeResolver.ResolvedVessel(pacificDawn, IntakeResolver.VesselMatch.NAME));
+
+        Company someoneElse = new Company();
+        someoneElse.setId(999L);
+        someoneElse.setName("ANGORA");
+        when(decisions.forVessel(42L)).thenReturn(List.of(
+                settled(someoneElse, "deadweightTonnage", "32000")));
+
+        IntakeService.ApplyOutcome outcome = service.apply(parsed, positionEmail(disagreeing()));
+
+        assertThat(outcome.itemsRaised()).isEqualTo(1);
+    }
+
+    /** She disagrees about her deadweight and says where she is open. */
+    private static Extraction.ExtractedVessel disagreeing() {
+        return new Extraction.ExtractedVessel(
+                "PACIFIC DAWN", "", "", new BigDecimal("32000"), null, null, null, "",
+                null, null, "", null, "", null, null, null, null, null, "",
+                "MARMARA", "", "2026-09-01", "2026-09-03", "1/3 SEPT", "", "", "");
+    }
+
+    private static com.chartering.model.IntakeFieldDecision settled(Company who, String field,
+                                                                    String value) {
+        com.chartering.model.IntakeFieldDecision d = new com.chartering.model.IntakeFieldDecision();
+        d.setVesselId(42L);
+        d.setField(field);
+        d.setReportedByCompany(who);
+        d.setValueText(value);
+        d.setDecision(com.chartering.model.IntakeFieldDecision.KEPT);
+        return d;
+    }
+
     @Test
     void mergesASecondEmailIntoTheQuestionAlreadyWaiting() {
         pacificDawn.setDeadweightTonnage(new BigDecimal("28500"));
-        when(resolver.resolveVessel(any()))
+        when(resolver.resolveVessel(any(), any()))
                 .thenReturn(new IntakeResolver.ResolvedVessel(pacificDawn, IntakeResolver.VesselMatch.NAME));
 
         IntakeItem alreadyAsked = new IntakeItem();
@@ -315,7 +482,7 @@ class IntakeServiceTest {
     @Test
     void mergesEvenWhenTheSecondEmailWordsAFigureDifferently() {
         pacificDawn.setGearDescription("2x30T CRANES");
-        when(resolver.resolveVessel(any()))
+        when(resolver.resolveVessel(any(), any()))
                 .thenReturn(new IntakeResolver.ResolvedVessel(pacificDawn, IntakeResolver.VesselMatch.NAME));
 
         IntakeItem alreadyAsked = new IntakeItem();
@@ -455,7 +622,7 @@ class IntakeServiceTest {
                  "filled":[]}""");
         when(items.findWithEmailById(165L)).thenReturn(java.util.Optional.of(item));
 
-        service.resolve(165L, IntakeService.Action.ACCEPT, List.of("name"), null, null, "me");
+        service.resolve(165L, IntakeService.Action.ACCEPT, List.of("name"), null, null, null, "me");
 
         ArgumentCaptor<VesselExName> filed = ArgumentCaptor.forClass(VesselExName.class);
         verify(exNames).save(filed.capture());
@@ -484,7 +651,7 @@ class IntakeServiceTest {
                  "filled":[]}""");
         when(items.findWithEmailById(165L)).thenReturn(java.util.Optional.of(item));
 
-        service.resolve(165L, IntakeService.Action.ACCEPT, List.of(), null, null, "me");
+        service.resolve(165L, IntakeService.Action.ACCEPT, List.of(), null, null, null, "me");
 
         verify(exNames).save(any());
     }
@@ -513,7 +680,7 @@ class IntakeServiceTest {
                  "filled":[]}""");
         when(items.findWithEmailById(96L)).thenReturn(java.util.Optional.of(item));
 
-        service.resolve(96L, IntakeService.Action.ACCEPT, List.of("name"), null, null, "me");
+        service.resolve(96L, IntakeService.Action.ACCEPT, List.of("name"), null, null, null, "me");
 
         verify(exNames, never()).save(any());
     }

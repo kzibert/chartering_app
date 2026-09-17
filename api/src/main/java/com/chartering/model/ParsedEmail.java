@@ -11,10 +11,15 @@ import java.time.OffsetDateTime;
 /**
  * One message the parser has read — and the record that it has been read.
  *
- * <p><b>This row is the dedupe.</b> The sweep asks for synced mail with no row here, which
- * is what makes running it on a timer, running it from the button, and running it twice all
- * safe. There is no queue table and no "pending" state: a message is either read or it is
- * not, and the absence of a row is what "not" looks like.
+ * <p><b>This row is the dedupe.</b> The sweep asks for synced mail — and for posts off the
+ * boards marked to be read — with no row here, which is what makes running it on a timer,
+ * running it from the button, and running it twice all safe. There is no queue table and no
+ * "pending" state: an arrival is either read or it is not, and the absence of a row is what
+ * "not" looks like.
+ *
+ * <p><b>"Email" is now the older half of what this holds.</b> The table keeps its name: a
+ * board post is a circular somebody pasted, the same text by the same firms that the mailbox
+ * carries, and renaming a table in use buys nothing a sentence here does not.
  *
  * <p><b>{@link #rawJson} is kept even though the useful half has already been applied.</b>
  * The positions and cargoes a parse produced are in their own tables and are what the desk
@@ -37,9 +42,29 @@ public class ParsedEmail {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "mail_message_id", nullable = false)
+    /**
+     * The synced message this was read out of — null when it was read off a board instead.
+     *
+     * <p>Exactly one of this and {@link #feedItem} is set, which a check constraint states so
+     * that a row with neither cannot be written by a mistake nobody would notice for weeks.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "mail_message_id")
     private MailMessage mailMessage;
+
+    /**
+     * The board post this was read off — null when it came out of the mailbox.
+     *
+     * <p><b>A second kind of arrival on this table rather than a table of its own.</b> A post
+     * needs everything a message needs and for the same reasons: the row is what stops the
+     * sweep reading it again, it is what every review item hangs off, and {@code rawJson} is
+     * the only thing that can settle whether the model read it wrong or we filed its answer
+     * wrong. A parallel table would have had to repeat all three and then fork the queue, the
+     * log and {@code intake_items.parsed_email_id} behind them.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "feed_item_id")
+    private FeedItem feedItem;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)

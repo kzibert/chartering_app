@@ -1,5 +1,6 @@
 package com.chartering.dto;
 
+import com.chartering.model.SourceKind;
 import com.fasterxml.jackson.annotation.JsonInclude;
 
 import java.time.OffsetDateTime;
@@ -24,6 +25,16 @@ public record CargoSourceResponse(
         String personName,
         String fromAddress,
         Long mailMessageId,
+        /**
+         * Which door it came in through, and the post where it was a board rather than the
+         * mailbox. The fields above it are filled either way — a post's title stands in for the
+         * subject, the board's name for the sender, its date line for when it arrived — so every
+         * screen that already prints an arrival prints this one without knowing the difference.
+         */
+        SourceKind sourceKind,
+        Long feedItemId,
+        String feedSourceName,
+        String feedUrl,
         String mailSubject,
         OffsetDateTime reportedAt,
         String notes) {

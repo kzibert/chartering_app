@@ -7,7 +7,9 @@ import {
   Drawer,
   Divider,
   Empty,
+  Input,
   Popconfirm,
+  Segmented,
   Space,
   Table,
   Tag,
@@ -26,8 +28,11 @@ import FromTheWeb from './FromTheWeb';
 import OriginalEmail from '../../components/OriginalEmail';
 import LinkSender from './LinkSender';
 import CreateHerModal from './CreateHerModal';
+import CompanyCard from './CompanyStyleCard';
+import { intakeApi } from '../../api/intake';
 import { ROLE_WORDS } from './capacities';
 import { kindMeta } from './labels';
+import { correctionsFrom, isCapacityField, otherReading, readAs } from './corrections';
 import type {
   FieldDiff,
   IntakeAction,
@@ -66,6 +71,9 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
   }, [item]);
 
   const [chosen, setChosen] = useState<string[]>([]);
+  // What the reviewer typed in place of the email's value, by field. Empty means "use what the
+  // email said" - the common answer, and the one that must stay a single click.
+  const [edits, setEdits] = useState<Record<string, string>>({});
   const [linkTo, setLinkTo] = useState<number>();
   const [emailOpen, setEmailOpen] = useState(false);
   // The company the sender resolved to, opened over this drawer rather than navigated to:
@@ -89,11 +97,16 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
   // screen that starts with nothing selected makes the common answer the most clicking.
   useEffect(() => {
     setChosen(diffs.map((d) => d.field));
+    // Cleared with the rows, not merged into them: the rows are recomputed against her record
+    // every time the drawer opens, and a correction held over from a figure that is no longer
+    // in dispute would be written against a row nobody is looking at.
+    setEdits({});
   }, [diffs]);
 
   useEffect(() => {
     setLinkTo(undefined);
     setVesselOpen(undefined);
+    setEdits({});
   }, [itemId]);
 
   if (!itemId) return null;
@@ -133,6 +146,10 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
           body: {
             action,
             fields: item.kind === 'VESSEL_FIELDS' ? chosen : undefined,
+            // Only what actually differs from what the email said, and only for rows being
+            // accepted: a correction on an unticked row would be a write nobody asked for.
+            corrections:
+              item.kind === 'VESSEL_FIELDS' ? correctionsFrom(diffs, chosen, edits) : undefined,
             vesselId: item.kind === 'NEW_VESSEL' ? linkTo : undefined,
           },
         },
@@ -210,10 +227,12 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
         )
       }
       extra={
-        item?.mailMessageId ? (
+        item?.mailMessageId || item?.feedItemId ? (
           <Tooltip title="What the model actually read. The only thing that settles whether a figure on this screen is right.">
             <Button size="small" icon={<MailOutlined />} onClick={() => setEmailOpen(true)}>
-              Original email
+              {item.sourceKind === 'WEB' && (item.sources?.length ?? 0) <= 1
+                ? 'Original post'
+                : 'Original email'}
               {(item.sources?.length ?? 0) > 1 ? `s (${item.sources!.length})` : ''}
             </Button>
           </Tooltip>
@@ -272,6 +291,10 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
               diffs={diffs}
               chosen={chosen}
               onChange={setChosen}
+              edits={edits}
+              onEdit={(field, value) =>
+                setEdits((held) => ({ ...held, [field]: value }))
+              }
               editable={pending}
               onOpenCompany={setCompanyId}
               onOpenVessel={() => setVesselOpen(item.payload?.vesselId)}
@@ -286,8 +309,15 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
               onOpenVessel={setVesselOpen}
               editable={pending}
             />
-          ) : (
+          ) : item.kind === 'CARGO_MERGE' ? (
             <CargoMergeBody item={item} />
+          ) : (
+            <CompanyDetailsBody
+              item={item}
+              editable={pending}
+              onDone={onClose}
+              onOpenCompany={setCompanyId}
+            />
           )}
 
           {/* Every arrival behind the item, not just the one that raised it first: the same
@@ -295,9 +325,11 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
               between two brokers is reading what each of them actually wrote. */}
           <OriginalEmail
             mailMessageId={item.mailMessageId}
+            feedItemId={item.feedItemId}
             sources={(item.sources ?? []).map((s) => ({
               mailMessageId: s.mailMessageId,
-              label: s.senderCompanyName ?? s.fromName ?? s.fromAddress,
+              feedItemId: s.feedItemId,
+              label: s.senderCompanyName ?? s.fromName ?? s.fromAddress ?? s.feedSourceName,
               when: s.receivedAt,
               current: s.current,
             }))}
@@ -380,6 +412,8 @@ function VesselFieldsBody({
   diffs,
   chosen,
   onChange,
+  edits,
+  onEdit,
   editable,
   onOpenCompany,
   onOpenVessel,
@@ -390,6 +424,8 @@ function VesselFieldsBody({
   diffs: FieldDiff[];
   chosen: string[];
   onChange: (fields: string[]) => void;
+  edits: Record<string, string>;
+  onEdit: (field: string, value: string) => void;
   editable: boolean;
   onOpenCompany: (id: number) => void;
   onOpenVessel: () => void;
@@ -464,18 +500,37 @@ function VesselFieldsBody({
             : undefined
         }
         columns={[
-          { title: 'Field', dataIndex: 'label', key: 'label', width: 150 },
+          { title: 'Field', dataIndex: 'label', key: 'label', width: 110 },
           {
             title: 'On file',
             dataIndex: 'current',
             key: 'current',
+            width: 120,
             render: (v: string) => <Typography.Text delete={false}>{v ?? '—'}</Typography.Text>,
           },
           {
             title: 'The email says',
             dataIndex: 'incoming',
             key: 'incoming',
+            width: 130,
             render: (v: string) => <Typography.Text strong>{v ?? '—'}</Typography.Text>,
+          },
+          {
+            title: (
+              <Tooltip title="Neither side right? Type what the record should say, and that is what is written.">
+                <span>Write instead</span>
+              </Tooltip>
+            ),
+            key: 'correction',
+            render: (_: unknown, row: FieldDiff) =>
+              editable ? (
+                <Correction
+                  row={row}
+                  value={edits[row.field] ?? ''}
+                  reading={item.payload?.vessel}
+                  onChange={(next) => onEdit(row.field, next)}
+                />
+              ) : null,
           },
         ]}
       />
@@ -498,6 +553,77 @@ function VesselFieldsBody({
         </>
       )}
     </>
+  );
+}
+
+/**
+ * One row's third answer, and the unit button for the two rows that need one.
+ *
+ * <b>The box.</b> Empty means "write what the email said", which is the common answer and stays
+ * a single click. Type in it and that is what goes into the column instead - the value is read
+ * into the field's own type on the server, so a draft typed as "7.9" lands as a number and
+ * "abt 7.9" comes back as a sentence rather than being silently skipped.
+ *
+ * <b>The unit button, and why it is only on grain and bale.</b> Circulars write cbm and cbft in
+ * the same week, thirty-five apart, and often write neither, so the API reads the unit off the
+ * ship's size (see CapacityUnits). Where her size cannot decide - no deadweight anywhere, or a
+ * figure absurd in both units - it takes the label the text wrote, and a broker who typed "cbm"
+ * over a column of cubic feet has then put the error in the record. This says which unit the
+ * figure was read in and lets the reviewer say it was the other one; the converted value drops
+ * into the box, so what is written is the same correction any other row would send.
+ *
+ * No unit button on the rest of the table: a deadweight is in tonnes and a draft is in metres,
+ * and there is nothing to disagree about.
+ */
+function Correction({
+  row,
+  value,
+  reading,
+  onChange,
+}: {
+  row: FieldDiff;
+  value: string;
+  reading?: Record<string, unknown>;
+  onChange: (value: string) => void;
+}) {
+  const current = readAs(row, reading);
+  const other = otherReading(row, reading);
+  // What the box would write if it were filled in: the typed value, else the email's.
+  const effective = (value || row.incoming || '').trim();
+  const chosenUnit =
+    current && other ? (effective === other.value ? other.unit : current) : undefined;
+
+  return (
+    <Space direction="vertical" size={4} style={{ width: '100%' }}>
+      <Input
+        size="small"
+        allowClear
+        value={value}
+        placeholder={row.incoming ?? ''}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {isCapacityField(row.field) && current && other && (
+        <Tooltip
+          title={`The email printed this figure without a unit the ship's size could settle. It was read as ${
+            current === 'm3' ? 'cubic metres' : 'cubic feet'
+          } — pick the other one and the converted value goes in the box.`}
+        >
+          <Segmented
+            size="small"
+            value={chosenUnit}
+            options={[
+              { label: 'm³', value: 'm3' },
+              { label: 'cbft', value: 'cbft' },
+            ]}
+            onChange={(unit) =>
+              // Back to the email's own reading when the original unit is picked again, which
+              // clears the correction rather than pinning a re-multiplied figure.
+              onChange(unit === current ? '' : other.value)
+            }
+          />
+        </Tooltip>
+      )}
+    </Space>
   );
 }
 
@@ -986,6 +1112,124 @@ function CargoMergeBody({ item }: { item: IntakeItemResponse }) {
 }
 
 /** The three answers, worded per kind so no button says "accept" without saying to what. */
+/**
+ * The firm that signed the circular, set against the firm on file.
+ *
+ * <b>The paste modal's own card, unchanged.</b> A signature read off a board asks exactly what
+ * a pasted one asks — which firm is this, what does the record say, what should change — and
+ * is allowed to write exactly the same things. What differs is only where the accept goes:
+ * here it posts against the item, which is then marked answered and leaves the queue.
+ *
+ * <b>Why there is no Accept in the footer.</b> Every other kind is answered by one button over
+ * a table of ticks; this one is a form — a firm to pick or create, fields to tick, people and
+ * addresses to attach to each other — and its save has to be the button that knows what state
+ * the form is in. A second accept in the footer would be a second, less informed way to write
+ * the same rows. Discard stays in the footer, because refusing is the same act it is
+ * everywhere else, and it is what stops this signature being raised again.
+ */
+function CompanyDetailsBody({
+  item,
+  editable,
+  onDone,
+  onOpenCompany,
+}: {
+  item: IntakeItemResponse;
+  editable: boolean;
+  onDone: () => void;
+  onOpenCompany: (id: number) => void;
+}) {
+  const draft = item.payload?.draft;
+  const comparison = item.payload?.comparison;
+
+  if (!draft) {
+    return (
+      <Alert
+        type="warning"
+        showIcon
+        message="This question was raised by an older version and can no longer be applied."
+        description="Discard it and read the circular again from the log."
+      />
+    );
+  }
+
+  if (!editable) {
+    // Answered: what was proposed, not a form. The rows it wrote are on the company's own
+    // record and its History tab, which is where a decision belongs after it is made.
+    return (
+      <Space direction="vertical" size={8} style={{ width: '100%' }}>
+        <Typography.Text strong>{draft.company.name}</Typography.Text>
+        {item.companyId && (
+          <Button size="small" onClick={() => onOpenCompany(item.companyId!)}>
+            Open the company
+          </Button>
+        )}
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {(item.payload?.changes ?? []).join(' · ') || 'Nothing further was proposed.'}
+        </Typography.Text>
+      </Space>
+    );
+  }
+
+  return (
+    <Space direction="vertical" size={12} style={{ width: '100%' }}>
+      {item.payload?.companyName ? (
+        <Alert
+          type="info"
+          showIcon
+          message={`This looks like ${item.payload.companyName}`}
+          description={
+            <>
+              Matched on {matchWords(item.payload.matchedBy)}, and the signature says something
+              the record does not: {(item.payload.changes ?? []).join('; ')}. Nothing changes
+              until you tick it — the block at the foot of a circular is a lead sheet, not a
+              source of record.
+            </>
+          }
+        />
+      ) : (
+        <Alert
+          type="info"
+          showIcon
+          message="No firm on file carries this signature"
+          description={
+            draft.matches.length > 0
+              ? 'Some resemble it — pick one if it is the same firm, or create it. Two firms a broker keeps apart must not be merged by a parser, which is why nothing was chosen for you.'
+              : 'Nothing on file resembles it by address, name, number, domain or spelling. Creating it files what the signature carried and nothing else.'
+          }
+        />
+      )}
+
+      {/* The comparison rides on the response and is worked out when the drawer opens rather
+          than when the item was raised: these questions are the slowest in the queue to be
+          answered and the likeliest to be answered elsewhere, so an address somebody added on
+          the People tab last week should not still be offered here. The card re-compares on
+          its own as soon as a firm is picked, so this is only the count on screen before that. */}
+      {comparison && comparison.fields.length === 0 && (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          The record already agrees on every field the signature states; what is left is the
+          people and the addresses below.
+        </Typography.Text>
+      )}
+
+      <CompanyCard
+        bare
+        draft={draft}
+        saveLabel="Save to this company and close the question"
+        save={(body) => intakeApi.acceptCompany(item.id, body)}
+        onDone={onDone}
+      />
+    </Space>
+  );
+}
+
+/** The matcher's code in words. Unknown values print as they stand — see IntakePayloads. */
+function matchWords(how?: string) {
+  if (how === 'email') return 'an address it already has';
+  if (how === 'name') return 'the same name';
+  if (how === 'phone') return 'the same number';
+  return how ?? 'what the signature said';
+}
+
 function Footer({
   item,
   busy,
@@ -1022,8 +1266,33 @@ function Footer({
       alternative: 'Keep separate',
       discard: 'Discard',
     },
+    COMPANY_DETAILS: {
+      // Saving is the card's own button, which is the only one that knows what is ticked.
+      accept: '',
+      alternative: '',
+      discard: 'Not these details',
+    },
   };
   const w = words[item.kind];
+
+  // A company question is a form rather than a table of ticks, so the footer carries only the
+  // refusal. Kept there rather than moved into the card because refusing is the same act on
+  // every kind, and because it is what stops this signature being raised again next Monday.
+  if (item.kind === 'COMPANY_DETAILS') {
+    return (
+      <Popconfirm
+        title={w.discard}
+        description="Nothing will be written, and this signature will not be raised again unless it changes."
+        onConfirm={() => onAnswer('DISCARD')}
+        okText="Yes"
+        cancelText="No"
+      >
+        <Button danger loading={busy}>
+          {w.discard}
+        </Button>
+      </Popconfirm>
+    );
+  }
 
   return (
     <Space wrap>

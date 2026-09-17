@@ -1,6 +1,7 @@
 package com.chartering.specification;
 
 import com.chartering.model.Cargo;
+import com.chartering.model.SourceKind;
 import com.chartering.model.CargoStatus;
 import jakarta.persistence.criteria.Join;
 import jakarta.persistence.criteria.JoinType;
@@ -165,8 +166,8 @@ public final class CargoSpecification {
     }
 
     /** Read out of an email, or typed. Answers the Cargoes tab's Source filter. */
-    public static Specification<Cargo> fromMailEquals(Boolean fromMail) {
-        return (root, query, cb) -> fromMail == null ? null
-                : cb.equal(root.get("fromMail"), fromMail);
+    public static Specification<Cargo> sourceKindEquals(SourceKind kind) {
+        return (root, query, cb) -> kind == null ? null
+                : cb.equal(root.get("sourceKind"), kind);
     }
 }

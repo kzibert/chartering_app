@@ -192,13 +192,13 @@ export function useIntakeMutations() {
   });
 
   const reopen = useMutation({
-    mutationFn: (mailMessageId: number) => intakeApi.reopen(mailMessageId),
+    mutationFn: (parsedEmailId: number) => intakeApi.reopen(parsedEmailId),
     onSuccess: invalidate,
   });
 
   const ignoreParsed = useMutation({
-    mutationFn: (v: { mailMessageId: number; note?: string }) =>
-      intakeApi.ignoreParsed(v.mailMessageId, v.note),
+    mutationFn: (v: { parsedEmailId: number; note?: string }) =>
+      intakeApi.ignoreParsed(v.parsedEmailId, v.note),
     onSuccess: invalidate,
   });
 

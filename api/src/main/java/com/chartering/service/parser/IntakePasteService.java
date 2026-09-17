@@ -229,7 +229,9 @@ public class IntakePasteService {
         vessel.setIceClass(blank.getIceClass());
         vessel.setNotes(Extraction.text(v.notes()));
 
-        IntakeResolver.ResolvedVessel resolved = resolver.resolveVessel(v);
+        // The sender where the paste was matched to one firm outright, so a name this
+        // correspondent has already had settled resolves here too rather than only in the sweep.
+        IntakeResolver.ResolvedVessel resolved = resolver.resolveVessel(v, sender);
         IntakePasteDraftResponse.VesselMatchHint match = resolved.found()
                 ? new IntakePasteDraftResponse.VesselMatchHint(resolved.vessel().getId(),
                         resolved.vessel().getName(), resolved.vessel().getImoNumber(), resolved.how().name())
@@ -265,7 +267,14 @@ public class IntakePasteService {
         return p;
     }
 
-    private static CompanyDraft companyDraft(CompanyStyleReader.Style style, List<CompanyMatcher.Match> matches) {
+    /**
+     * The firm as the review screens render it.
+     *
+     * <p>Not private, because the Intake queue's own company question builds the same draft out
+     * of a circular's signature — see {@link CompanyStyleIntake}. One method, so a block read
+     * off a board and the same block pasted into the modal produce the same rows.
+     */
+    public static CompanyDraft companyDraft(CompanyStyleReader.Style style, List<CompanyMatcher.Match> matches) {
         CompanyRequest company = new CompanyRequest();
         company.setName(style.name());
         company.setCityName(style.city());

@@ -13,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 
 /**
@@ -46,6 +47,17 @@ import java.util.function.Function;
  * sat beside it, and only where the size cannot decide is a stated unit taken as written. A
  * capacity with no unit and no size to judge it by is still <em>dropped</em> — not gap-filled,
  * not queued — because that one would be a guess.
+ *
+ * <p><b>Grain and bale are settled one figure at a time, and they used to share one unit.</b>
+ * The reasoning was that a list quotes a ship's holds in one unit throughout, so judging the
+ * clearer figure and applying its answer to the other covered a figure its own size could not
+ * place. It is not true of every format. One broker here writes JELENA's grain in cubic metres
+ * (8,267 against 5,000 DWCC) and her bale in cubic feet (291,000) in the same paragraph: the
+ * grain figure settled the pair as cbm, so her bale was read as 291,000 m³ — fifty times what a
+ * 5,700-tonner holds — and that absurdity was put to a person as a disagreement to arbitrate,
+ * every morning, for a week. Each figure is now asked about its own size first. What the old
+ * rule bought is kept as a fallback rather than as the rule: where a figure's own size cannot
+ * place it, the other capacity's answer is taken, and only then the label the text wrote.
  */
 public final class VesselFieldDiff {
 
@@ -56,17 +68,33 @@ public final class VesselFieldDiff {
     private static final BigDecimal NUMERIC_TOLERANCE = new BigDecimal("0.005");
 
     /**
+     * What a field holds, which is the one thing a string has to be read back into.
+     *
+     * <p>Needed because two callers now hand this class text rather than a reading: a reviewer
+     * correcting a figure on the review screen, and {@code intake_field_decisions} storing a
+     * value that was declined so the same one can be recognised when it arrives again. Both
+     * have to end up with the value the comparison would have produced — a draft typed as
+     * "7.9" has to become a number and not the string, or it would be written to a numeric
+     * column as text and compared as one.
+     */
+    private enum Kind { TEXT, DECIMAL, INTEGER, SHORT, BOOLEAN }
+
+    /**
      * One field, and how to read it from both sides.
      *
-     * @param label   what the review screen calls it — the words on the vessel's own form,
-     *                so the two screens name the same thing the same way
-     * @param unit    appended when a value is printed, so "7.9" reads as "7.9 m"
+     * @param label    what the review screen calls it — the words on the vessel's own form,
+     *                 so the two screens name the same thing the same way
+     * @param unit     appended when a value is printed, so "7.9" reads as "7.9 m"
+     * @param incoming takes the hull as well as the reading: a capacity cannot be read without
+     *                 a size to judge its unit by, and hers is the fallback when the email
+     *                 repeats her holds without repeating her deadweight
      */
     private record Spec(String field,
                         String label,
                         String unit,
+                        Kind kind,
                         Function<Vessel, Object> current,
-                        Function<Extraction.ExtractedVessel, Object> incoming,
+                        BiFunction<Extraction.ExtractedVessel, Vessel, Object> incoming,
                         BiConsumer<Vessel, Object> write) {
     }
 
@@ -95,56 +123,58 @@ public final class VesselFieldDiff {
 
     private static List<Spec> buildSpecs() {
         List<Spec> s = new ArrayList<>();
-        s.add(new Spec("name", "Name", null,
-                Vessel::getName, v -> Extraction.text(v.name()),
+        s.add(new Spec("name", "Name", null, Kind.TEXT,
+                Vessel::getName, (v, ship) -> Extraction.text(v.name()),
                 (v, o) -> v.setName((String) o)));
-        s.add(new Spec("imoNumber", "IMO", null,
-                Vessel::getImoNumber, v -> IntakeResolver.normaliseImo(v.imo()),
+        s.add(new Spec("imoNumber", "IMO", null, Kind.TEXT,
+                Vessel::getImoNumber, (v, ship) -> IntakeResolver.normaliseImo(v.imo()),
                 (v, o) -> v.setImoNumber((String) o)));
-        s.add(new Spec("deadweightTonnage", "DWT", "t",
-                Vessel::getDeadweightTonnage, Extraction.ExtractedVessel::dwt,
+        s.add(new Spec("deadweightTonnage", "DWT", "t", Kind.DECIMAL,
+                Vessel::getDeadweightTonnage, (v, ship) -> v.dwt(),
                 (v, o) -> v.setDeadweightTonnage((BigDecimal) o)));
-        s.add(new Spec("deadweightCargoCapacity", "DWCC", "t",
-                Vessel::getDeadweightCargoCapacity, Extraction.ExtractedVessel::dwcc,
+        s.add(new Spec("deadweightCargoCapacity", "DWCC", "t", Kind.DECIMAL,
+                Vessel::getDeadweightCargoCapacity, (v, ship) -> v.dwcc(),
                 (v, o) -> v.setDeadweightCargoCapacity((BigDecimal) o)));
-        s.add(new Spec("maximumDraft", "Draft", "m",
-                Vessel::getMaximumDraft, Extraction.ExtractedVessel::draft,
+        s.add(new Spec("maximumDraft", "Draft", "m", Kind.DECIMAL,
+                Vessel::getMaximumDraft, (v, ship) -> v.draft(),
                 (v, o) -> v.setMaximumDraft((BigDecimal) o)));
-        s.add(new Spec("yearBuilt", "Built", null,
-                Vessel::getYearBuilt, Extraction.ExtractedVessel::built,
+        s.add(new Spec("yearBuilt", "Built", null, Kind.INTEGER,
+                Vessel::getYearBuilt, (v, ship) -> v.built(),
                 (v, o) -> v.setYearBuilt((Integer) o)));
-        s.add(new Spec("flag", "Flag", null,
-                Vessel::getFlag, v -> Extraction.text(v.flag()),
+        s.add(new Spec("flag", "Flag", null, Kind.TEXT,
+                Vessel::getFlag, (v, ship) -> Extraction.text(v.flag()),
                 (v, o) -> v.setFlag((String) o)));
-        s.add(new Spec("grainCapacityM3", "Grain", "m3",
-                Vessel::getGrainCapacityM3, v -> cubicMetres(v.grainCapacity(), v.capacityUnit()),
+        s.add(new Spec("grainCapacityM3", "Grain", "m3", Kind.DECIMAL,
+                Vessel::getGrainCapacityM3,
+                (v, ship) -> cubicMetres(v.grainCapacity(), v.baleCapacity(), v, ship),
                 (v, o) -> v.setGrainCapacityM3((BigDecimal) o)));
-        s.add(new Spec("baleCapacityM3", "Bale", "m3",
-                Vessel::getBaleCapacityM3, v -> cubicMetres(v.baleCapacity(), v.capacityUnit()),
+        s.add(new Spec("baleCapacityM3", "Bale", "m3", Kind.DECIMAL,
+                Vessel::getBaleCapacityM3,
+                (v, ship) -> cubicMetres(v.baleCapacity(), v.grainCapacity(), v, ship),
                 (v, o) -> v.setBaleCapacityM3((BigDecimal) o)));
-        s.add(new Spec("geared", "Geared", null,
-                Vessel::getGeared, Extraction.ExtractedVessel::geared,
+        s.add(new Spec("geared", "Geared", null, Kind.BOOLEAN,
+                Vessel::getGeared, (v, ship) -> v.geared(),
                 (v, o) -> v.setGeared((Boolean) o)));
-        s.add(new Spec("gearDescription", "Gear", null,
-                Vessel::getGearDescription, v -> Extraction.text(v.gearDescription()),
+        s.add(new Spec("gearDescription", "Gear", null, Kind.TEXT,
+                Vessel::getGearDescription, (v, ship) -> Extraction.text(v.gearDescription()),
                 (v, o) -> v.setGearDescription((String) o)));
-        s.add(new Spec("holds", "Holds", null,
-                Vessel::getHolds, Extraction.ExtractedVessel::holds,
+        s.add(new Spec("holds", "Holds", null, Kind.SHORT,
+                Vessel::getHolds, (v, ship) -> v.holds(),
                 (v, o) -> v.setHolds((Short) o)));
-        s.add(new Spec("hatches", "Hatches", null,
-                Vessel::getHatches, Extraction.ExtractedVessel::hatches,
+        s.add(new Spec("hatches", "Hatches", null, Kind.SHORT,
+                Vessel::getHatches, (v, ship) -> v.hatches(),
                 (v, o) -> v.setHatches((Short) o)));
-        s.add(new Spec("grainFitted", "Grain fitted", null,
-                Vessel::getGrainFitted, Extraction.ExtractedVessel::grainFitted,
+        s.add(new Spec("grainFitted", "Grain fitted", null, Kind.BOOLEAN,
+                Vessel::getGrainFitted, (v, ship) -> v.grainFitted(),
                 (v, o) -> v.setGrainFitted((Boolean) o)));
-        s.add(new Spec("timberFitted", "Timber fitted", null,
-                Vessel::getTimberFitted, Extraction.ExtractedVessel::timberFitted,
+        s.add(new Spec("timberFitted", "Timber fitted", null, Kind.BOOLEAN,
+                Vessel::getTimberFitted, (v, ship) -> v.timberFitted(),
                 (v, o) -> v.setTimberFitted((Boolean) o)));
-        s.add(new Spec("imoFitted", "IMO fitted", null,
-                Vessel::getImoFitted, Extraction.ExtractedVessel::imoFitted,
+        s.add(new Spec("imoFitted", "IMO fitted", null, Kind.BOOLEAN,
+                Vessel::getImoFitted, (v, ship) -> v.imoFitted(),
                 (v, o) -> v.setImoFitted((Boolean) o)));
-        s.add(new Spec("iceClass", "Ice class", null,
-                Vessel::getIceClass, v -> Extraction.text(v.iceClass()),
+        s.add(new Spec("iceClass", "Ice class", null, Kind.TEXT,
+                Vessel::getIceClass, (v, ship) -> Extraction.text(v.iceClass()),
                 (v, o) -> v.setIceClass((String) o)));
         return List.copyOf(s);
     }
@@ -168,12 +198,11 @@ public final class VesselFieldDiff {
      * @param vessel written to for gap fills only; conflicts are left for a person
      */
     public static Result compare(Vessel vessel, Extraction.ExtractedVessel reading) {
-        Extraction.ExtractedVessel parsed = withCapacityUnit(reading, vessel);
         List<FieldDiff> conflicts = new ArrayList<>();
         List<String> filled = new ArrayList<>();
 
         for (Spec spec : SPECS) {
-            Object incoming = spec.incoming().apply(parsed);
+            Object incoming = spec.incoming().apply(reading, vessel);
             if (isAbsent(incoming)) continue;
 
             Object current = spec.current().apply(vessel);
@@ -205,10 +234,9 @@ public final class VesselFieldDiff {
      * only way such a field reaches her record is a person ticking it.
      */
     public static Result preview(Vessel vessel, Extraction.ExtractedVessel reading) {
-        Extraction.ExtractedVessel parsed = withCapacityUnit(reading, vessel);
         List<FieldDiff> rows = new ArrayList<>();
         for (Spec spec : SPECS) {
-            Object incoming = spec.incoming().apply(parsed);
+            Object incoming = spec.incoming().apply(reading, vessel);
             if (isAbsent(incoming)) continue;
             Object current = spec.current().apply(vessel);
             if (isAbsent(current)) {
@@ -233,11 +261,45 @@ public final class VesselFieldDiff {
     public static List<String> applySelected(Vessel vessel,
                                              Extraction.ExtractedVessel reading,
                                              Collection<String> fields) {
-        Extraction.ExtractedVessel parsed = withCapacityUnit(reading, vessel);
+        return applySelected(vessel, reading, fields, Map.of());
+    }
+
+    /**
+     * The same, with the reviewer's own value where they typed one.
+     *
+     * <p><b>A third answer, and the screen was missing it.</b> The two it had were the record
+     * and the email, and a broker's list is regularly wrong in a way that does not make the
+     * record right: a capacity quoted in the wrong unit, a gear description garbled, a flag out
+     * of date on both sides. Answering that took two visits — discard the item, then go and
+     * edit the hull — and the second half is the one that gets forgotten.
+     *
+     * <p>A correction is written exactly like an accepted value, through the same typed writer,
+     * so a figure typed as "7.9" lands as a number and not as text in a numeric column. What it
+     * does <em>not</em> share is the skip below: an accepted value that already matches the
+     * record is no change and is dropped, while a correction is a person's deliberate
+     * instruction and is written even where it agrees with what is there, because the caller
+     * records that it was made.
+     *
+     * @param corrections field to the value the reviewer typed, already read into the field's
+     *                    own type by {@link #parseCorrection}
+     */
+    public static List<String> applySelected(Vessel vessel,
+                                             Extraction.ExtractedVessel reading,
+                                             Collection<String> fields,
+                                             Map<String, Object> corrections) {
         List<String> written = new ArrayList<>();
         for (Spec spec : SPECS) {
             if (!fields.contains(spec.field())) continue;
-            Object incoming = spec.incoming().apply(parsed);
+
+            if (corrections.containsKey(spec.field())) {
+                Object corrected = corrections.get(spec.field());
+                if (corrected == null) continue;
+                spec.write().accept(vessel, corrected);
+                written.add(spec.field());
+                continue;
+            }
+
+            Object incoming = spec.incoming().apply(reading, vessel);
             if (isAbsent(incoming)) continue;
             // An empty column is written like any other ticked field; comparing against it
             // would dereference nothing.
@@ -255,42 +317,158 @@ public final class VesselFieldDiff {
                 .map(Spec::label).findFirst().orElse(field);
     }
 
-    // --------------------------------------------------------------- internals
+    // ------------------------------------------------------- what a person typed
 
     /**
-     * The reading with its capacity unit settled — see the class comment.
+     * A reviewer's typed value, read into the type its column holds.
      *
-     * <p>Grain and bale share one unit on a position list, so the unit is judged on grain,
-     * or on bale when grain is not given. Her size is the email's when it gives one and her
-     * record's otherwise: a list repeating a ship's capacities often leaves out the deadweight
-     * the record already holds. Returns the reading itself when nothing changes, which is
-     * every reading with no capacity in it.
+     * <p>Strict, and it says what it wanted. This is the one place in the feature where a
+     * human's keystrokes become a database value, so "abt 7.9" coming back as null and being
+     * quietly skipped would be an accept that did nothing — the failure this class avoids
+     * everywhere else by re-deriving from the extraction instead of parsing display text.
+     *
+     * <p>Thousands separators and a trailing unit are forgiven, because the value on screen
+     * beside the box carries both and the obvious thing to do is edit it in place: "8,240 m3"
+     * typed back over is the same figure, and refusing it would teach nobody anything.
+     *
+     * @throws IllegalArgumentException when the text is blank or is not a value of that type
      */
-    static Extraction.ExtractedVessel withCapacityUnit(Extraction.ExtractedVessel p, Vessel vessel) {
-        BigDecimal sample = p.grainCapacity() != null && p.grainCapacity().signum() > 0
-                ? p.grainCapacity() : p.baleCapacity();
-        if (sample == null || sample.signum() <= 0) return p;
-        BigDecimal dwt = p.dwt() != null && p.dwt().signum() > 0 ? p.dwt() : vessel.getDeadweightTonnage();
-        BigDecimal dwcc = p.dwcc() != null && p.dwcc().signum() > 0 ? p.dwcc() : vessel.getDeadweightCargoCapacity();
-        CapacityUnits.Unit unit = CapacityUnits.resolve(p.capacityUnit(), sample, dwt, dwcc);
-        String resolved = unit == null ? "" : unit.name();
-        if (resolved.equals(p.capacityUnit())) return p;
-        return new Extraction.ExtractedVessel(p.name(), p.imo(), p.vesselType(), p.dwt(), p.dwcc(),
-                p.draft(), p.built(), p.flag(), p.grainCapacity(), p.baleCapacity(), resolved,
-                p.geared(), p.gearDescription(), p.holds(), p.hatches(), p.grainFitted(),
-                p.timberFitted(), p.imoFitted(), p.iceClass(), p.openPort(), p.openArea(),
-                p.openFrom(), p.openTo(), p.openText(), p.lastCargo(), p.cargoPreferences(), p.notes());
+    public static Object parseCorrection(String field, String text) {
+        Spec spec = specOf(field);
+        if (spec == null) {
+            throw new IllegalArgumentException("There is no field called \"" + field + "\".");
+        }
+        String t = text == null ? "" : text.trim();
+        if (t.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Type a value for " + spec.label() + ", or untick it to leave the record alone.");
+        }
+        Object parsed = parse(spec, t);
+        if (parsed == null) {
+            throw new IllegalArgumentException(
+                    "\"" + t + "\" is not a value " + spec.label() + " can hold.");
+        }
+        return parsed;
+    }
+
+    /**
+     * The email's reading of one field, in the form a decision is stored as.
+     *
+     * <p>The value as it was <em>compared</em> — a capacity already converted to cubic metres,
+     * an IMO already normalised — and not as it was printed: the printed form carries a unit
+     * and is a rendering, and two renderings of one figure would be stored as two different
+     * declined values, neither recognising the other.
+     *
+     * @return null where the email said nothing about this field
+     */
+    public static String incomingValue(Vessel vessel, Extraction.ExtractedVessel reading,
+                                       String field) {
+        Spec spec = specOf(field);
+        if (spec == null) return null;
+        Object incoming = spec.incoming().apply(reading, vessel);
+        return isAbsent(incoming) ? null : canonical(incoming);
+    }
+
+    /**
+     * Whether a value settled earlier is the one this email is reporting now.
+     *
+     * <p>Compared with {@link #same}, not as text: the stored value is read back into the
+     * field's own type first, so a deadweight a broker rounds differently on Wednesday is still
+     * the figure that was turned down on Tuesday. A queue that fires on a re-rounded number is
+     * the queue this whole mechanism exists to stop.
+     */
+    public static boolean reportsValue(Vessel vessel, Extraction.ExtractedVessel reading,
+                                       String field, String settledValue) {
+        Spec spec = specOf(field);
+        if (spec == null || settledValue == null) return false;
+        Object incoming = spec.incoming().apply(reading, vessel);
+        if (isAbsent(incoming)) return false;
+        Object settled = parse(spec, settledValue);
+        return settled != null && same(settled, incoming);
+    }
+
+    /** How a value is stored and handed back, with no unit on it. */
+    public static String canonical(Object value) {
+        if (value == null) return null;
+        if (value instanceof BigDecimal d) return d.stripTrailingZeros().toPlainString();
+        if (value instanceof Boolean b) return b.toString();
+        return value.toString().trim();
+    }
+
+    /** Whether a field is a hold capacity — the one kind whose unit is worth arguing about. */
+    public static boolean isCapacity(String field) {
+        return "grainCapacityM3".equals(field) || "baleCapacityM3".equals(field);
+    }
+
+    // --------------------------------------------------------------- internals
+
+    private static Spec specOf(String field) {
+        return SPECS.stream().filter(s -> s.field().equals(field)).findFirst().orElse(null);
+    }
+
+    private static Object parse(Spec spec, String text) {
+        String t = text.trim().replace(",", "");
+        try {
+            return switch (spec.kind()) {
+                case TEXT -> t;
+                case DECIMAL -> new BigDecimal(stripUnit(t));
+                case INTEGER -> Integer.valueOf(stripUnit(t));
+                case SHORT -> Short.valueOf(stripUnit(t));
+                case BOOLEAN -> bool(t);
+            };
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * The number out of "8240 m3".
+     *
+     * <p>The review screen prints every figure with its unit, and the natural way to correct one
+     * is to edit what is shown. Only a trailing unit is dropped — anything else that is not a
+     * number still fails, so "abt 8240" is refused rather than read as 8240 and written as
+     * though somebody had meant it exactly.
+     */
+    private static String stripUnit(String t) {
+        return t.replaceAll("(?i)\\s*(m3|m³|cbm|mt|t|m)$", "").trim();
+    }
+
+    /** "yes" and "no" as well as the words Java knows, because that is how {@link #print} writes them. */
+    private static Boolean bool(String t) {
+        return switch (t.toLowerCase()) {
+            case "yes", "y", "true", "1" -> Boolean.TRUE;
+            case "no", "n", "false", "0" -> Boolean.FALSE;
+            default -> null;
+        };
     }
 
     /**
      * A capacity in cubic metres, or null when it cannot be known.
      *
-     * <p>Read after {@link #withCapacityUnit} has settled the unit, so null here means there
-     * was no size to judge by and no unit stated either — the one case the class comment says
-     * is not guessed at.
+     * <p>Her own size first, then the other capacity's answer, then the label — see the class
+     * comment for the list that made the old order wrong. Null means there was no size to judge
+     * by, no sibling that could be judged either, and no unit stated: the one case that is not
+     * guessed at.
+     *
+     * @param sibling the other hold capacity in the same reading, consulted only when this
+     *                figure's own size cannot place it
      */
-    private static BigDecimal cubicMetres(BigDecimal value, String unit) {
-        return CapacityUnits.toCubicMetres(value, CapacityUnits.stated(unit));
+    private static BigDecimal cubicMetres(BigDecimal value, BigDecimal sibling,
+                                          Extraction.ExtractedVessel p, Vessel vessel) {
+        if (value == null || value.signum() <= 0) return null;
+        // The email's deadweight where it gives one, else hers: a list repeating a ship's
+        // capacities often leaves out the size the record already holds.
+        BigDecimal dwt = positive(p.dwt()) != null ? p.dwt() : vessel.getDeadweightTonnage();
+        BigDecimal dwcc = positive(p.dwcc()) != null ? p.dwcc() : vessel.getDeadweightCargoCapacity();
+
+        CapacityUnits.Unit unit = CapacityUnits.bySize(value, dwt, dwcc);
+        if (unit == null) unit = CapacityUnits.bySize(sibling, dwt, dwcc);
+        if (unit == null) unit = CapacityUnits.stated(p.capacityUnit());
+        return CapacityUnits.toCubicMetres(value, unit);
+    }
+
+    private static BigDecimal positive(BigDecimal d) {
+        return d == null || d.signum() <= 0 ? null : d;
     }
 
     /**

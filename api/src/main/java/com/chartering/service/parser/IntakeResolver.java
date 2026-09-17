@@ -1,10 +1,12 @@
 package com.chartering.service.parser;
 
 import com.chartering.model.Company;
+import com.chartering.model.IntakeVesselAlias;
 import com.chartering.model.Port;
 import com.chartering.model.TradeArea;
 import com.chartering.model.Vessel;
 import com.chartering.repository.CompanyRepository;
+import com.chartering.repository.IntakeVesselAliasRepository;
 import com.chartering.repository.PortRepository;
 import com.chartering.repository.TradeAreaRepository;
 import com.chartering.repository.VesselRepository;
@@ -74,6 +76,7 @@ public class IntakeResolver {
     private static final String NO_NAME = "~~no~such~name~~";
 
     private final VesselRepository vessels;
+    private final IntakeVesselAliasRepository aliases;
     private final PortRepository ports;
     private final CompanyRepository companies;
     private final TradeAreaRepository tradeAreas;
@@ -99,6 +102,16 @@ public class IntakeResolver {
          * about this email's ship, and the lookup's own confidence is shown beside it.
          */
         LOOKUP_IMO,
+        /**
+         * By a name this correspondent has already been told means this hull.
+         *
+         * <p>The weakest of the identifications and the only one that is not a fact about the
+         * ship, so it is asked last and only where the exact tiers found nothing. What it
+         * settles is a name two hulls share: PHANTOM is ambiguous in the fleet and unambiguous
+         * in one broker's list, and a reviewer answered that same question by hand on three
+         * mornings running before anything recorded it. See {@code IntakeVesselAlias}.
+         */
+        SENDER_ALIAS,
         /** Nothing on file answers to this. */
         NONE
     }
@@ -124,8 +137,22 @@ public class IntakeResolver {
      *
      * <p>Two rows sharing an identifier is treated as no match. It is a data fault, and
      * picking whichever came first would hide it behind a plausible-looking position.
+     *
+     * <p><b>Then, last, what this correspondent has already been told her name means.</b> Two
+     * hulls here are called PHANTOM and neither carries an IMO, so the name tier finds two rows
+     * and correctly refuses to choose — and every list naming her raised the same
+     * {@code NEW_VESSEL} item again, because answering it could record nothing a later email
+     * would read. An alias is a fact about one firm's vocabulary rather than about the ship
+     * (see {@code IntakeVesselAlias}), which is exactly what can settle a shared name, and it
+     * is asked <em>after</em> the exact tiers for the same reason: a broker's habit must never
+     * overrule a hull's own name.
+     *
+     * @param reporterCompanyId the firm whose email this is, or null where the sync could not
+     *                          put an address to one. Without it there is no alias to ask
+     *                          about — one with nobody behind it would be the arbitrary pick
+     *                          this method refuses to make
      */
-    public ResolvedVessel resolveVessel(Extraction.ExtractedVessel parsed) {
+    public ResolvedVessel resolveVessel(Extraction.ExtractedVessel parsed, Long reporterCompanyId) {
         String imo = normaliseImo(parsed.imo());
         if (imo != null) {
             List<Vessel> byImo = vessels.findByImoNumber(imo);
@@ -143,13 +170,30 @@ public class IntakeResolver {
             if (byName.size() > 1) {
                 log.warn("\"{}\" matches {} vessels; treating as unresolved", name, byName.size());
             }
-            return new ResolvedVessel(null, VesselMatch.NONE);
+            return byAlias(name, reporterCompanyId);
         }
         Vessel v = byName.get(0);
         // Which of the two matched, for the reviewer: "matched on a former name" is worth
         // seeing, because it is the case where the answer is right and looks wrong.
         boolean current = v.getName() != null && v.getName().trim().equalsIgnoreCase(name);
         return new ResolvedVessel(v, current ? VesselMatch.NAME : VesselMatch.EX_NAME);
+    }
+
+    /**
+     * The hull this firm has already said it means by this name.
+     *
+     * <p>Reached only where the exact tiers found nothing or found too much, and it answers
+     * both failures: a name no row carries, and a name two rows carry. A vessel deleted since
+     * the alias was recorded falls through to no match rather than to a dangling reference,
+     * which puts the reading back in the review queue — where a hull that no longer exists
+     * belongs.
+     */
+    private ResolvedVessel byAlias(String name, Long reporterCompanyId) {
+        if (reporterCompanyId == null) return new ResolvedVessel(null, VesselMatch.NONE);
+        return aliases.find(reporterCompanyId, IntakeVesselAlias.key(name))
+                .flatMap(a -> vessels.findById(a.getVesselId()))
+                .map(v -> new ResolvedVessel(v, VesselMatch.SENDER_ALIAS))
+                .orElseGet(() -> new ResolvedVessel(null, VesselMatch.NONE));
     }
 
     /**

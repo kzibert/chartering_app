@@ -22,4 +22,14 @@ public class FeedSourceRequest {
     private String parserKey;
 
     private Boolean enabled;
+
+    /**
+     * Read this source's posts as circulars — cargoes, positions and company details — through
+     * the parser the mailbox goes through.
+     *
+     * <p>Worth it for a board of pasted circulars and not for a trade-press feed: running the
+     * extraction model over a news article spends GPU to produce nothing. Null leaves it as it
+     * is, so a form that does not offer the option cannot silently clear it.
+     */
+    private Boolean intoIntake;
 }
