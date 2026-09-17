@@ -23,10 +23,17 @@ export type AnalysisStatus = 'NEW' | 'READY' | 'SKIPPED';
 
 export interface AnalysisSampleResponse {
   id: number;
-  /** MAILBOX (captured from synced mail) or PASTED (added by hand). */
-  source: 'MAILBOX' | 'PASTED';
+  /**
+   * MAILBOX (captured from synced mail), WEB (off an open board) or PASTED (added by hand).
+   *
+   * Worth telling apart in a corpus: what arrives by mail is what somebody chose to send this
+   * desk, and a model trained only on that has never seen the layouts nobody addressed to us.
+   */
+  source: 'MAILBOX' | 'WEB' | 'PASTED';
   /** The message it came from, while that message is still in the mailbox. */
   mailMessageId?: number;
+  /** The board post it came off, while the fetcher still holds a copy. */
+  feedItemId?: number;
   fromAddress?: string;
   fromName?: string;
   subject?: string;
@@ -68,10 +75,25 @@ export interface AnalysisPasteRequest {
 }
 
 export interface AnalysisCaptureRequest {
+  /**
+   * Which half to take from. MAILBOX is the default; WEB reads the boards the Feed tab
+   * collects. The fields below split by which half they serve, and the ones that do not
+   * apply are ignored rather than refused.
+   */
+  source?: 'MAILBOX' | 'WEB';
+  /** MAILBOX only. */
   imapFolder?: string;
+  /** MAILBOX only. */
   folderId?: number;
-  search?: string;
+  /** MAILBOX only — scanning every stored body is slow, exactly as on the Mailbox tab. */
   searchBody?: boolean;
+  /**
+   * WEB only. Blank takes every board marked "Read into Intake" rather than every source
+   * there is: those are the ones carrying circulars, and a news feed would contribute
+   * articles a cargo-extraction model has nothing to learn from.
+   */
+  feedSourceId?: number;
+  search?: string;
   receivedFrom?: string;
   receivedTo?: string;
   limit?: number;

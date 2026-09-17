@@ -269,6 +269,7 @@ export default function AnalysisPage() {
                   placeholder="Any"
                   options={[
                     { value: 'MAILBOX', label: 'From the mailbox' },
+                    { value: 'WEB', label: 'From the boards' },
                     { value: 'PASTED', label: 'Pasted in' },
                   ]}
                 />
