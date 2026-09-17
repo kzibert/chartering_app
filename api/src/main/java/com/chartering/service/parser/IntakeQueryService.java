@@ -176,7 +176,9 @@ public class IntakeQueryService {
     public IntakeItemResponse get(Long id) {
         requireEnabled();
         IntakeItem item = load(id);
-        JsonNode payload = refreshed(item, payloadOf(item));
+        // The detail call is the one that drops what these senders have already settled: it
+        // costs a query per item and this is the screen that writes. See refreshed.
+        JsonNode payload = refreshed(item, payloadOf(item), true);
         // Sources on the detail call only: the list row prints one line, and a join per row
         // would buy it nothing. Same rule the lookup and the shortlist follow.
         return mapper.toIntakeItemResponse(item, payload, summarise(item, payload),
@@ -334,7 +336,7 @@ public class IntakeQueryService {
             log.warn("Intake item {} has an unreadable payload: {}", item.getId(), e.getMessage());
             payload = null;
         }
-        payload = refreshed(item, payload);
+        payload = refreshed(item, payload, false);
         return mapper.toIntakeItemResponse(item, payload, summarise(item, payload), lookup);
     }
 
@@ -345,9 +347,16 @@ public class IntakeQueryService {
      * asked about today's record, in today's terms. Answered items keep their stored rows,
      * which are the record of what was decided.
      *
+     * <p><b>{@code dropSettled} is the detail call only, and the split is the one the sources
+     * and the lookup already make.</b> Leaving out what these senders have settled needs this
+     * item's arrivals and the hull's decisions - two more queries per row, on a page of twenty
+     * rows that print one line each. It matters on the drawer, which is where an accept is
+     * answered against exactly the rows on screen; a decision is normally made by answering the
+     * very item that raised it, so a list row that counts one extra is both rare and harmless.
+     *
      * <p>Only the response changes: the payload in the table is left as it was.
      */
-    private JsonNode refreshed(IntakeItem item, JsonNode payload) {
+    private JsonNode refreshed(IntakeItem item, JsonNode payload, boolean dropSettled) {
         if (payload == null || item.getKind() != IntakeItemKind.VESSEL_FIELDS
                 || item.getStatus() != IntakeItemStatus.PENDING
                 || !(payload instanceof com.fasterxml.jackson.databind.node.ObjectNode obj)) {
@@ -358,7 +367,11 @@ public class IntakeQueryService {
             if (stored.vessel() == null || stored.vesselId() == null) return payload;
             Vessel vessel = vessels.findById(stored.vesselId()).orElse(null);
             if (vessel == null) return payload;
-            obj.set("diffs", json.valueToTree(VesselFieldDiff.preview(vessel, stored.vessel()).conflicts()));
+            // Asked of the service, which is also what an accept answers against: two copies of
+            // "which rows is this item still asking about" would agree until one was edited.
+            obj.set("diffs", json.valueToTree(dropSettled
+                    ? intake.shown(item, vessel, stored)
+                    : VesselFieldDiff.preview(vessel, stored.vessel()).conflicts()));
         } catch (Exception e) {
             log.warn("Intake item {}: could not recompare with the record: {}", item.getId(), e.getMessage());
         }

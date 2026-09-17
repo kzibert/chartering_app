@@ -7,6 +7,7 @@ import java.math.BigDecimal;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The line between what a parse may write on its own and what it has to ask about.
@@ -41,6 +42,7 @@ class VesselFieldDiffTest {
         private String gearDescription = "";
         private Short holds;
         private BigDecimal grainCapacity;
+        private BigDecimal baleCapacity;
         private String capacityUnit = "";
         private String imo = "";
         private String vesselType = "";
@@ -91,6 +93,11 @@ class VesselFieldDiffTest {
             return this;
         }
 
+        Builder bale(String value) {
+            baleCapacity = new BigDecimal(value);
+            return this;
+        }
+
         Builder imo(String v) {
             imo = v;
             return this;
@@ -109,7 +116,7 @@ class VesselFieldDiffTest {
         Extraction.ExtractedVessel build() {
             return new Extraction.ExtractedVessel(
                     name, imo, vesselType, dwt, dwcc, draft, built, "",
-                    grainCapacity, null, capacityUnit, geared, gearDescription, holds, null,
+                    grainCapacity, baleCapacity, capacityUnit, geared, gearDescription, holds, null,
                     null, null, null, "", "", "", "", "", "", "", "", "");
         }
     }
@@ -340,5 +347,117 @@ class VesselFieldDiffTest {
         // Only reachable when the hull was matched by IMO, which is exactly the rename case.
         assertThat(result.conflicts()).extracting(FieldDiff::field).contains("name");
         assertThat(v.getName()).isEqualTo("AMIKO");
+    }
+
+    /**
+     * JELENA, and the reason each figure is now asked about its own size.
+     *
+     * <p>One broker writes her grain in cubic metres (8,267) and her bale in cubic feet
+     * (291,000) in the same paragraph. Judging the pair on grain settled both as cbm, so her
+     * bale read as 291,000 m3 - fifty times what a 5,700-tonner holds - and that absurdity was
+     * put to a person to arbitrate every morning for a week. Read one at a time, the bale
+     * converts to 8,240 m3, which is exactly what the record already says: no question at all.
+     */
+    @Test
+    void readsGrainAndBaleInDifferentUnitsWhenTheShipsSizeSaysSo() {
+        Vessel jelena = new Vessel();
+        jelena.setId(3690L);
+        jelena.setDeadweightCargoCapacity(new BigDecimal("5000"));
+        jelena.setGrainCapacityM3(new BigDecimal("8267"));
+        jelena.setBaleCapacityM3(new BigDecimal("8240"));
+
+        VesselFieldDiff.Result result = VesselFieldDiff.compare(jelena,
+                with(reading(), b -> b.dwcc("5000").grain("8267", "CBM").bale("291000")));
+
+        assertThat(result.conflicts()).isEmpty();
+        assertThat(jelena.getBaleCapacityM3()).isEqualByComparingTo("8240");
+    }
+
+    /**
+     * What the one-unit rule was for, kept as the fallback.
+     *
+     * <p>A bale figure its own size cannot place - 100,000 against a 28,000-tonner is 3.6 per
+     * tonne, too much for cubic metres and far too little for cubic feet - still gets the
+     * answer the grain figure earned, rather than being dropped for want of a label neither of
+     * them carries.
+     */
+    @Test
+    void fallsBackToTheOtherCapacitysUnitWhenASizeCannotPlaceThisOne() {
+        Vessel v = new Vessel();
+        v.setDeadweightTonnage(new BigDecimal("28000"));
+
+        VesselFieldDiff.Result result = VesselFieldDiff.compare(v,
+                with(reading(), b -> b.dwt("28000").grain("1306000", "").bale("100000")));
+
+        // Grain places itself as cbft; bale is inside neither band and takes grain's answer.
+        assertThat(v.getGrainCapacityM3()).isEqualByComparingTo("36982");
+        assertThat(v.getBaleCapacityM3()).isEqualByComparingTo("2832");
+        assertThat(result.conflicts()).isEmpty();
+    }
+
+    @Test
+    void writesTheValueAPersonTypedInsteadOfEitherSides() {
+        Vessel v = new Vessel();
+        v.setName("PACIFIC DAWN");
+        v.setDeadweightTonnage(new BigDecimal("28000"));
+        v.setMaximumDraft(new BigDecimal("9.5"));
+
+        Object corrected = VesselFieldDiff.parseCorrection("maximumDraft", "7.9 m");
+        List<String> written = VesselFieldDiff.applySelected(v,
+                with(reading(), b -> b.draft("8.4")), List.of("maximumDraft"),
+                java.util.Map.of("maximumDraft", corrected));
+
+        assertThat(written).containsExactly("maximumDraft");
+        assertThat(v.getMaximumDraft()).isEqualByComparingTo("7.9");
+    }
+
+    /**
+     * A correction that cannot be the field's type is refused, not skipped.
+     *
+     * <p>This is the one place a human's keystrokes become a column value, so "abt 7.9" coming
+     * back as null would be an accept that silently did nothing - and the reviewer would be
+     * looking at a record that still reads 9.5.
+     */
+    @Test
+    void refusesATypedValueTheColumnCannotHold() {
+        assertThatThrownBy(() -> VesselFieldDiff.parseCorrection("maximumDraft", "abt 7.9"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Draft");
+        assertThatThrownBy(() -> VesselFieldDiff.parseCorrection("maximumDraft", "  "))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("untick");
+    }
+
+    /**
+     * A settled value is recognised again through the comparison, not as text.
+     *
+     * <p>A broker who rounds 28,500 to 28,450 next Wednesday is reporting the figure that was
+     * turned down on Tuesday, and a queue that fires on the re-rounding is the queue the whole
+     * mechanism exists to stop.
+     */
+    @Test
+    void recognisesASettledValueThroughTheSameTolerance() {
+        Vessel v = new Vessel();
+        v.setDeadweightTonnage(new BigDecimal("28000"));
+
+        Extraction.ExtractedVessel wednesday = with(reading(), b -> b.dwt("28450"));
+        assertThat(VesselFieldDiff.incomingValue(v, wednesday, "deadweightTonnage"))
+                .isEqualTo("28450");
+        assertThat(VesselFieldDiff.reportsValue(v, wednesday, "deadweightTonnage", "28500"))
+                .isTrue();
+        assertThat(VesselFieldDiff.reportsValue(v, wednesday, "deadweightTonnage", "31000"))
+                .isFalse();
+    }
+
+    /** A capacity is stored as it was compared - in cubic metres, with no unit on it. */
+    @Test
+    void storesADeclinedCapacityInTheUnitItWasComparedIn() {
+        Vessel jelena = new Vessel();
+        jelena.setDeadweightCargoCapacity(new BigDecimal("5000"));
+
+        String value = VesselFieldDiff.incomingValue(jelena,
+                with(reading(), b -> b.dwcc("5000").bale("291000")), "baleCapacityM3");
+
+        assertThat(value).isEqualTo("8240");
     }
 }
