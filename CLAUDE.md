@@ -819,6 +819,15 @@ So three things stop and become `intake_items`:
   strings genuinely differ — because the mistake was treating it as two questions.
   Only *pending* items merge: an answered question is history, and an email disagreeing
   afterwards is a new question about a record that has since been decided.
+  **A hull the lookup identifies afterwards merges the same way**, and until it did the
+  conversion was a hole straight through this rule. A name nothing here carries raises a
+  `NEW_VESSEL` item; the lookup finds her number on a hull on file and
+  `IntakeService#convertToFieldsReview` rewrites the item — and because it is no longer a
+  pending `NEW_VESSEL`, the next copy of the same list is not recognised as a repeat, raises
+  a fresh one, and that converts in its turn. FELIX stood in the queue three times over,
+  MAGDALENA three times, C.EPSILON twice. The conversion now folds into the question already
+  waiting instead: V21's rule at runtime, the arrivals moved onto the survivor and the
+  redundant item deleted, which is safe precisely because nobody has answered it yet.
   **An answer is remembered, and until it was the queue asked the same question daily.**
   Merging only covers arrivals that reach a question still waiting; once it is answered the
   item closes, and the next morning's copy of the same list raises the same disagreement
@@ -985,7 +994,13 @@ arrives, one class is written, one setting changes.
 - **Only five fields can be written**: IMO, DWT, year built, flag, type. Draft, capacities,
   gear and fittings are deliberately absent — a tracking page's draught is the AIS-reported
   *loaded* figure and the column it would land in is a design maximum, which is invisible and
-  wrong in the direction that loses cargoes.
+  wrong in the direction that loses cargoes. **The type is written as a category and never as
+  the source's prose**: vesselfinder says "General Cargo Ship" and "Bulk Carrier", and
+  `LookupFields` puts each through `VesselTypes.canonical` before it is offered or written,
+  dropping a wording that names no category rather than guessing at one. Writing the prose
+  straight through is how the column filled with one-off descriptions in the first place, and
+  it would have been the one door left open after `VesselFieldDiff` stopped comparing type at
+  all.
 - **The name is not evidence.** It is what was searched for, so a candidate agreeing on it is
   the query coming back. `LookupMatcher` scores name (2), build year (3), deadweight (3) and
   flag (1), and separately reports whether anything *beyond the name* agreed. A name-only

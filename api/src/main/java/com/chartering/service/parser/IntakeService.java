@@ -515,6 +515,24 @@ public class IntakeService {
         if (payload == null || payload.vessel() == null) return false;
 
         VesselFieldDiff.Result diff = VesselFieldDiff.compare(vessel, payload.vessel());
+
+        // A question about this hull may already be waiting, and converting into a second one
+        // is how the queue came to show FELIX three times and MAGDALENA three times.
+        //
+        // raiseVesselFields merges into a pending item rather than adding a row; this path
+        // never did, and it is the path that gets there most often. The loop is tidy: an
+        // email names a hull under a name nothing here carries, a NEW_VESSEL item is raised,
+        // the lookup identifies her and this method converts it - and because the item is no
+        // longer a pending NEW_VESSEL, the next copy of the same list is not recognised as a
+        // repeat and raises a fresh one, which converts in its turn. Nothing stops it while
+        // the broker keeps sending the list.
+        //
+        // So the merge belongs here too, and it is V21's rule at runtime: the arrivals move
+        // onto the question already waiting, and the redundant item goes. What is deleted is
+        // an item no person has seen or answered - its email is still readable on the
+        // survivor, and its reading is merged into the survivor's rows.
+        if (mergeIntoWaitingQuestion(item, vessel, payload.vessel(), diff)) return true;
+
         item.setKind(IntakeItemKind.VESSEL_FIELDS);
         item.setVesselId(vessel.getId());
         item.setSubjectLabel(truncate(vessel.getName()));
@@ -529,6 +547,60 @@ public class IntakeService {
         // open" cannot.
         recordPosition(vessel, payload.vessel(), arrivalOf(item.getParsedEmail()));
         return true;
+    }
+
+    /**
+     * Fold a just-identified hull's reading into the question already waiting about her.
+     *
+     * <p>The merge {@link #raiseVesselFields} makes, reached from the other direction: there
+     * the hull was known when the email arrived, here the lookup only says so afterwards. The
+     * question is about a hull either way, so one item answers it.
+     *
+     * <p>The arrivals move rather than being re-created, which is what keeps every email
+     * readable from the surviving item — and the position is filed before the move, because
+     * where she is open is the half that cannot wait for a reviewer either way.
+     *
+     * @return true when this item was folded away and there is nothing left to convert
+     */
+    private boolean mergeIntoWaitingQuestion(IntakeItem item, Vessel vessel,
+                                             Extraction.ExtractedVessel reading,
+                                             VesselFieldDiff.Result diff) {
+        for (IntakeItem pending : items.pendingForVessel(IntakeItemKind.VESSEL_FIELDS,
+                vessel.getId())) {
+            if (pending.getId().equals(item.getId())) continue;
+            IntakePayloads.VesselFields existing =
+                    read(pending, IntakePayloads.VesselFields.class);
+            if (existing == null) continue;
+
+            mergeInto(pending, existing, IntakeResolver.VesselMatch.LOOKUP_IMO, reading, diff);
+            recordPosition(vessel, reading, arrivalOf(item.getParsedEmail()));
+            moveSources(item, pending);
+            items.delete(item);
+            log.info("Intake item {} identified as {} ({}), which item {} already asks about; "
+                            + "merged and dropped", item.getId(), vessel.getName(),
+                    vessel.getId(), pending.getId());
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Re-point one item's arrivals at another, dropping any the target already holds.
+     *
+     * <p>Guarded against the unique index on {@code (intake_item_id, parsed_email_id)} the
+     * same way V21 guarded its bulk version: one parse can have raised both items, and its row
+     * is then already where it is going.
+     */
+    private void moveSources(IntakeItem from, IntakeItem to) {
+        for (IntakeItemSource source : itemSources.forItem(from.getId())) {
+            if (itemSources.existsByIntakeItemIdAndParsedEmailId(
+                    to.getId(), source.getParsedEmail().getId())) {
+                itemSources.delete(source);
+                continue;
+            }
+            source.setIntakeItem(to);
+            itemSources.save(source);
+        }
     }
 
     /**

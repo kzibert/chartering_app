@@ -685,6 +685,189 @@ class IntakeServiceTest {
         verify(exNames, never()).save(any());
     }
 
+    // ------------------------------------------- what a manual link teaches the resolver
+
+    /**
+     * Linking a hull by hand is what stops the same list asking again next week.
+     *
+     * <p>A NEW_VESSEL item exists precisely because nothing here matched: the email names a
+     * hull under a name no row carries, or under one two rows carry. Answering it points the
+     * reading at a ship, and the answer has to be written somewhere a later parse will read,
+     * or the identical list raises the identical question every time it arrives.
+     *
+     * <p>Two things are written, and they answer different questions. The former name is a
+     * fact about the <em>ship</em> and is what {@code findByExactName} finds for anybody; the
+     * alias is a fact about one <em>firm's vocabulary</em> and is what settles a name two
+     * hulls share, which no former name can. See {@code IntakeVesselAlias}.
+     */
+    @Test
+    void aManuallyLinkedHullIsRecognisedFromThatFirmAfterwards() {
+        when(vessels.findById(42L)).thenReturn(java.util.Optional.of(pacificDawn));
+        IntakeItem item = newVesselItem(600L, "ALPHA");
+        when(items.findWithEmailById(600L)).thenReturn(java.util.Optional.of(item));
+        IntakeItemSource arrival = new IntakeItemSource();
+        arrival.setIntakeItem(item);
+        arrival.setParsedEmail(parsed);
+        arrival.setReportedByCompany(interscan);
+        when(itemSources.forItem(600L)).thenReturn(List.of(arrival));
+
+        service.resolve(600L, IntakeService.Action.ALTERNATIVE, null, null, 42L, null, "me");
+
+        ArgumentCaptor<com.chartering.model.IntakeVesselAlias> saved =
+                ArgumentCaptor.forClass(com.chartering.model.IntakeVesselAlias.class);
+        verify(aliases).save(saved.capture());
+        assertThat(saved.getValue().getVesselId()).isEqualTo(42L);
+        assertThat(saved.getValue().getNameKey()).isEqualTo("alpha");
+        assertThat(saved.getValue().getReportedByCompany()).isSameAs(interscan);
+        assertThat(saved.getValue().getSource())
+                .isEqualTo(com.chartering.model.IntakeVesselAlias.LINKED);
+        // And the name itself, which any firm's list can now find her by.
+        verify(exNames).save(argThat(e -> e.getName().equals("ALPHA")));
+    }
+
+    /**
+     * One firm's answer is replaced rather than added to.
+     *
+     * <p>An owner sells a ship and takes the name to the next one. The firm's later statement
+     * is the one to act on, and a second row would put the resolver back where it started —
+     * two rows answering to one name, which is the thing it refuses to choose between.
+     */
+    @Test
+    void replacesThatFirmsEarlierAnswerRatherThanAddingToIt() {
+        when(vessels.findById(42L)).thenReturn(java.util.Optional.of(pacificDawn));
+        com.chartering.model.IntakeVesselAlias earlier = new com.chartering.model.IntakeVesselAlias();
+        earlier.setId(31L);
+        earlier.setVesselId(4499L);
+        earlier.setName("ALPHA");
+        earlier.setNameKey("alpha");
+        when(aliases.find(3L, "alpha")).thenReturn(java.util.Optional.of(earlier));
+
+        IntakeItem item = newVesselItem(601L, "ALPHA");
+        when(items.findWithEmailById(601L)).thenReturn(java.util.Optional.of(item));
+        IntakeItemSource arrival = new IntakeItemSource();
+        arrival.setIntakeItem(item);
+        arrival.setParsedEmail(parsed);
+        arrival.setReportedByCompany(interscan);
+        when(itemSources.forItem(601L)).thenReturn(List.of(arrival));
+
+        service.resolve(601L, IntakeService.Action.ALTERNATIVE, null, null, 42L, null, "me");
+
+        verify(aliases).save(argThat(a -> a.getId() != null && a.getId().equals(31L)
+                && a.getVesselId().equals(42L)));
+    }
+
+    // ------------------------------------------- one question per hull, whichever door
+
+    /**
+     * A hull the lookup has just identified joins the question already waiting about her.
+     *
+     * <p>{@code raiseVesselFields} has always merged into a pending item rather than adding a
+     * second; this path never did, and it is the path that reaches the queue most often. The
+     * loop it produced is tidy and endless: an email names a hull under a name nothing here
+     * carries, a NEW_VESSEL item is raised, the lookup identifies her and the item is
+     * converted — and because it is no longer a pending NEW_VESSEL, the next copy of the same
+     * list is not recognised as a repeat and raises a fresh one, which converts in its turn.
+     * FELIX stood in the queue three times over, MAGDALENA three times, C.EPSILON twice.
+     */
+    @Test
+    void foldsAJustIdentifiedHullIntoTheQuestionAlreadyWaiting() {
+        IntakeItem waiting = new IntakeItem();
+        waiting.setId(500L);
+        waiting.setKind(IntakeItemKind.VESSEL_FIELDS);
+        waiting.setStatus(IntakeItemStatus.PENDING);
+        waiting.setVesselId(42L);
+        waiting.setParsedEmail(parsed);
+        waiting.setPayload("""
+                {"vesselId":42,"vesselName":"PACIFIC DAWN","matchedBy":"LOOKUP_IMO",
+                 "vessel":{"name":"ANGELO"},
+                 "diffs":[{"field":"maximumDraft","label":"Draft","current":"6.37 m",
+                           "incoming":"6.83 m"}],
+                 "filled":[]}""");
+        when(items.pendingForVessel(IntakeItemKind.VESSEL_FIELDS, 42L))
+                .thenReturn(List.of(waiting));
+
+        IntakeItem arriving = newVesselItem(501L, "ANGELO");
+        when(items.pendingByKind(IntakeItemKind.NEW_VESSEL)).thenReturn(List.of(arriving));
+        identifiedAs(arriving, pacificDawn);
+
+        assertThat(service.reconcileIdentifiedHulls()).isEqualTo(1);
+
+        // The second question is gone rather than converted, and the first now carries the
+        // newer reading as well as its own.
+        verify(items).delete(arriving);
+        assertThat(arriving.getKind()).isEqualTo(IntakeItemKind.NEW_VESSEL);
+        assertThat(waiting.getPayload()).contains("maximumDraft");
+        assertThat(waiting.getPayload()).contains("deadweightTonnage");
+    }
+
+    /** With nothing waiting, the item still becomes the particulars question it always did. */
+    @Test
+    void stillConvertsWhenNoQuestionIsWaiting() {
+        IntakeItem arriving = newVesselItem(502L, "ANGELO");
+        when(items.pendingByKind(IntakeItemKind.NEW_VESSEL)).thenReturn(List.of(arriving));
+        identifiedAs(arriving, pacificDawn);
+
+        assertThat(service.reconcileIdentifiedHulls()).isEqualTo(1);
+
+        assertThat(arriving.getKind()).isEqualTo(IntakeItemKind.VESSEL_FIELDS);
+        assertThat(arriving.getVesselId()).isEqualTo(42L);
+        verify(items, never()).delete(any(IntakeItem.class));
+    }
+
+    /** The arrivals move onto the surviving item, so every email stays readable from it. */
+    @Test
+    void movesTheArrivalsOntoTheSurvivingQuestion() {
+        IntakeItem waiting = new IntakeItem();
+        waiting.setId(503L);
+        waiting.setKind(IntakeItemKind.VESSEL_FIELDS);
+        waiting.setStatus(IntakeItemStatus.PENDING);
+        waiting.setVesselId(42L);
+        waiting.setParsedEmail(parsed);
+        waiting.setPayload("""
+                {"vesselId":42,"vesselName":"PACIFIC DAWN","matchedBy":"LOOKUP_IMO",
+                 "vessel":{"name":"ANGELO"},"diffs":[],"filled":[]}""");
+        when(items.pendingForVessel(IntakeItemKind.VESSEL_FIELDS, 42L))
+                .thenReturn(List.of(waiting));
+
+        IntakeItem arriving = newVesselItem(504L, "ANGELO");
+        when(items.pendingByKind(IntakeItemKind.NEW_VESSEL)).thenReturn(List.of(arriving));
+        identifiedAs(arriving, pacificDawn);
+
+        IntakeItemSource itsArrival = new IntakeItemSource();
+        itsArrival.setId(70L);
+        itsArrival.setIntakeItem(arriving);
+        itsArrival.setParsedEmail(parsed);
+        when(itemSources.forItem(504L)).thenReturn(List.of(itsArrival));
+        when(itemSources.existsByIntakeItemIdAndParsedEmailId(503L, 9L)).thenReturn(false);
+
+        service.reconcileIdentifiedHulls();
+
+        assertThat(itsArrival.getIntakeItem()).isSameAs(waiting);
+        verify(itemSources).save(itsArrival);
+    }
+
+    /** A NEW_VESSEL item as the sweep leaves one, naming a hull under a name nothing carries. */
+    private IntakeItem newVesselItem(Long id, String name) {
+        IntakeItem item = new IntakeItem();
+        item.setId(id);
+        item.setKind(IntakeItemKind.NEW_VESSEL);
+        item.setStatus(IntakeItemStatus.PENDING);
+        item.setParsedEmail(parsed);
+        item.setSubjectLabel(name);
+        item.setPayload("""
+                {"vessel":{"name":"%s","dwt":32000,"openArea":"MARMARA","openText":"SPOT"},
+                 "searchedBy":"the name %s","suggestions":[]}""".formatted(name, name));
+        return item;
+    }
+
+    /** The lookup came back with a number this database already holds on that hull. */
+    private void identifiedAs(IntakeItem item, Vessel vessel) {
+        com.chartering.model.VesselLookup row = new com.chartering.model.VesselLookup();
+        row.setStatus(com.chartering.model.VesselLookup.STATUS_OK);
+        when(lookupService.forItem(item.getId())).thenReturn(java.util.Optional.of(row));
+        when(lookupService.alreadyOnFile(row)).thenReturn(java.util.Optional.of(vessel));
+    }
+
     @Test
     void ignoresAVesselTheModelReturnedWithNoName() {
         IntakeService.ApplyOutcome outcome = service.apply(parsed,
