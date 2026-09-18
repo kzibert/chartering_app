@@ -9,7 +9,15 @@ import org.hibernate.annotations.UpdateTimestamp;
 import java.time.LocalDateTime;
 
 /**
- * One email kept as training data, with what a model should make of it.
+ * One circular kept as training data, with what a model should make of it.
+ *
+ * <p><b>"Email" is the older half of what this holds.</b> Synced mail was the only text
+ * arriving when this table was built; the boards carry the same circulars from the same
+ * firms, and the parser reads them at inference, so the corpus takes from both. The fields
+ * below are the mail vocabulary and are filled from a post's equivalents — the board's date
+ * line for {@code sentAt}, its title or its name for {@code subject} — because what the
+ * export puts in front of the model has to be the same shape whichever door the text came
+ * in through.
  *
  * <p><b>Deliberately not a {@link MailMessage}, and not a view over one.</b> That table is a
  * mirror of the IMAP server, written only by the sync, and its rows come and go with the
@@ -41,6 +49,17 @@ public class AnalysisSample {
      */
     public static final String SOURCE_PASTED = "PASTED";
 
+    /**
+     * Captured off an open board the Feed tab collects.
+     *
+     * <p>Worth having in its own right rather than as more of the same. What reaches this
+     * desk by mail is what somebody chose to send it, and a corpus built only on that is a
+     * corpus of one circle's house styles. A board is whoever cared to paste — the layouts
+     * nobody addressed to us, which at inference is exactly the half the model has never
+     * been shown.
+     */
+    public static final String SOURCE_WEB = "WEB";
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -50,13 +69,28 @@ public class AnalysisSample {
     @JoinColumn(name = "mail_message_id")
     private MailMessage mailMessage;
 
+    /**
+     * The board post it came off, while the fetcher still holds a copy.
+     *
+     * <p>The same relationship {@link #mailMessage} is, for the same reason and with the same
+     * {@code ON DELETE SET NULL}: a board rolls its entries off the bottom and a source can be
+     * removed, and neither may take an annotation with it.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "feed_item_id")
+    private FeedItem feedItem;
+
     @Column(nullable = false, length = 20)
     private String source = SOURCE_MAILBOX;
 
     /**
-     * The original's Message-ID, and the dedupe key — the same one the mail sync uses, for
-     * the same reason: it survives a re-fetch, so capturing a folder twice adds nothing the
-     * second time.
+     * The original's Message-ID, and the dedupe key for mail — the same one the mail sync
+     * uses, for the same reason: it survives a re-fetch, so capturing a folder twice adds
+     * nothing the second time.
+     *
+     * <p>Null on a sample off a board: a post has no Message-ID, and inventing one would put
+     * a value in this column that matches nothing anywhere else. Those dedupe on the post
+     * itself and on its content hash instead — see {@code AnalysisService}.
      */
     @Column(name = "message_id", length = 998)
     private String messageId;

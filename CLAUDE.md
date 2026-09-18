@@ -99,7 +99,8 @@ Three things bite here:
   `V21__collapse_duplicate_pending_vessel_items.sql` and
   `V22__recover_former_names_from_change_log.sql` and
   `V23__add_cargo_max_ballast_days.sql` and `V24__add_feed.sql` and
-  `V25__add_intake_decisions.sql` and `V26__add_web_intake.sql` exist; the next one is V27.
+  `V25__add_intake_decisions.sql` and `V26__add_web_intake.sql` and
+  `V27__capture_web_into_analysis.sql` exist; the next one is V28.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
@@ -338,6 +339,32 @@ nor 503 ("not yet") is honest. `GET /analysis/status` always answers, because it
 UI asks before deciding whether the tab exists. The table is created everywhere regardless:
 Flyway builds one schema, not one per environment.
 
+- **It takes from the boards as well as the mailbox.** `analysis_samples.feed_item_id`
+  mirrors `mail_message_id` exactly, down to the `ON DELETE SET NULL`, and `source` gains a
+  third value (`WEB`). The reason is not tidiness: what arrives by mail is what somebody
+  *chose to send this desk*, so a corpus built only on that is a corpus of one circle's house
+  styles — and at inference the parser is handed whatever anyone pasted on a public page. The
+  boards are where the layouts nobody addressed to us live. Blank means every board marked
+  *Read into Intake* rather than every source there is, because a trade-press feed would
+  contribute articles a cargo-extraction model has nothing to learn from. Dedupe is two
+  questions: the post itself, and its `content_hash`, because the same circular gets pasted on
+  two boards and a duplicate in a corpus is one example weighted twice with its annotation
+  typed twice. The subject and date a post is shown under are
+  `AnalysisAnnotationTemplates.subjectFor`/`dateFor` — **called by the parser too**, so what
+  the model is trained on and what it is asked at inference are the same shape.
+- **The company is part of what is annotated, and the prompt is deliberately two constants.**
+  The skeletons ask for the firm's full style — name, website, city, country, address, people
+  with job titles, contacts with labels — in `CompanyStyleReader.Style`'s own shape, so a
+  model that learns it drops into the place the regex reader already occupies. But the running
+  finetune was measured under a prompt that says nothing about a company, and a prompt a model
+  has not seen is a prompt it answers worse. So `SYSTEM_PROMPT` is what `EmailParserClient`
+  sends and has not moved (`AnalysisPromptSplitTest` pins its SHA-256 and fails loudly if it
+  does), while `TRAINING_SYSTEM_PROMPT` — the same rules plus the company section — is what
+  the export trains against. **The swap, when a model trained on the new wording ships:** point
+  `SYSTEM_PROMPT` at the training one and regenerate `parser/extraction-schema.json` from
+  `chartering-ml` (`make schema`), because the JSON grammar is what actually decides whether
+  the model can emit a company at all. Until both are done the live parser cannot return one,
+  which is why leaving it alone costs nothing.
 - **`analysis_samples` is not `mail_messages`**, the same distinction `mail_replies` makes.
   That table is a mirror of the IMAP server and its rows come and go with the mailbox; a
   corpus on top of it would lose examples to housekeeping, and the annotation — the expensive

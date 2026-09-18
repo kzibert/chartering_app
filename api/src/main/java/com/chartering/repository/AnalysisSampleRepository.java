@@ -28,6 +28,31 @@ public interface AnalysisSampleRepository
     @Query("select s.mailMessage.id from AnalysisSample s where s.mailMessage.id in :ids")
     List<Long> findExistingMailMessageIds(@Param("ids") Collection<Long> ids);
 
+    /**
+     * Which of these posts are already in the corpus. The board half of
+     * {@link #findExistingMailMessageIds}, and what makes a second run over a board add only
+     * what the board has added.
+     */
+    @Query("select s.feedItem.id from AnalysisSample s where s.feedItem.id in :ids")
+    List<Long> findExistingFeedItemIds(@Param("ids") Collection<Long> ids);
+
+    /**
+     * The content hashes the corpus already holds from the boards.
+     *
+     * <p><b>The same circular gets pasted onto two boards</b> — that is the ordinary way a
+     * broker circulates, and the Feed's own selector already drops the repeat when it picks
+     * items for a summary. In a corpus a duplicate is worse than noise: it is one example
+     * weighted twice, and the annotation has to be typed twice to keep them consistent.
+     *
+     * <p>Only the web half is compared. Mail dedupes on its Message-ID, which is stronger,
+     * and a circular that arrived by mail <em>and</em> was posted publicly is two genuinely
+     * different arrivals of it — different layout, different signature handling — which is
+     * the variety this corpus is short of rather than a repeat of it.
+     */
+    @Query("select f.contentHash from AnalysisSample s join s.feedItem f "
+            + "where f.contentHash in :hashes")
+    List<String> findExistingFeedContentHashes(@Param("hashes") Collection<String> hashes);
+
     /** The tab's counters, in one query rather than one per label. */
     @Query("select s.label, count(s) from AnalysisSample s group by s.label")
     List<Object[]> countByLabel();

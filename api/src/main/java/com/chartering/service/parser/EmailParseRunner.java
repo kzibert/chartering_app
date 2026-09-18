@@ -107,11 +107,12 @@ public class EmailParseRunner {
                     fresh.setAttempts(0);
                     return fresh;
                 });
-        String subject = post.getTitle() != null && !post.getTitle().isBlank()
-                ? post.getTitle()
-                : (post.getSource() == null ? "Board post" : post.getSource().getName());
-        return parse(row, subject,
-                post.getPublishedAt() != null ? post.getPublishedAt() : post.getFetchedAt(),
+        // The corpus's own rule for both, not a copy of it: what the model is trained on and
+        // what it is asked at inference have to be the same shape, and two implementations of
+        // "what stands in for a post's subject" is exactly how that drifts.
+        return parse(row,
+                com.chartering.service.AnalysisAnnotationTemplates.subjectFor(post),
+                com.chartering.service.AnalysisAnnotationTemplates.dateFor(post),
                 post.getText(), "The post has no text — nothing to read.");
     }
 

@@ -96,7 +96,10 @@ public class AnalysisExportService {
 
             msgs.addObject()
                     .put("role", "system")
-                    .put("content", AnalysisAnnotationTemplates.SYSTEM_PROMPT);
+                    // The training prompt, not the live one: the corpus is collected for the
+                    // next model, and an example whose instruction asks for less than its
+                    // answer contains teaches the model to emit fields unpredictably.
+                    .put("content", AnalysisAnnotationTemplates.TRAINING_SYSTEM_PROMPT);
             msgs.addObject()
                     .put("role", "user")
                     .put("content", userTurn(s));
@@ -110,6 +113,10 @@ public class AnalysisExportService {
             ObjectNode meta = root.putObject("metadata");
             meta.put("sampleId", s.getId());
             meta.put("label", s.getLabel().name());
+            // Which door it came in through. A corpus that turns out to read one kind of
+            // layout badly is diagnosed by the mix, and "how much of this came off the
+            // boards" is not answerable from the text once it is in the file.
+            meta.put("source", s.getSource());
             if (s.getFromAddress() != null) meta.put("from", s.getFromAddress());
             if (s.getReceivedAt() != null) meta.put("receivedAt", s.getReceivedAt().toString());
 
