@@ -136,6 +136,15 @@ export interface FeedSettings {
   defaultSystemPrompt: string;
   defaultNotesPrompt: string;
   placeholders: string[];
+  /** The chat-completions endpoint summaries go to. */
+  modelUrl: string;
+  modelName: string;
+  /** True where a row holds it rather than the environment. */
+  modelUrlCustomised: boolean;
+  modelNameCustomised: boolean;
+  /** FEED_LLM_URL, or the parser's endpoint where that is blank. */
+  defaultModelUrl: string;
+  defaultModelName: string;
 }
 
 export type FeedSettingsRequest = Partial<
@@ -149,6 +158,8 @@ export type FeedSettingsRequest = Partial<
     | 'fetchIntervalMinutes'
     | 'systemPrompt'
     | 'notesPrompt'
+    | 'modelUrl'
+    | 'modelName'
   >
 >;
 

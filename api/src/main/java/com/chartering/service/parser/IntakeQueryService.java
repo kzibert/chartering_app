@@ -2,6 +2,7 @@ package com.chartering.service.parser;
 
 import com.chartering.config.MailboxProperties;
 import com.chartering.config.ParserProperties;
+import com.chartering.service.ModelEndpoint;
 import com.chartering.dto.CargoSourceResponse;
 import com.chartering.dto.IntakeItemResponse;
 import com.chartering.dto.IntakeStatusResponse;
@@ -112,8 +113,9 @@ public class IntakeQueryService {
         // Each one is the next thing to do rather than an error, because every one of them is
         // an ordinary state of a feature being set up.
         List<String> warnings = new ArrayList<>();
+        ModelEndpoint endpoint = settings.endpoint();
         if (!reachable) {
-            warnings.add("The model server at " + props.getUrl() + " is not answering. Start it "
+            warnings.add("The model server at " + endpoint.url() + " is not answering. Start it "
                     + "with: docker compose -f serve/docker-compose.llamacpp.yml up -d "
                     + "(in the chartering-ml project).");
         }
@@ -148,7 +150,7 @@ public class IntakeQueryService {
         return new IntakeStatusResponse(
                 true,
                 reachable,
-                props.getUrl(),
+                endpoint.url(),
                 reachable ? null : client.lastError(),
                 sweeps.isRunning(),
                 counts.pending(), counts.accepted(), counts.rejected(),

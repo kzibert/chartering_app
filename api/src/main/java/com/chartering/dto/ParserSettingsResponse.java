@@ -17,5 +17,22 @@ public record ParserSettingsResponse(
         int sweepMaxAgeDays,
         int defaultSweepIntervalMinutes,
         int defaultSweepBatchSize,
-        int defaultSweepMaxAgeDays) {
+        int defaultSweepMaxAgeDays,
+        /** The endpoint in force, which is the stored one where there is one. */
+        String modelUrl,
+        /** Blank means no model name is sent, which is what llama-server wants. */
+        String modelName,
+        /**
+         * True where a row holds it rather than the environment.
+         *
+         * <p>Sent so the screen can say which of the two is answering. A value stored equal to
+         * the configured one is deleted rather than kept, so this is never true of an address
+         * that merely looks the same.
+         */
+        boolean modelUrlCustomised,
+        boolean modelNameCustomised,
+        /** {@code PARSER_URL}, which is what clearing the field restores. */
+        String defaultModelUrl,
+        /** {@code PARSER_MODEL}, normally blank. */
+        String defaultModelName) {
 }

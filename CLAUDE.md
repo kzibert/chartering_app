@@ -719,6 +719,19 @@ and pinned **false** in `render.yaml` — that instance has no GPU and no route 
 a harder fact than the one behind `ANALYSIS_ENABLED`. Off, the tab is absent and every
 endpoint answers 404 except `GET /intake/status`, which the UI asks first.
 
+**Whether the feature exists is a deployment fact; which server answers it is not.**
+`PARSER_URL` and `PARSER_MODEL` are the defaults behind a runtime setting, and
+`ParserSettings.endpoint()` — not `ParserProperties` — is what `EmailParserClient` reads, per
+request. The reason is the same one that put the sweep interval there and is sharper here: the
+extraction server and the Feed's general model are swapped on one 8 GB card, so the address
+changes inside a working day. `ModelEndpoint` holds the rule and the URL check; a value stored
+equal to the configured one is **deleted rather than kept**, the way an unedited feed prompt has
+no row, so `.env` stays the baseline and "customised" means something. The timeouts stay in
+`ParserProperties`, because how long to wait is a fact about a deployment. Both instances share
+`app_settings` and that is safe here for the reason it is not for `MAIL_REPLY_PROVIDER`: with
+`PARSER_ENABLED` and `FEED_ANALYSIS_ENABLED` false, the hosted instance never reads the address
+at all.
+
 `EmailParserClient` sends `AnalysisAnnotationTemplates.SYSTEM_PROMPT` — the constant, not a
 copy — the same Date/Subject/blank/body user turn `AnalysisExportService` builds, and
 `parser/extraction-schema.json` on the request. All four are what the model was measured
@@ -1027,8 +1040,12 @@ source that refuses that is dropped, not worked around.
 - **`FeedLlmClient` is a sibling of `EmailParserClient`, not a reuse.** That client's prompt,
   schema and Date/Subject turn are pinned to the extraction measurement; a summary wants none of
   them, and the schema would make prose impossible.
-- **Summaries go to a different model (`FEED_LLM_URL`), and that was measured, not preferred.**
-  Blank falls back to `PARSER_URL`, and the finetune does write prose on a short input — which is
+- **Summaries go to a different model, and that was measured, not preferred.** The address is
+  the Feed's own setting on the Settings tab, with `FEED_LLM_URL` as its default, and the chain
+  is three links: the setting, else that variable, else **the parser's endpoint as resolved** —
+  not `PARSER_URL` as booted, or repointing the parser would leave the Feed quietly talking to
+  the old box. What is reported as the configured value is the second link, because that is what
+  clearing the field restores. Falling through to the parser's model does write prose on a short input — which is
   why it looked fine at first. On real feed batches it reported "no vessel openings" for a ship.gr
   position list full of them, answered "nothing relevant" to every Handysize batch, and, given the
   summary prompt on two items, wrote eight Danube–Med rates from $12.50/t to $16.00/t that neither
@@ -1039,6 +1056,9 @@ source that refuses that is dropped, not worked around.
   nothing lost. The 409 below applies only when both features point at one server.
 - **A summary run does not start while the parser sweep is running on the same server** (409):
   llama-server's slots share one KV cache, and two 7,000-token requests do not fit in 8,192.
+  "The same server" is the two *resolved* endpoints compared, since both are now pointed by hand.
+  A model name is inherited from the parser only where the address was inherited too — sent to a
+  second server it names nothing there, which an Ollama refuses outright.
 - **Every figure in a summary is looked up in the items it was written from** (`FigureCheck`) and
   the ones not found are listed under it. A flag, not a filter: a figure the model computed
   honestly will not be found either, and deleting it would be the tool deciding what a broker may
@@ -1058,7 +1078,7 @@ stored and printed on the summary**, because a summary of twelve items out of fo
 like one of all forty.
 
 The window (default 8,192, what chartering-ml serves), answer sizes, lookback, call cap, fetch
-interval and both prompts are `app_settings` (`FeedSettings`). The prompts are templates with
+interval, **the model's address and name** and both prompts are `app_settings` (`FeedSettings`). The prompts are templates with
 `{topic}`, `{keywords}`, `{today}`, `{period}`; an unedited prompt has no row, so a better default
 reaches everyone who never changed theirs, and each summary stores the prompt it ran under.
 Nothing `feed_*` is audited — machine copies of other people's pages, and documents about them.
