@@ -305,6 +305,16 @@ export interface ParserSettingsResponse {
   defaultSweepIntervalMinutes: number;
   defaultSweepBatchSize: number;
   defaultSweepMaxAgeDays: number;
+  /** The chat-completions endpoint in force — the stored one where there is one, else PARSER_URL. */
+  modelUrl: string;
+  /** Blank means no model name is sent, which is what llama-server wants. */
+  modelName: string;
+  /** True where a row holds it rather than the environment. */
+  modelUrlCustomised: boolean;
+  modelNameCustomised: boolean;
+  /** PARSER_URL / PARSER_MODEL — what clearing the field restores. */
+  defaultModelUrl: string;
+  defaultModelName: string;
 }
 
 export interface ParserSettingsRequest {
@@ -312,6 +322,10 @@ export interface ParserSettingsRequest {
   sweepBatchSize?: number;
   /** How far back unparsed mail is fetched from, in days. 0 = no limit. */
   sweepMaxAgeDays?: number;
+  /** Blank restores PARSER_URL. */
+  modelUrl?: string;
+  /** Blank restores PARSER_MODEL. */
+  modelName?: string;
 }
 
 /** Who has told us about a cargo — one row per arrival, kept through a merge. */

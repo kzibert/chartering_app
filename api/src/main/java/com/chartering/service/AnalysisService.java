@@ -71,6 +71,8 @@ public class AnalysisService {
     private final MailboxProperties mailboxProps;
     private final AnalysisSampleRepository samples;
     private final MailMessageRepository messages;
+    private final com.chartering.repository.FeedItemRepository feedItems;
+    private final com.chartering.repository.FeedSourceRepository feedSources;
     private final MailServerFolderService serverFolders;
     private final ObjectMapper json;
     private final DtoMapper mapper;
@@ -122,7 +124,10 @@ public class AnalysisService {
                 byLabel,
                 byStatus,
                 AnalysisAnnotationTemplates.all(),
-                AnalysisAnnotationTemplates.SYSTEM_PROMPT,
+                // What a reviewer is labelling against, which is the training prompt - the
+                // live parser's is deliberately a version behind until a model trained on
+                // this one ships. See AnalysisAnnotationTemplates.
+                AnalysisAnnotationTemplates.TRAINING_SYSTEM_PROMPT,
                 props.getMaxBodyChars(),
                 props.getMaxCapturePerRun(),
                 mailboxProps.isEnabled(),
@@ -182,7 +187,120 @@ public class AnalysisService {
     @Transactional
     public AnalysisCaptureResponse capture(AnalysisCaptureRequest req) {
         requireEnabled();
+        return AnalysisSample.SOURCE_WEB.equalsIgnoreCase(req.source())
+                ? captureWeb(req)
+                : captureMail(req);
+    }
 
+    /**
+     * Capture off the open boards.
+     *
+     * <p><b>Why the corpus wants these at all.</b> What reaches this desk by mail is what
+     * somebody chose to send it, so a corpus built only on that is a corpus of one circle's
+     * house styles — and the parser is asked, at inference, to read whatever anyone pasted on
+     * a public board. The boards are where the layouts nobody addressed to us live, which is
+     * precisely the half a finetune trained on the mailbox has never been shown.
+     *
+     * <p>Everything else is the mail capture's rules, unchanged and for unchanged reasons: it
+     * writes nothing back to the source, it labels nothing, and it never takes a post twice.
+     * The dedupe is two questions rather than one — the post itself, so a second run adds only
+     * what the board has added, and its content hash, because the same circular gets pasted
+     * onto two boards and a duplicate in a corpus is one example weighted twice with its
+     * annotation typed twice.
+     *
+     * <p>Not behind the Feed's own switch. {@code FEED_ANALYSIS_ENABLED} governs fetching and
+     * summarising — reaching out to somebody else's server — and this reads rows already in
+     * the database, which both deployments share. A hosted instance that never fetches a page
+     * can still label what the office one collected.
+     */
+    private AnalysisCaptureResponse captureWeb(AnalysisCaptureRequest req) {
+        int limit = clampLimit(req.limit());
+        // Blank means the boards marked to be read into Intake - the ones carrying circulars.
+        // See AnalysisCaptureRequest: every source there is would pull in news articles a
+        // cargo-extraction model has nothing to learn from.
+        List<Long> sourceIds = req.feedSourceId() != null
+                ? List.of(req.feedSourceId())
+                : feedSources.findByIntoIntakeTrueOrderByNameAsc().stream()
+                        .map(com.chartering.model.FeedSource::getId).toList();
+        if (sourceIds.isEmpty()) {
+            return new AnalysisCaptureResponse(0, 0, 0, 0, false, List.of());
+        }
+
+        // Newest first, for the mail capture's reason: a run that stops at its cap should have
+        // taken the recent end of the range.
+        Page<com.chartering.model.FeedItem> page = feedItems.findAll(
+                com.chartering.specification.FeedItemSpecification.forCapture(
+                        sourceIds, req.search(), req.receivedFrom(), req.receivedTo()),
+                // The order is the specification's own, on the published date falling back to
+                // the fetched one - a post with no date line must not sort as if it had none.
+                PageRequest.of(0, limit));
+        List<com.chartering.model.FeedItem> candidates = page.getContent();
+
+        Set<Long> seenPosts = new HashSet<>(candidates.isEmpty()
+                ? List.<Long>of()
+                : samples.findExistingFeedItemIds(
+                        candidates.stream().map(com.chartering.model.FeedItem::getId).toList()));
+        Set<String> seenHashes = new HashSet<>(candidates.isEmpty()
+                ? List.<String>of()
+                : samples.findExistingFeedContentHashes(candidates.stream()
+                        .map(com.chartering.model.FeedItem::getContentHash)
+                        .filter(Objects::nonNull).toList()));
+
+        String user = currentUser();
+        List<AnalysisSample> batch = new ArrayList<>();
+        List<String> examples = new ArrayList<>();
+        int alreadyPresent = 0;
+        int skippedEmpty = 0;
+
+        for (com.chartering.model.FeedItem post : candidates) {
+            // add() returning false is both "already in the corpus" and the guard against one
+            // run taking the same circular twice off two boards.
+            if (!seenPosts.add(post.getId())) {
+                alreadyPresent++;
+                continue;
+            }
+            if (post.getContentHash() != null && !seenHashes.add(post.getContentHash())) {
+                alreadyPresent++;
+                continue;
+            }
+            String body = trimBody(post.getText());
+            if (body == null) {
+                skippedEmpty++;
+                continue;
+            }
+
+            AnalysisSample sample = new AnalysisSample();
+            sample.setFeedItem(post);
+            sample.setSource(AnalysisSample.SOURCE_WEB);
+            // No messageId: a post has none, and inventing one would put a value in that
+            // column matching nothing anywhere else. The two lines above are its dedupe.
+            //
+            // The subject and the date are the corpus's own rule, which the parser calls too -
+            // what the model is trained on and what it is asked at inference have to be the
+            // same shape. See AnalysisAnnotationTemplates.subjectFor.
+            sample.setSubject(AnalysisAnnotationTemplates.subjectFor(post));
+            sample.setSentAt(AnalysisAnnotationTemplates.dateFor(post));
+            sample.setReceivedAt(post.getFetchedAt());
+            // The board stands where a sender would. There is no address to record - nobody
+            // sent this to us - and the firm that signed it is inside the text, where the
+            // model is meant to read it from.
+            sample.setFromName(post.getSource() == null ? null : post.getSource().getName());
+            sample.setBodyText(body);
+            sample.setCreatedBy(user);
+            batch.add(sample);
+            if (examples.size() < 5) examples.add(sample.getSubject());
+        }
+
+        samples.saveAll(batch);
+        log.info("Analysis capture (web): {} matched, {} captured, {} already present, {} empty",
+                page.getTotalElements(), batch.size(), alreadyPresent, skippedEmpty);
+
+        return new AnalysisCaptureResponse(
+                page.getTotalElements(), batch.size(), alreadyPresent, skippedEmpty,
+                page.getTotalElements() > limit, examples);
+    }
+
+    private AnalysisCaptureResponse captureMail(AnalysisCaptureRequest req) {
         Specification<MailMessage> spec = Specification.allOf(
                 MailMessageSpecification.matches(
                         req.search(), Boolean.TRUE.equals(req.searchBody())),

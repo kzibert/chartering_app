@@ -17,10 +17,12 @@ import java.time.LocalDateTime;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record AnalysisSampleResponse(
         Long id,
-        /** MAILBOX or PASTED. */
+        /** MAILBOX, WEB or PASTED. */
         String source,
         /** The message it was captured from, if that message is still in the mailbox. */
         Long mailMessageId,
+        /** The board post it was captured from, while the fetcher still holds a copy. */
+        Long feedItemId,
         String fromAddress,
         String fromName,
         String subject,

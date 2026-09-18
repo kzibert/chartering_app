@@ -5,7 +5,9 @@ import {
   Button,
   Card,
   Col,
+  Divider,
   Form,
+  Input,
   InputNumber,
   Popconfirm,
   Row,
@@ -26,16 +28,24 @@ interface FormValues {
   sweepIntervalMinutes: number;
   sweepBatchSize: number;
   sweepMaxAgeDays: number;
+  modelUrl: string;
+  modelName: string;
 }
 
 /**
  * How often incoming mail is read by the model, and how much of it at a time.
  *
- * <p><b>Here rather than in the environment</b>, unlike everything else about the parser.
- * Where the model lives and how long to wait for it are facts about a deployment and belong
- * in {@code .env}; how often to read is a knob turned while watching the queue — "that was
- * too slow this morning", "leave it alone, the GPU is training" — and an environment
- * variable is a redeploy. The same argument that put the circular provider in this table.
+ * <p><b>Here rather than in the environment</b>, unlike the timeouts. How often to read is a
+ * knob turned while watching the queue — "that was too slow this morning", "leave it alone, the
+ * GPU is training" — and an environment variable is a redeploy. The same argument that put the
+ * circular provider in this table.
+ *
+ * <p><b>Which model reads it is the same kind of knob</b>, which is why the address is on this
+ * card too. {@code PARSER_URL} is still what a fresh install uses and what clearing the field
+ * restores; overriding it here is for the ordinary week — the extraction server and the Feed's
+ * general model are swapped on one 8GB card, and a second box gets a port of its own. How long
+ * to wait for whichever one is up stays in {@code .env}, because a timeout is a fact about a
+ * deployment.
  *
  * <p><b>0 is a supported setting, not a broken one.</b> It stops the timer and leaves Parse
  * now as the only way in, which is what somebody wants while the workstation is doing
@@ -64,6 +74,11 @@ export default function ParserSettingsCard() {
         sweepIntervalMinutes: settings.sweepIntervalMinutes,
         sweepBatchSize: settings.sweepBatchSize,
         sweepMaxAgeDays: settings.sweepMaxAgeDays,
+        // The address in force rather than the override, so the field always shows where mail is
+        // actually being sent. Saving it unchanged stores nothing: a value equal to the
+        // configured one is deleted, which leaves .env still owning it.
+        modelUrl: settings.modelUrl,
+        modelName: settings.modelName,
       });
     }
   }, [settings, form]);
@@ -74,7 +89,9 @@ export default function ParserSettingsCard() {
     settings != null &&
     (settings.sweepIntervalMinutes !== settings.defaultSweepIntervalMinutes ||
       settings.sweepBatchSize !== settings.defaultSweepBatchSize ||
-      settings.sweepMaxAgeDays !== settings.defaultSweepMaxAgeDays);
+      settings.sweepMaxAgeDays !== settings.defaultSweepMaxAgeDays ||
+      settings.modelUrlCustomised ||
+      settings.modelNameCustomised);
   const running = sweep.data?.running === true;
   const reachable = status.data?.reachable === true;
 
@@ -98,7 +115,7 @@ export default function ParserSettingsCard() {
               settings?.defaultSweepBatchSize ?? 20
             } messages a sweep, mail from the last ${
               settings?.defaultSweepMaxAgeDays ?? 30
-            } days.`}
+            } days, and the model at ${settings?.defaultModelUrl ?? 'the configured address'}.`}
             onConfirm={() => resetSettings.mutate(undefined, {
               onSuccess: () => toast.success('Back to the defaults'),
             })}
@@ -185,6 +202,64 @@ export default function ParserSettingsCard() {
             </Form.Item>
           </Col>
         </Row>
+
+        <Divider style={{ marginTop: 0 }} orientation="left" plain>
+          <Space size={4} wrap>
+            Which model reads it
+            {settings?.modelUrlCustomised || settings?.modelNameCustomised ? (
+              <Tag color="blue">set here</Tag>
+            ) : (
+              <Tag>from .env</Tag>
+            )}
+          </Space>
+        </Divider>
+
+        <Row gutter={16}>
+          <Col xs={24} md={16}>
+            <Form.Item
+              name="modelUrl"
+              label="Model address"
+              rules={[
+                {
+                  validator: (_, value: string) =>
+                    !value || /^https?:\/\/\S+$/.test(value.trim())
+                      ? Promise.resolve()
+                      : Promise.reject(new Error('An http:// or https:// address, or empty for the configured one')),
+                },
+              ]}
+              extra={
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  The chat-completions endpoint that reads the mail. <b>Clear it</b> to go back to{' '}
+                  <code>{settings?.defaultModelUrl}</code> from <code>.env</code>. The Feed
+                  summarises through its own address, below — the two models are swapped on one
+                  card and must not be one setting.
+                </Typography.Text>
+              }
+            >
+              <Input
+                placeholder={settings?.defaultModelUrl}
+                allowClear
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </Form.Item>
+          </Col>
+          <Col xs={24} md={8}>
+            <Form.Item
+              name="modelName"
+              label="Model name"
+              extra={
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Sent only when set. llama-server serves one model and ignores it; an Ollama
+                  refuses the request without it, so pointing at one is this and the address —
+                  though it scores markedly worse on the same weights.
+                </Typography.Text>
+              }
+            >
+              <Input placeholder="none" allowClear autoComplete="off" spellCheck={false} />
+            </Form.Item>
+          </Col>
+        </Row>
       </Form>
 
       <Space wrap>
@@ -215,8 +290,8 @@ export default function ParserSettingsCard() {
         positions onto the Open fleet tab, cargoes onto the Cargoes tab. Anything it will not
         decide alone — a particular that disagrees with a vessel's record, a hull nobody has
         heard of, a cargo that looks like one already in hand — waits on the <b>Intake</b> tab.
-        Where the model lives and how long to wait for it are set in <code>.env</code>, not
-        here.
+        Whether the feature exists at all (<code>PARSER_ENABLED</code>) and how long to wait for
+        an answer are set in <code>.env</code>, not here.
       </Typography.Paragraph>
     </Card>
   );

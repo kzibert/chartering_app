@@ -1,5 +1,6 @@
 package com.chartering.service;
 
+import com.chartering.config.ParserProperties;
 import com.chartering.model.AppSetting;
 import com.chartering.repository.AppSettingRepository;
 import lombok.RequiredArgsConstructor;
@@ -17,9 +18,16 @@ import java.util.stream.Collectors;
  * <p><b>Runtime settings rather than environment variables, and the reason is the same one
  * that put the circular provider in this table.</b> These are knobs turned while watching the
  * queue — "that was too slow this morning", "stop reading for a bit, the GPU is training" —
- * and an environment variable is a redeploy. Where the model lives and how long to wait for
- * it stay in {@code ParserProperties}, because those are facts about a deployment rather than
- * about a working day.
+ * and an environment variable is a redeploy. How long to wait for the model stays in
+ * {@code ParserProperties}, because a timeout is a fact about a deployment rather than about a
+ * working day.
+ *
+ * <p><b>Where the model lives is both.</b> {@code PARSER_URL} is still what a fresh install
+ * uses, and {@link #endpoint()} lets it be overridden from the Settings tab — because the
+ * reason to move it is not a redeploy either: the extraction finetune and the general model are
+ * swapped on one card, a second box gets a port of its own, an Ollama is tried for an evening.
+ * See {@link ModelEndpoint} for why an override that equals the configured value is deleted
+ * rather than stored.
  *
  * <p>Only overridden values are stored; an absent row means the default below is in force.
  * That is this table's standing rule and it is what makes "reset" a delete rather than a
@@ -43,6 +51,14 @@ public class ParserSettings {
 
     /** How far back unparsed mail may be fetched from. 0 means no limit. */
     public static final String SWEEP_MAX_AGE_DAYS = "parser.sweepMaxAgeDays";
+
+    /** The chat-completions endpoint. Absent means {@code PARSER_URL}. */
+    public static final String MODEL_URL = "parser.modelUrl";
+
+    /** The model name to send. Absent means {@code PARSER_MODEL}, which is normally nothing. */
+    public static final String MODEL_NAME = "parser.modelName";
+
+    private static final List<String> MODEL_KEYS = List.of(MODEL_URL, MODEL_NAME);
 
     /**
      * Thirty minutes.
@@ -100,6 +116,7 @@ public class ParserSettings {
             java.time.LocalDateTime.of(1900, 1, 1, 0, 0);
 
     private final AppSettingRepository repository;
+    private final ParserProperties props;
 
     /** What the Settings tab shows and sends back. */
     public record Values(int sweepIntervalMinutes, int sweepBatchSize, int sweepMaxAgeDays) {
@@ -150,6 +167,58 @@ public class ParserSettings {
         return values().sweepBatchSize();
     }
 
+    /**
+     * Where the model is, and whether that is this instance's own answer or the configured one.
+     *
+     * <p>Read on every call rather than cached, for {@link #sweepIntervalMinutes()}'s reason: a
+     * cache would need invalidating from the write, and the failure it causes is the worst kind —
+     * somebody repoints the address, watches the old server answer, and cannot tell whether the
+     * setting did not save or the app did not notice.
+     */
+    @Transactional(readOnly = true)
+    public ModelEndpoint endpoint() {
+        Map<String, String> stored = repository.findByKeyIn(MODEL_KEYS).stream()
+                .collect(Collectors.toMap(AppSetting::getKey, AppSetting::getValue));
+        String configuredUrl = blankToEmpty(props.getUrl());
+        String configuredModel = blankToEmpty(props.getModel());
+        return new ModelEndpoint(
+                readText(stored, MODEL_URL, configuredUrl),
+                readText(stored, MODEL_NAME, configuredModel),
+                configuredUrl,
+                configuredModel);
+    }
+
+    /**
+     * The address and the model name. Null leaves either alone; blank restores the configured one.
+     *
+     * <p>Its own method rather than three more arguments on {@link #update}: the pacing knobs and
+     * the address are edited on separate cards and saved separately, and a single method would
+     * have each form sending nulls for the other's fields.
+     */
+    @Transactional
+    public ModelEndpoint updateEndpoint(String modelUrl, String modelName) {
+        if (modelUrl != null) {
+            putOrClear(MODEL_URL,
+                    modelUrl.isBlank() ? "" : ModelEndpoint.requireCompletionsUrl(modelUrl),
+                    blankToEmpty(props.getUrl()));
+        }
+        if (modelName != null) {
+            putOrClear(MODEL_NAME, modelName.strip(), blankToEmpty(props.getModel()));
+        }
+        ModelEndpoint endpoint = endpoint();
+        log.info("Parser model endpoint: {}{} ({})", endpoint.url(),
+                endpoint.model().isEmpty() ? "" : " model " + endpoint.model(),
+                endpoint.urlCustomised() || endpoint.modelCustomised()
+                        ? "set here" : "from the environment");
+        return endpoint;
+    }
+
+    @Transactional
+    public ModelEndpoint resetEndpoint() {
+        repository.deleteByKeyIn(MODEL_KEYS);
+        return endpoint();
+    }
+
     @Transactional
     public Values update(Integer intervalMinutes, Integer batchSize, Integer maxAgeDays) {
         if (intervalMinutes != null) {
@@ -189,6 +258,30 @@ public class ParserSettings {
         repository.deleteByKeyIn(
                 List.of(SWEEP_INTERVAL_MINUTES, SWEEP_BATCH_SIZE, SWEEP_MAX_AGE_DAYS));
         return values();
+    }
+
+    /**
+     * A value equal to the configured one is not stored.
+     *
+     * <p>The same rule an unedited feed prompt follows, and what keeps "customised" meaningful:
+     * typing the address that is already in force leaves the environment owning it, so a later
+     * change to {@code PARSER_URL} still reaches this instance.
+     */
+    private void putOrClear(String key, String value, String configured) {
+        if (value.isEmpty() || value.equals(configured)) {
+            repository.deleteByKeyIn(List.of(key));
+        } else {
+            put(key, value);
+        }
+    }
+
+    private static String readText(Map<String, String> stored, String key, String fallback) {
+        String raw = stored.get(key);
+        return raw == null || raw.isBlank() ? fallback : raw.strip();
+    }
+
+    private static String blankToEmpty(String s) {
+        return s == null ? "" : s.strip();
     }
 
     private void put(String key, String value) {

@@ -113,15 +113,19 @@ public class AnalysisController {
     }
 
     @PostMapping("/capture")
-    @Operation(summary = "Take matching synced mail into the corpus",
-            description = "Scoped with the same axes the Mailbox tab filters on. Nothing in "
-                    + "the mailbox is changed — no flag, no move. Everything lands unlabelled "
-                    + "and unreviewed, and mail already captured is skipped, so running this "
-                    + "again after a sync adds only what is new.")
+    @Operation(summary = "Take matching circulars into the corpus",
+            description = "source=MAILBOX (the default) scopes with the same axes the Mailbox "
+                    + "tab filters on; source=WEB takes posts off the open boards the Feed "
+                    + "tab collects, which is where the layouts nobody addressed to this desk "
+                    + "live. "
+                    + "Neither touches what it read — no flag, no move, nothing written back "
+                    + "to a board. Everything lands unlabelled and unreviewed, and anything "
+                    + "already captured is skipped, so running this again after a sync or a "
+                    + "fetch adds only what is new.")
     public ResponseEntity<AnalysisCaptureResponse> capture(
             @RequestBody(required = false) AnalysisCaptureRequest body) {
         AnalysisCaptureRequest req = body != null ? body
-                : new AnalysisCaptureRequest(null, null, null, null, null, null, null);
+                : new AnalysisCaptureRequest(null, null, null, null, null, null, null, null, null);
         return ResponseEntity.ok(analysis.capture(req));
     }
 

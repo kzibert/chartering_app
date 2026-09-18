@@ -271,7 +271,7 @@ chartering:
     max-attempts: ${PARSER_MAX_ATTEMPTS:3}
 
   # The Feed tab: Telegram channels, RSS feeds and a few websites read on a timer, and summarised
-  # per topic by the same local model the parser uses (PARSER_URL - there is one server to point at).
+  # per topic by a local model of their own (llm-url below, or the Settings tab).
   #
   # THE TAB IS ON EVERYWHERE; ONLY THE ANALYSIS IS SWITCHED. Sources, topics, the prompt and the
   # summaries are rows in the shared database, so the hosted instance reads and edits them. What
@@ -283,9 +283,10 @@ chartering:
   # here: they are runtime settings (FeedSettings), turned while reading the output.
   feed:
     analysis-enabled: ${FEED_ANALYSIS_ENABLED:false}
-    # The model that writes summaries. Blank means the parser's (PARSER_URL) - which works, but
-    # that model is an extraction finetune: measured on real feed items it missed facts and wrote
-    # rates nobody quoted. A general instruct model on its own port is what this is for.
+    # The model that writes summaries, as a default the Settings tab can override. Blank means
+    # the parser's endpoint - which works, but that model is an extraction finetune: measured on
+    # real feed items it missed facts and wrote rates nobody quoted. A general instruct model on
+    # its own port is what this is for. See FeedSettings.endpoint() for the three-link chain.
     llm-url: ${FEED_LLM_URL:}
     llm-model: ${FEED_LLM_MODEL:}
     # Names this application, and every source it was built against answers it. A site that

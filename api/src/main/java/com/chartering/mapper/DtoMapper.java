@@ -300,6 +300,7 @@ public class DtoMapper {
         return new AnalysisSampleResponse(
                 s.getId(), s.getSource(),
                 s.getMailMessage() != null ? s.getMailMessage().getId() : null,
+                s.getFeedItem() != null ? s.getFeedItem().getId() : null,
                 s.getFromAddress(), s.getFromName(), s.getSubject(),
                 s.getSentAt(), s.getReceivedAt(), snippet, s.getAttachmentNames(),
                 s.getLabel(), s.getStatus(),

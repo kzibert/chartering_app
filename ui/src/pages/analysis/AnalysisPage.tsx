@@ -222,7 +222,7 @@ export default function AnalysisPage() {
                 icon={<ImportOutlined />}
                 onClick={() => setCaptureOpen(true)}
               >
-                Capture from mailbox
+                Capture circulars
               </Button>
               <Button icon={<PlusOutlined />} onClick={() => setPasteOpen(true)}>
                 Paste an email
@@ -269,6 +269,7 @@ export default function AnalysisPage() {
                   placeholder="Any"
                   options={[
                     { value: 'MAILBOX', label: 'From the mailbox' },
+                    { value: 'WEB', label: 'From the boards' },
                     { value: 'PASTED', label: 'Pasted in' },
                   ]}
                 />

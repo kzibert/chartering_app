@@ -5,7 +5,9 @@ import {
   Button,
   Card,
   Col,
+  Divider,
   Form,
+  Input,
   InputNumber,
   Popconfirm,
   Row,
@@ -24,6 +26,8 @@ interface FormValues {
   lookbackDays: number;
   maxCallsPerTopic: number;
   fetchIntervalMinutes: number;
+  modelUrl: string;
+  modelName: string;
 }
 
 const hint = (text: ReactNode) => (
@@ -38,6 +42,14 @@ const hint = (text: ReactNode) => (
  * <p>The context window is the one number everything else is measured against: prompt, material
  * and answer all share it. The default is what the model is served with today; Detect asks the
  * server, so raising --ctx-size in chartering-ml is one click here rather than a guess.
+ *
+ * <p><b>Which model writes them is its own address, not the parser's.</b> That was measured
+ * rather than preferred: the extraction finetune reported "no vessel openings" for a ship.gr
+ * position list full of them and invented eight Danube–Med rates. An 8GB card cannot hold both
+ * servers, so they are swapped — which is exactly why the address is here and not in
+ * <code>.env</code>. Clearing the field falls back to <code>FEED_LLM_URL</code>, and to the
+ * parser's endpoint where that is blank too: the single-server shape, which works and is not the
+ * one to want.
  *
  * <p>Shown only where the Feed can fetch and summarise — on the hosted instance there is no model
  * to size and nothing to schedule. The prompts are edited on the Feed tab, beside the topics
@@ -62,6 +74,9 @@ export default function FeedSettingsCard() {
         lookbackDays: settings.lookbackDays,
         maxCallsPerTopic: settings.maxCallsPerTopic,
         fetchIntervalMinutes: settings.fetchIntervalMinutes,
+        // The address in force, not the override: saving it back unchanged stores nothing.
+        modelUrl: settings.modelUrl,
+        modelName: settings.modelName,
       });
     }
   }, [settings, form]);
@@ -75,7 +90,9 @@ export default function FeedSettingsCard() {
       settings.notesMaxTokens !== settings.defaultNotesMaxTokens ||
       settings.lookbackDays !== settings.defaultLookbackDays ||
       settings.maxCallsPerTopic !== settings.defaultMaxCallsPerTopic ||
-      settings.fetchIntervalMinutes !== settings.defaultFetchIntervalMinutes);
+      settings.fetchIntervalMinutes !== settings.defaultFetchIntervalMinutes ||
+      settings.modelUrlCustomised ||
+      settings.modelNameCustomised);
 
   const detect = async () => {
     setDetecting(true);
@@ -106,7 +123,7 @@ export default function FeedSettingsCard() {
         <Space wrap>
           <Popconfirm
             title="Back to the defaults?"
-            description="The prompts are kept; they have their own reset on the Feed tab."
+            description="The numbers and the model address. The prompts are kept; they have their own reset on the Feed tab."
             onConfirm={() =>
               resetSettings.mutate(undefined, { onSuccess: () => toast.success('Back to the defaults') })
             }
@@ -210,6 +227,59 @@ export default function FeedSettingsCard() {
               )}
             >
               <InputNumber min={0} max={1440} step={15} addonAfter="min" style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
+        </Row>
+
+        <Divider style={{ marginTop: 0 }} orientation="left" plain>
+          <Space size={4} wrap>
+            Which model writes the summaries
+            {settings?.modelUrlCustomised || settings?.modelNameCustomised ? (
+              <Tag color="blue">set here</Tag>
+            ) : (
+              <Tag>from .env</Tag>
+            )}
+          </Space>
+        </Divider>
+
+        <Row gutter={16}>
+          <Col xs={24} md={16}>
+            <Form.Item
+              name="modelUrl"
+              label="Model address"
+              rules={[
+                {
+                  validator: (_, value: string) =>
+                    !value || /^https?:\/\/\S+$/.test(value.trim())
+                      ? Promise.resolve()
+                      : Promise.reject(new Error('An http:// or https:// address, or empty for the configured one')),
+                },
+              ]}
+              extra={hint(
+                <>
+                  Its own server on purpose: the parser's model is an extraction finetune, and on
+                  real feed items it missed openings that were there and wrote rates that were
+                  not. <b>Clear it</b> to go back to <code>{settings?.defaultModelUrl}</code>.
+                  Pointing it at the parser's address is supported — a summary run then waits for
+                  a sweep to finish, because the two share one KV cache.
+                </>,
+              )}
+            >
+              <Input
+                placeholder={settings?.defaultModelUrl}
+                allowClear
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </Form.Item>
+          </Col>
+          <Col xs={24} md={8}>
+            <Form.Item
+              name="modelName"
+              label="Model name"
+              extra={hint('Sent only when set. llama-server ignores it; an Ollama needs it.')}
+            >
+              <Input placeholder="none" allowClear autoComplete="off" spellCheck={false} />
             </Form.Item>
           </Col>
         </Row>

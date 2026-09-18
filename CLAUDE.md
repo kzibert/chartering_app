@@ -99,7 +99,8 @@ Three things bite here:
   `V21__collapse_duplicate_pending_vessel_items.sql` and
   `V22__recover_former_names_from_change_log.sql` and
   `V23__add_cargo_max_ballast_days.sql` and `V24__add_feed.sql` and
-  `V25__add_intake_decisions.sql` and `V26__add_web_intake.sql` exist; the next one is V27.
+  `V25__add_intake_decisions.sql` and `V26__add_web_intake.sql` and
+  `V27__capture_web_into_analysis.sql` exist; the next one is V28.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
@@ -338,6 +339,32 @@ nor 503 ("not yet") is honest. `GET /analysis/status` always answers, because it
 UI asks before deciding whether the tab exists. The table is created everywhere regardless:
 Flyway builds one schema, not one per environment.
 
+- **It takes from the boards as well as the mailbox.** `analysis_samples.feed_item_id`
+  mirrors `mail_message_id` exactly, down to the `ON DELETE SET NULL`, and `source` gains a
+  third value (`WEB`). The reason is not tidiness: what arrives by mail is what somebody
+  *chose to send this desk*, so a corpus built only on that is a corpus of one circle's house
+  styles — and at inference the parser is handed whatever anyone pasted on a public page. The
+  boards are where the layouts nobody addressed to us live. Blank means every board marked
+  *Read into Intake* rather than every source there is, because a trade-press feed would
+  contribute articles a cargo-extraction model has nothing to learn from. Dedupe is two
+  questions: the post itself, and its `content_hash`, because the same circular gets pasted on
+  two boards and a duplicate in a corpus is one example weighted twice with its annotation
+  typed twice. The subject and date a post is shown under are
+  `AnalysisAnnotationTemplates.subjectFor`/`dateFor` — **called by the parser too**, so what
+  the model is trained on and what it is asked at inference are the same shape.
+- **The company is part of what is annotated, and the prompt is deliberately two constants.**
+  The skeletons ask for the firm's full style — name, website, city, country, address, people
+  with job titles, contacts with labels — in `CompanyStyleReader.Style`'s own shape, so a
+  model that learns it drops into the place the regex reader already occupies. But the running
+  finetune was measured under a prompt that says nothing about a company, and a prompt a model
+  has not seen is a prompt it answers worse. So `SYSTEM_PROMPT` is what `EmailParserClient`
+  sends and has not moved (`AnalysisPromptSplitTest` pins its SHA-256 and fails loudly if it
+  does), while `TRAINING_SYSTEM_PROMPT` — the same rules plus the company section — is what
+  the export trains against. **The swap, when a model trained on the new wording ships:** point
+  `SYSTEM_PROMPT` at the training one and regenerate `parser/extraction-schema.json` from
+  `chartering-ml` (`make schema`), because the JSON grammar is what actually decides whether
+  the model can emit a company at all. Until both are done the live parser cannot return one,
+  which is why leaving it alone costs nothing.
 - **`analysis_samples` is not `mail_messages`**, the same distinction `mail_replies` makes.
   That table is a mirror of the IMAP server and its rows come and go with the mailbox; a
   corpus on top of it would lose examples to housekeeping, and the annotation — the expensive
@@ -719,6 +746,19 @@ and pinned **false** in `render.yaml` — that instance has no GPU and no route 
 a harder fact than the one behind `ANALYSIS_ENABLED`. Off, the tab is absent and every
 endpoint answers 404 except `GET /intake/status`, which the UI asks first.
 
+**Whether the feature exists is a deployment fact; which server answers it is not.**
+`PARSER_URL` and `PARSER_MODEL` are the defaults behind a runtime setting, and
+`ParserSettings.endpoint()` — not `ParserProperties` — is what `EmailParserClient` reads, per
+request. The reason is the same one that put the sweep interval there and is sharper here: the
+extraction server and the Feed's general model are swapped on one 8 GB card, so the address
+changes inside a working day. `ModelEndpoint` holds the rule and the URL check; a value stored
+equal to the configured one is **deleted rather than kept**, the way an unedited feed prompt has
+no row, so `.env` stays the baseline and "customised" means something. The timeouts stay in
+`ParserProperties`, because how long to wait is a fact about a deployment. Both instances share
+`app_settings` and that is safe here for the reason it is not for `MAIL_REPLY_PROVIDER`: with
+`PARSER_ENABLED` and `FEED_ANALYSIS_ENABLED` false, the hosted instance never reads the address
+at all.
+
 `EmailParserClient` sends `AnalysisAnnotationTemplates.SYSTEM_PROMPT` — the constant, not a
 copy — the same Date/Subject/blank/body user turn `AnalysisExportService` builds, and
 `parser/extraction-schema.json` on the request. All four are what the model was measured
@@ -1027,8 +1067,12 @@ source that refuses that is dropped, not worked around.
 - **`FeedLlmClient` is a sibling of `EmailParserClient`, not a reuse.** That client's prompt,
   schema and Date/Subject turn are pinned to the extraction measurement; a summary wants none of
   them, and the schema would make prose impossible.
-- **Summaries go to a different model (`FEED_LLM_URL`), and that was measured, not preferred.**
-  Blank falls back to `PARSER_URL`, and the finetune does write prose on a short input — which is
+- **Summaries go to a different model, and that was measured, not preferred.** The address is
+  the Feed's own setting on the Settings tab, with `FEED_LLM_URL` as its default, and the chain
+  is three links: the setting, else that variable, else **the parser's endpoint as resolved** —
+  not `PARSER_URL` as booted, or repointing the parser would leave the Feed quietly talking to
+  the old box. What is reported as the configured value is the second link, because that is what
+  clearing the field restores. Falling through to the parser's model does write prose on a short input — which is
   why it looked fine at first. On real feed batches it reported "no vessel openings" for a ship.gr
   position list full of them, answered "nothing relevant" to every Handysize batch, and, given the
   summary prompt on two items, wrote eight Danube–Med rates from $12.50/t to $16.00/t that neither
@@ -1039,6 +1083,9 @@ source that refuses that is dropped, not worked around.
   nothing lost. The 409 below applies only when both features point at one server.
 - **A summary run does not start while the parser sweep is running on the same server** (409):
   llama-server's slots share one KV cache, and two 7,000-token requests do not fit in 8,192.
+  "The same server" is the two *resolved* endpoints compared, since both are now pointed by hand.
+  A model name is inherited from the parser only where the address was inherited too — sent to a
+  second server it names nothing there, which an Ollama refuses outright.
 - **Every figure in a summary is looked up in the items it was written from** (`FigureCheck`) and
   the ones not found are listed under it. A flag, not a filter: a figure the model computed
   honestly will not be found either, and deleting it would be the tool deciding what a broker may
@@ -1058,7 +1105,7 @@ stored and printed on the summary**, because a summary of twelve items out of fo
 like one of all forty.
 
 The window (default 8,192, what chartering-ml serves), answer sizes, lookback, call cap, fetch
-interval and both prompts are `app_settings` (`FeedSettings`). The prompts are templates with
+interval, **the model's address and name** and both prompts are `app_settings` (`FeedSettings`). The prompts are templates with
 `{topic}`, `{keywords}`, `{today}`, `{period}`; an unedited prompt has no row, so a better default
 reaches everyone who never changed theirs, and each summary stores the prompt it ran under.
 Nothing `feed_*` is audited — machine copies of other people's pages, and documents about them.

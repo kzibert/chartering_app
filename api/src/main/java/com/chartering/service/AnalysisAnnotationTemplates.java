@@ -64,6 +64,41 @@ public final class AnalysisAnnotationTemplates {
     }
 
     /**
+     * How a board post is titled for the model, at training time and at inference time.
+     *
+     * <p><b>One rule, called from both, and that is the whole point of it being here.</b> The
+     * corpus and the parser must show the model the same shape or the finetune is measured
+     * against a layout it is not given — the standing warning about this feature. A post has
+     * no subject line, and the prompt the model was trained under has one, so something has to
+     * stand in: the board's own title for the entry where it gives one, and the board's name
+     * where it does not.
+     *
+     * <p>Not the display label a screen prints ("Board post of 14 September"). That is for a
+     * reader, changes when somebody improves it, and must never be what the model is shown.
+     *
+     * @return never blank, so the user turn always carries a Subject line as the mail does
+     */
+    public static String subjectFor(com.chartering.model.FeedItem post) {
+        if (post == null) return "Board post";
+        String title = post.getTitle();
+        if (title != null && !title.isBlank()) return title.strip();
+        return post.getSource() == null ? "Board post" : post.getSource().getName();
+    }
+
+    /**
+     * The date the model is shown for a post — the board's own date line, not the fetch.
+     *
+     * <p>The export's user turn carries a date because a circular says "OPEN 07/10 SEPTEMBER"
+     * and never the year. A board is a standing page: the entry read this morning may have
+     * been posted three days ago, and dating it today would teach the model to resolve those
+     * days to the wrong dates. Falls back to when it was fetched, for a page that gives none.
+     */
+    public static java.time.LocalDateTime dateFor(com.chartering.model.FeedItem post) {
+        if (post == null) return null;
+        return post.getPublishedAt() != null ? post.getPublishedAt() : post.getFetchedAt();
+    }
+
+    /**
      * The instruction every exported example is trained against.
      *
      * <p>One prompt for the whole set, not one per label: at inference time nobody knows yet
@@ -93,7 +128,7 @@ public final class AnalysisAnnotationTemplates {
      * near future of the mail that carried it; a date with no year cannot be compared to
      * anything, so refusing to supply one would leave every timing check UNKNOWN.
      */
-    public static final String SYSTEM_PROMPT = """
+    private static final String PROMPT_RULES = """
             You read shipping emails for a dry-cargo chartering desk and return JSON only.
 
             Classify the email as one of: cargo_offer, vessel_opening, mixed, other. Then \
@@ -117,8 +152,70 @@ public final class AnalysisAnnotationTemplates {
             from/to empty.
             - "App B" or "Appendix B" is grain fitted. If the broker calls a geared ship \
             gearless, follow the broker and keep the whole sentence in gearDescription.
+            """;
 
-            Return the JSON object and nothing else.""";
+    private static final String PROMPT_TAIL = "\nReturn the JSON object and nothing else.";
+
+    /**
+     * What the finetuned parser is sent, and what it was measured under.
+     *
+     * <p><b>Left exactly as it was when the running model was trained on it, and that is the
+     * only reason it is a constant of its own.</b> A prompt the model has not seen is a prompt
+     * it answers worse — the drift this feature's notes warn about — so this changes when a
+     * model trained on the new wording ships, and not before.
+     */
+    public static final String SYSTEM_PROMPT = PROMPT_RULES + PROMPT_TAIL;
+
+    /**
+     * The extra half the corpus is being labelled against: the firm that signed it.
+     *
+     * <p><b>Why this is worth teaching a model at all.</b> Today the full style is read by
+     * {@code CompanyStyleReader} — regular expressions over shapes, because an address has an
+     * {@code @} and a phone a run of digits behind a label — and that reader exists precisely
+     * because the model knows a sender only as company, person and email. It works, and it is
+     * blind to everything a shape cannot settle: which line is the firm and which is a
+     * division, whose mobile is whose, that "Chartering Dept." is a job title and "Akdeniz-
+     * Mersin" a city. Those are readings, not patterns, and a model is the right tool for them.
+     *
+     * <p>The shape asked for is {@code CompanyStyleReader.Style}'s, field for field, so that a
+     * model that learns it drops into the place the reader already occupies — the paste review,
+     * the company question in the intake queue — without a translation layer between them.
+     */
+    private static final String PROMPT_COMPANY = """
+
+            Also extract the full style of the firm that signed it, into "company":
+            - name, website, city, country, and address as the block writes it.
+            - people: everyone named, with title ("Mr.", "Capt.") and jobTitle separate. A \
+            job title is what they do ("Chartering Dept."), never an honorific.
+            - contacts: one object per address or number, kind "email" or "phone". label is \
+            phones only — Work, Mobile, Direct, Fax as the block says. personName is whose \
+            it is, and "" for a desk address the whole firm answers.
+            - A mobile or a direct line belongs to the person it is printed under; the \
+            switchboard and the fax belong to the firm even inside one person's signature.
+            - A run of digits is a phone only behind a label or written with + or 00. An IMO \
+            number and a date written 01.09.2026 are not phone numbers.
+            - Leave "company" empty where the email carries no signature block. A quoted \
+            chain's signature is not this email's sender.
+            """;
+
+    /**
+     * What the corpus is exported against — {@link #SYSTEM_PROMPT} plus the company block.
+     *
+     * <p><b>Deliberately a second constant, and the split is the point.</b> A corpus is
+     * collected for the <em>next</em> model while the <em>current</em> one keeps answering
+     * under the prompt it was trained on. Training against a prompt that asks for less than
+     * the answers contain is how a model learns to emit fields unpredictably; changing the
+     * live prompt before the model that understands it exists is how today's accuracy is
+     * spent for nothing. So both are here, sharing everything but the last section.
+     *
+     * <p><b>How the swap is done, when the retrained model ships:</b> point
+     * {@link #SYSTEM_PROMPT} at this one — {@code PROMPT_RULES + PROMPT_COMPANY + PROMPT_TAIL}
+     * — and regenerate {@code parser/extraction-schema.json} from {@code chartering-ml}
+     * ({@code make schema}), because the grammar is what actually decides whether the model
+     * can emit a company at all. Until both are done the live parser cannot return one, which
+     * is why leaving it alone costs nothing.
+     */
+    public static final String TRAINING_SYSTEM_PROMPT = PROMPT_RULES + PROMPT_COMPANY + PROMPT_TAIL;
 
     /**
      * A charterer's requirement as it arrived.
@@ -169,7 +266,19 @@ public final class AnalysisAnnotationTemplates {
                 }
               ],
               "vessels": [],
-              "broker": { "company": "", "person": "", "email": "" }
+              "company": {
+                "name": "",
+                "website": "",
+                "city": "",
+                "country": "",
+                "address": "",
+                "people": [
+                  { "fullName": "", "title": "", "jobTitle": "" }
+                ],
+                "contacts": [
+                  { "kind": "", "value": "", "label": "", "personName": "" }
+                ]
+              }
             }""";
 
     /**
@@ -223,7 +332,19 @@ public final class AnalysisAnnotationTemplates {
                   "notes": ""
                 }
               ],
-              "broker": { "company": "", "person": "", "email": "" }
+              "company": {
+                "name": "",
+                "website": "",
+                "city": "",
+                "country": "",
+                "address": "",
+                "people": [
+                  { "fullName": "", "title": "", "jobTitle": "" }
+                ],
+                "contacts": [
+                  { "kind": "", "value": "", "label": "", "personName": "" }
+                ]
+              }
             }""";
 
     /**
@@ -237,7 +358,19 @@ public final class AnalysisAnnotationTemplates {
               "type": "mixed",
               "cargoes": [],
               "vessels": [],
-              "broker": { "company": "", "person": "", "email": "" }
+              "company": {
+                "name": "",
+                "website": "",
+                "city": "",
+                "country": "",
+                "address": "",
+                "people": [
+                  { "fullName": "", "title": "", "jobTitle": "" }
+                ],
+                "contacts": [
+                  { "kind": "", "value": "", "label": "", "personName": "" }
+                ]
+              }
             }""";
 
     /**
@@ -252,7 +385,16 @@ public final class AnalysisAnnotationTemplates {
               "type": "other",
               "cargoes": [],
               "vessels": [],
-              "summary": ""
+              "summary": "",
+              "company": {
+                "name": "",
+                "website": "",
+                "city": "",
+                "country": "",
+                "address": "",
+                "people": [],
+                "contacts": []
+              }
             }""";
 
     private static final Map<String, String> TEMPLATES = buildTemplates();
