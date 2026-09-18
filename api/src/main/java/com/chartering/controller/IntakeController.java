@@ -402,31 +402,45 @@ public class IntakeController {
     }
 
     @PutMapping("/settings")
-    @Operation(summary = "Change the sweep interval or batch size",
+    @Operation(summary = "Change the sweep interval, batch size or model address",
             description = "An interval of 0 turns the timer off; Parse now still works. A "
                     + "lookback of 0 removes the age limit, so a sweep will reach back through "
-                    + "the whole mailbox. Every field is optional, so the form can send one "
+                    + "the whole mailbox. A blank model address or name restores PARSER_URL / "
+                    + "PARSER_MODEL. Every field is optional, so the form can send one "
                     + "without holding the others.")
     public ResponseEntity<ParserSettingsResponse> updateSettings(
             @Valid @RequestBody ParserSettingsRequest req) {
+        // The address is its own write because it is its own question, and because a form that
+        // did not send it must not be read as asking for the configured one back.
+        if (req.getModelUrl() != null || req.getModelName() != null) {
+            settings.updateEndpoint(req.getModelUrl(), req.getModelName());
+        }
         return ResponseEntity.ok(toResponse(
                 settings.update(req.getSweepIntervalMinutes(), req.getSweepBatchSize(),
                         req.getSweepMaxAgeDays())));
     }
 
     @DeleteMapping("/settings")
-    @Operation(summary = "Back to the configured defaults")
+    @Operation(summary = "Back to the configured defaults",
+            description = "The pacing and the model address together — they are one card, and a "
+                    + "Reset that left the address behind would leave the screen saying it is "
+                    + "using defaults while pointing somewhere else.")
     @ResponseStatus(HttpStatus.OK)
     public ResponseEntity<ParserSettingsResponse> resetSettings() {
+        settings.resetEndpoint();
         return ResponseEntity.ok(toResponse(settings.reset()));
     }
 
-    private static ParserSettingsResponse toResponse(ParserSettings.Values v) {
+    private ParserSettingsResponse toResponse(ParserSettings.Values v) {
         ParserSettings.Values defaults = ParserSettings.defaults();
+        com.chartering.service.ModelEndpoint endpoint = settings.endpoint();
         return new ParserSettingsResponse(
                 v.sweepIntervalMinutes(), v.sweepBatchSize(), v.sweepMaxAgeDays(),
                 defaults.sweepIntervalMinutes(), defaults.sweepBatchSize(),
-                defaults.sweepMaxAgeDays());
+                defaults.sweepMaxAgeDays(),
+                endpoint.url(), endpoint.model(),
+                endpoint.urlCustomised(), endpoint.modelCustomised(),
+                endpoint.configuredUrl(), endpoint.configuredModel());
     }
 
     private static String currentUser() {

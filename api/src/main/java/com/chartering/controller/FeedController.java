@@ -210,8 +210,14 @@ public class FeedController {
     }
 
     @PutMapping("/settings")
-    @Operation(summary = "Change any of the settings", description = "Every field optional. A blank prompt restores its default.")
+    @Operation(summary = "Change any of the settings",
+            description = "Every field optional. A blank prompt restores its default, and a blank "
+                    + "model address restores FEED_LLM_URL — or the parser's endpoint where that "
+                    + "is blank too.")
     public ResponseEntity<FeedSettingsResponse> updateSettings(@RequestBody FeedSettingsRequest req) {
+        if (req.getModelUrl() != null || req.getModelName() != null) {
+            settings.updateEndpoint(req.getModelUrl(), req.getModelName());
+        }
         return ResponseEntity.ok(toResponse(settings.update(new FeedSettings.Update(
                 req.getContextWindowTokens(), req.getSummaryMaxTokens(), req.getNotesMaxTokens(),
                 req.getLookbackDays(), req.getMaxCallsPerTopic(), req.getFetchIntervalMinutes(),
@@ -219,8 +225,11 @@ public class FeedController {
     }
 
     @DeleteMapping("/settings")
-    @Operation(summary = "The numeric settings back to their defaults; the prompts are kept")
+    @Operation(summary = "The numbers and the model address back to their defaults; the prompts are kept",
+            description = "The prompts have their own reset on the Feed tab, beside the topics they "
+                    + "are written for.")
     public ResponseEntity<FeedSettingsResponse> resetSettings() {
+        settings.resetEndpoint();
         return ResponseEntity.ok(toResponse(settings.resetNumbers()));
     }
 
@@ -236,13 +245,17 @@ public class FeedController {
         return ResponseEntity.ok(Map.of("contextWindowTokens", queries.detectContextWindow()));
     }
 
-    private static FeedSettingsResponse toResponse(FeedSettings.Values v) {
+    private FeedSettingsResponse toResponse(FeedSettings.Values v) {
         FeedSettings.Values d = FeedSettings.defaults();
+        com.chartering.service.ModelEndpoint endpoint = settings.endpoint();
         return new FeedSettingsResponse(v.contextWindowTokens(), v.summaryMaxTokens(), v.notesMaxTokens(),
                 v.lookbackDays(), v.maxCallsPerTopic(), v.fetchIntervalMinutes(), v.systemPrompt(), v.notesPrompt(),
                 v.systemPromptCustomised(), v.notesPromptCustomised(),
                 d.contextWindowTokens(), d.summaryMaxTokens(), d.notesMaxTokens(), d.lookbackDays(),
                 d.maxCallsPerTopic(), d.fetchIntervalMinutes(), FeedPrompts.DEFAULT_SYSTEM, FeedPrompts.DEFAULT_NOTES,
-                FeedPrompts.PLACEHOLDERS);
+                FeedPrompts.PLACEHOLDERS,
+                endpoint.url(), endpoint.model(),
+                endpoint.urlCustomised(), endpoint.modelCustomised(),
+                endpoint.configuredUrl(), endpoint.configuredModel());
     }
 }

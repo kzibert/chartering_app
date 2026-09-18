@@ -1,7 +1,10 @@
 package com.chartering.service.feed;
 
+import com.chartering.config.FeedProperties;
 import com.chartering.model.AppSetting;
 import com.chartering.repository.AppSettingRepository;
+import com.chartering.service.ModelEndpoint;
+import com.chartering.service.ParserSettings;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -20,6 +23,12 @@ import java.util.stream.Collectors;
  * variable is a redeploy. Only overrides are stored; an absent row is the default, so reset is a
  * delete. The prompts follow the same rule: an unedited prompt has no row, which is what lets a
  * better default reach everyone who never changed theirs.
+ *
+ * <p><b>The model's address is here too, and it is the setting this side most needs.</b> An 8GB
+ * card cannot hold the extraction finetune and a general instruct model at once, so the two
+ * servers are swapped — and which port is up at any moment is exactly the kind of thing that
+ * must not be a redeploy. See {@link #endpoint()} for the fallback chain, and
+ * {@link ModelEndpoint} for why a value equal to the configured one is deleted rather than kept.
  */
 @Service
 @RequiredArgsConstructor
@@ -34,6 +43,14 @@ public class FeedSettings {
     public static final String FETCH_INTERVAL_MINUTES = "feed.fetchIntervalMinutes";
     public static final String SYSTEM_PROMPT = "feed.systemPrompt";
     public static final String NOTES_PROMPT = "feed.notesPrompt";
+
+    /** The chat-completions endpoint summaries go to. Absent means {@code FEED_LLM_URL}. */
+    public static final String MODEL_URL = "feed.modelUrl";
+
+    /** The model name to send with them. Absent means {@code FEED_LLM_MODEL}. */
+    public static final String MODEL_NAME = "feed.modelName";
+
+    private static final List<String> MODEL_KEYS = List.of(MODEL_URL, MODEL_NAME);
 
     private static final List<String> NUMBER_KEYS = List.of(CONTEXT_WINDOW_TOKENS, SUMMARY_MAX_TOKENS,
             NOTES_MAX_TOKENS, LOOKBACK_DAYS, MAX_CALLS_PER_TOPIC, FETCH_INTERVAL_MINUTES);
@@ -74,6 +91,17 @@ public class FeedSettings {
     private static final int MIN_MATERIAL_TOKENS = 512;
 
     private final AppSettingRepository repository;
+    private final FeedProperties props;
+
+    /**
+     * For the last link of the fallback chain, not for the feed's own setting.
+     *
+     * <p>Blank here has always meant "the parser's server", and it has to mean the parser's
+     * <i>effective</i> one now that that is itself a setting — otherwise pointing the parser at a
+     * new box would leave the feed quietly talking to the old one, which is the failure a shared
+     * default exists to prevent.
+     */
+    private final ParserSettings parser;
 
     public record Values(int contextWindowTokens, int summaryMaxTokens, int notesMaxTokens,
                          int lookbackDays, int maxCallsPerTopic, int fetchIntervalMinutes,
@@ -110,6 +138,59 @@ public class FeedSettings {
         return new Values(DEFAULT_CONTEXT_WINDOW, DEFAULT_SUMMARY_MAX_TOKENS, DEFAULT_NOTES_MAX_TOKENS,
                 DEFAULT_LOOKBACK_DAYS, DEFAULT_MAX_CALLS_PER_TOPIC, DEFAULT_FETCH_INTERVAL_MINUTES,
                 FeedPrompts.DEFAULT_SYSTEM, FeedPrompts.DEFAULT_NOTES, false, false);
+    }
+
+    /**
+     * Where summaries go: this setting, else {@code FEED_LLM_URL}, else the parser's endpoint.
+     *
+     * <p>Three links rather than two because the third is the shape a single-server install has,
+     * and it stays honest — but it is not the shape to want. The parser's model is an extraction
+     * finetune, and run against real feed items it reported "no vessel openings" for a position
+     * list full of them and wrote eight Danube–Med rates that no item contained. What is
+     * reported as configured is the second link, because that is what "reset" restores; the
+     * third is a fallback and would make the Reset button claim to restore something it does not
+     * store.
+     */
+    @Transactional(readOnly = true)
+    public ModelEndpoint endpoint() {
+        Map<String, String> stored = repository.findByKeyIn(MODEL_KEYS).stream()
+                .collect(Collectors.toMap(AppSetting::getKey, AppSetting::getValue));
+        ModelEndpoint parserEndpoint = parser.endpoint();
+        String configuredUrl = firstNonBlank(props.getLlmUrl(), parserEndpoint.url());
+        String configuredModel = blankToEmpty(props.getLlmModel());
+        String url = firstNonBlank(stored.get(MODEL_URL), configuredUrl);
+        String model = firstNonBlank(stored.get(MODEL_NAME), configuredModel);
+        // The parser's model name belongs to the parser's server; sent to another one it names
+        // nothing. So it is inherited only where the address was inherited too.
+        if (model.isEmpty() && url.equals(parserEndpoint.url())) {
+            model = parserEndpoint.model();
+        }
+        return new ModelEndpoint(url, model, configuredUrl, configuredModel);
+    }
+
+    /** The address and the model name. Null leaves either alone; blank restores the configured one. */
+    @Transactional
+    public ModelEndpoint updateEndpoint(String modelUrl, String modelName) {
+        if (modelUrl != null) {
+            putOrClear(MODEL_URL,
+                    modelUrl.isBlank() ? "" : ModelEndpoint.requireCompletionsUrl(modelUrl),
+                    endpoint().configuredUrl());
+        }
+        if (modelName != null) {
+            putOrClear(MODEL_NAME, modelName.strip(), blankToEmpty(props.getLlmModel()));
+        }
+        ModelEndpoint endpoint = endpoint();
+        log.info("Feed model endpoint: {}{} ({})", endpoint.url(),
+                endpoint.model().isEmpty() ? "" : " model " + endpoint.model(),
+                endpoint.urlCustomised() || endpoint.modelCustomised()
+                        ? "set here" : "from the environment");
+        return endpoint;
+    }
+
+    @Transactional
+    public ModelEndpoint resetEndpoint() {
+        repository.deleteByKeyIn(MODEL_KEYS);
+        return endpoint();
     }
 
     @Transactional(readOnly = true)
@@ -193,6 +274,23 @@ public class FeedSettings {
         } else {
             put(key, value);
         }
+    }
+
+    /** A value equal to the configured one is not stored — {@code putPrompt}'s rule, for an address. */
+    private void putOrClear(String key, String value, String configured) {
+        if (value.isEmpty() || value.equals(configured)) {
+            repository.deleteByKeyIn(List.of(key));
+        } else {
+            put(key, value);
+        }
+    }
+
+    private static String firstNonBlank(String preferred, String fallback) {
+        return isBlank(preferred) ? blankToEmpty(fallback) : preferred.strip();
+    }
+
+    private static String blankToEmpty(String s) {
+        return s == null ? "" : s.strip();
     }
 
     private void put(String key, Object value) {

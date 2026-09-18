@@ -17,4 +17,17 @@ public class FeedSettingsRequest {
     private Integer fetchIntervalMinutes;
     private String systemPrompt;
     private String notesPrompt;
+
+    /**
+     * The chat-completions endpoint summaries go to. Blank restores {@code FEED_LLM_URL}, and
+     * where that is blank too, the parser's own endpoint.
+     *
+     * <p>The setting this side most needs: an 8GB card cannot hold the extraction finetune and a
+     * general instruct model at once, so the two servers are swapped, and which port is up is
+     * not a thing to redeploy for.
+     */
+    private String modelUrl;
+
+    /** The model name to send with them, or blank for {@code FEED_LLM_MODEL}. */
+    private String modelName;
 }

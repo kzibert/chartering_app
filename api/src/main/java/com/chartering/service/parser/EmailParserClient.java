@@ -2,6 +2,8 @@ package com.chartering.service.parser;
 
 import com.chartering.config.ParserProperties;
 import com.chartering.service.AnalysisAnnotationTemplates;
+import com.chartering.service.ModelEndpoint;
+import com.chartering.service.ParserSettings;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -48,6 +50,12 @@ import java.time.LocalDateTime;
  *   <li><b>{@code temperature 0}</b>. This is extraction, not writing.
  * </ul>
  *
+ * <p><b>Where the model is comes from {@link ParserSettings}, not from
+ * {@link ParserProperties}.</b> {@code PARSER_URL} is behind it as the default, but the address
+ * is read per request so that repointing it on the Settings tab takes effect on the next
+ * message rather than on the next restart — which is the point of having it there, since the
+ * extraction server and the Feed's general model are swapped on one card.
+ *
  * <p>It deliberately holds no Spring HTTP machinery. {@code java.net.http} is in the JDK,
  * the call is one POST with two timeouts, and the interesting failure — the workstation
  * being asleep — has to arrive as a plain message a user can act on rather than as a wrapped
@@ -61,6 +69,7 @@ public class EmailParserClient {
     private static final String SCHEMA_RESOURCE = "parser/extraction-schema.json";
 
     private final ParserProperties props;
+    private final ParserSettings settings;
     private final ObjectMapper json;
 
     /**
@@ -126,10 +135,11 @@ public class EmailParserClient {
      *                announces, which is the same reason the corpus export prefers it.
      */
     public Completion complete(String subject, LocalDateTime sentAt, String bodyText) {
+        ModelEndpoint endpoint = settings.endpoint();
         String user = userTurn(subject, sentAt, bodyText);
-        String payload = requestBody(user);
+        String payload = requestBody(user, endpoint.model());
 
-        HttpRequest request = HttpRequest.newBuilder(URI.create(props.getUrl()))
+        HttpRequest request = HttpRequest.newBuilder(URI.create(endpoint.url()))
                 .header("Content-Type", "application/json")
                 .timeout(Duration.ofMillis(props.getReadTimeoutMs()))
                 .POST(HttpRequest.BodyPublishers.ofString(payload, StandardCharsets.UTF_8))
@@ -147,7 +157,7 @@ public class EmailParserClient {
             // model server is a container on somebody's desk, and the desk gets turned off.
             lastError = e.getMessage();
             throw new ParserUnavailableException(
-                    "Could not reach the model at " + props.getUrl() + " — " + e.getMessage()
+                    "Could not reach the model at " + endpoint.url() + " — " + e.getMessage()
                             + ". Start it with: docker compose -f serve/docker-compose.llamacpp.yml"
                             + " up -d (in the chartering-ml project).", e);
         }
@@ -186,9 +196,7 @@ public class EmailParserClient {
      * than two that can point at different servers.
      */
     public boolean isReachable() {
-        String base = props.getUrl();
-        int api = base.indexOf("/v1/");
-        String health = (api > 0 ? base.substring(0, api) : base) + "/health";
+        String health = settings.endpoint().base() + "/health";
         try {
             HttpRequest request = HttpRequest.newBuilder(URI.create(health))
                     .timeout(Duration.ofMillis(props.getConnectTimeoutMs()))
@@ -213,13 +221,13 @@ public class EmailParserClient {
 
     // --------------------------------------------------------------- internals
 
-    private String requestBody(String user) {
+    private String requestBody(String user, String model) {
         ObjectNode root = json.createObjectNode();
         // llama-server serves one model and ignores this; Ollama refuses the request without
         // it, since it can hold many. Sent only when configured, so the normal case carries
         // nothing it does not need.
-        if (props.getModel() != null && !props.getModel().isBlank()) {
-            root.put("model", props.getModel().trim());
+        if (!model.isBlank()) {
+            root.put("model", model);
         }
         var messages = root.putArray("messages");
         messages.addObject().put("role", "system")

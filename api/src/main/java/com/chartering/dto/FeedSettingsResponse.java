@@ -25,5 +25,18 @@ public record FeedSettingsResponse(
         int defaultFetchIntervalMinutes,
         String defaultSystemPrompt,
         String defaultNotesPrompt,
-        List<String> placeholders) {
+        List<String> placeholders,
+        /** The endpoint in force. */
+        String modelUrl,
+        String modelName,
+        /** True where a row holds it rather than the environment. */
+        boolean modelUrlCustomised,
+        boolean modelNameCustomised,
+        /**
+         * What clearing the field restores: {@code FEED_LLM_URL}, or the parser's endpoint where
+         * that is blank — which is the single-server shape, reported as it is rather than as an
+         * empty box that would look unconfigured.
+         */
+        String defaultModelUrl,
+        String defaultModelName) {
 }
