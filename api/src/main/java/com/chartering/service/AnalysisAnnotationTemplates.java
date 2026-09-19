@@ -157,16 +157,6 @@ public final class AnalysisAnnotationTemplates {
     private static final String PROMPT_TAIL = "\nReturn the JSON object and nothing else.";
 
     /**
-     * What the finetuned parser is sent, and what it was measured under.
-     *
-     * <p><b>Left exactly as it was when the running model was trained on it, and that is the
-     * only reason it is a constant of its own.</b> A prompt the model has not seen is a prompt
-     * it answers worse — the drift this feature's notes warn about — so this changes when a
-     * model trained on the new wording ships, and not before.
-     */
-    public static final String SYSTEM_PROMPT = PROMPT_RULES + PROMPT_TAIL;
-
-    /**
      * The extra half the corpus is being labelled against: the firm that signed it.
      *
      * <p><b>Why this is worth teaching a model at all.</b> Today the full style is read by
@@ -199,23 +189,31 @@ public final class AnalysisAnnotationTemplates {
             """;
 
     /**
-     * What the corpus is exported against — {@link #SYSTEM_PROMPT} plus the company block.
+     * What the finetuned parser is sent, and what it was measured under.
      *
-     * <p><b>Deliberately a second constant, and the split is the point.</b> A corpus is
-     * collected for the <em>next</em> model while the <em>current</em> one keeps answering
-     * under the prompt it was trained on. Training against a prompt that asks for less than
-     * the answers contain is how a model learns to emit fields unpredictably; changing the
-     * live prompt before the model that understands it exists is how today's accuracy is
-     * spent for nothing. So both are here, sharing everything but the last section.
-     *
-     * <p><b>How the swap is done, when the retrained model ships:</b> point
-     * {@link #SYSTEM_PROMPT} at this one — {@code PROMPT_RULES + PROMPT_COMPANY + PROMPT_TAIL}
-     * — and regenerate {@code parser/extraction-schema.json} from {@code chartering-ml}
-     * ({@code make schema}), because the grammar is what actually decides whether the model
-     * can emit a company at all. Until both are done the live parser cannot return one, which
-     * is why leaving it alone costs nothing.
+     * <p><b>It moves only with a model trained on it.</b> A prompt the model has not seen is a
+     * prompt it answers worse — the drift this feature's notes warn about. Since the V3 parser
+     * (chartering-ml, 2026-09-19), which was trained on the company section, this is the whole
+     * prompt: rules, company, tail. V1 and V2 were trained on the rules and the tail alone
+     * (SHA-256 {@code 9714dcc2…}); rolling back to either means pointing this back at
+     * {@code PROMPT_RULES + PROMPT_TAIL} and restoring the schema that has no company in it,
+     * both of which chartering-ml's {@code serve/SERVED.md} keeps beside the rollback.
      */
-    public static final String TRAINING_SYSTEM_PROMPT = PROMPT_RULES + PROMPT_COMPANY + PROMPT_TAIL;
+    public static final String SYSTEM_PROMPT = PROMPT_RULES + PROMPT_COMPANY + PROMPT_TAIL;
+
+    /**
+     * What the corpus is exported against — today the same text as {@link #SYSTEM_PROMPT}.
+     *
+     * <p><b>Still a second name, because the split will be needed again.</b> A corpus is
+     * collected for the <em>next</em> model while the <em>current</em> one keeps answering
+     * under the prompt it was trained on. When the next section is added to the annotations,
+     * it goes here first; the live prompt follows only when a model trained on it ships, in
+     * the same commit as {@code parser/extraction-schema.json} regenerated from
+     * {@code chartering-ml} ({@code make schema}) - the grammar is what actually decides
+     * whether the model can emit a field at all. That swap was last made for the company
+     * section, with the V3 parser.
+     */
+    public static final String TRAINING_SYSTEM_PROMPT = SYSTEM_PROMPT;
 
     /**
      * A charterer's requirement as it arrived.

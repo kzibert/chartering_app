@@ -322,23 +322,94 @@
         "additionalProperties": false
       }
     },
-    "broker": {
+    "company": {
       "type": "object",
       "properties": {
-        "company": {
+        "name": {
           "type": "string"
         },
-        "person": {
+        "website": {
           "type": "string"
         },
-        "email": {
+        "city": {
           "type": "string"
+        },
+        "country": {
+          "type": "string"
+        },
+        "address": {
+          "type": "string"
+        },
+        "people": {
+          "type": "array",
+          "maxItems": 12,
+          "items": {
+            "type": "object",
+            "properties": {
+              "fullName": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "jobTitle": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "fullName",
+              "title",
+              "jobTitle"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "contacts": {
+          "type": "array",
+          "maxItems": 24,
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "email",
+                  "phone"
+                ]
+              },
+              "value": {
+                "type": "string"
+              },
+              "label": {
+                "enum": [
+                  "",
+                  "Work",
+                  "Mobile",
+                  "Direct",
+                  "Fax"
+                ]
+              },
+              "personName": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "value",
+              "label",
+              "personName"
+            ],
+            "additionalProperties": false
+          }
         }
       },
       "required": [
-        "company",
-        "person",
-        "email"
+        "name",
+        "website",
+        "city",
+        "country",
+        "address",
+        "people",
+        "contacts"
       ],
       "additionalProperties": false
     },
@@ -349,7 +420,8 @@
   "required": [
     "type",
     "cargoes",
-    "vessels"
+    "vessels",
+    "company"
   ],
   "additionalProperties": false
 }

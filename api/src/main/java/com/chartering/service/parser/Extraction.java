@@ -36,6 +36,12 @@ public record Extraction(
         List<ExtractedCargo> cargoes,
         List<ExtractedVessel> vessels,
         Broker broker,
+        /**
+         * The firm that signed it, in {@link CompanyStyleReader.Style}'s shape. Absent from a
+         * model trained before the company section existed, which answers with {@code broker}
+         * instead - so both are read, and {@link CompanyStyleReader#readWithModel} decides.
+         */
+        ExtractedCompany company,
         /** Only present on "other", and only ever shown to a person. */
         String summary) {
 
@@ -157,5 +163,38 @@ public record Extraction(
      */
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Broker(String company, String person, String email) {
+    }
+
+    /**
+     * The model's reading of the signature block - field for field the prompt's company
+     * section and {@code parser/extraction-schema.json}, which is what makes it land here
+     * without a translation layer. "Not in the block" is {@code ""} and an empty list.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record ExtractedCompany(
+            String name,
+            String website,
+            String city,
+            String country,
+            String address,
+            List<ExtractedPerson> people,
+            List<ExtractedContact> contacts) {
+
+        public List<ExtractedPerson> peopleOrEmpty() {
+            return people == null ? List.of() : people;
+        }
+
+        public List<ExtractedContact> contactsOrEmpty() {
+            return contacts == null ? List.of() : contacts;
+        }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record ExtractedPerson(String fullName, String title, String jobTitle) {
+    }
+
+    /** {@code kind} is email or phone; {@code label} is phones only, the contact form's four words. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record ExtractedContact(String kind, String value, String label, String personName) {
     }
 }

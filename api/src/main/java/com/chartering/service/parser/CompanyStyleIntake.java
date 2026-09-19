@@ -85,9 +85,15 @@ public class CompanyStyleIntake {
         }
     }
 
-    /** Read the signature out of one arrival's text and place it against the companies on file. */
-    public Reading read(String text, Extraction.Broker broker) {
-        CompanyStyleReader.Style style = CompanyStyleReader.read(text, broker);
+    /**
+     * Read the signature out of one arrival's text and place it against the companies on file.
+     *
+     * @param extraction the model's answer for this arrival, or null where it did not run; its
+     *                   company reading is used when it gave one (see
+     *                   {@link CompanyStyleReader#readWithModel})
+     */
+    public Reading read(String text, Extraction extraction) {
+        CompanyStyleReader.Style style = CompanyStyleReader.readWithModel(text, extraction);
         if (style.isEmpty()) return new Reading(style, List.of(), null);
         List<CompanyMatcher.Match> matches = matcher.match(style);
         // The same test the paste screen makes before it dares fill in a cargo's broker: one

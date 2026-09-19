@@ -110,7 +110,7 @@ public class IntakePasteService {
         }
 
         CompanyStyleReader.Style style =
-                CompanyStyleReader.read(text, extraction == null ? null : extraction.broker());
+                CompanyStyleReader.readWithModel(text, extraction);
         List<CompanyMatcher.Match> matches = style.isEmpty() ? List.of() : companyMatcher.match(style);
         // The firm the text is from, when that is beyond doubt — used as the broker of a cargo
         // and the reporter of a position, both of which the form still shows and lets change.

@@ -101,7 +101,7 @@ public class IntakeService {
         // has no other way of saying who is talking - and on a mailed circular it is the
         // question the fourth kind of review item asks. Costs no model call: CompanyStyleReader
         // reads shapes, not prose.
-        CompanyStyleIntake.Reading signature = styles.read(textOf(parsed), extraction.broker());
+        CompanyStyleIntake.Reading signature = styles.read(textOf(parsed), extraction);
         Arrival arrival = arrivalOf(parsed, signature);
         // Names the transaction's whole change set, so the gap fills a circular writes read
         // in the History tab as one event with a cause rather than as scattered edits. The
