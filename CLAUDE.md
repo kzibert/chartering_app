@@ -352,19 +352,16 @@ Flyway builds one schema, not one per environment.
   typed twice. The subject and date a post is shown under are
   `AnalysisAnnotationTemplates.subjectFor`/`dateFor` — **called by the parser too**, so what
   the model is trained on and what it is asked at inference are the same shape.
-- **The company is part of what is annotated, and the prompt is deliberately two constants.**
-  The skeletons ask for the firm's full style — name, website, city, country, address, people
-  with job titles, contacts with labels — in `CompanyStyleReader.Style`'s own shape, so a
-  model that learns it drops into the place the regex reader already occupies. But the running
-  finetune was measured under a prompt that says nothing about a company, and a prompt a model
-  has not seen is a prompt it answers worse. So `SYSTEM_PROMPT` is what `EmailParserClient`
-  sends and has not moved (`AnalysisPromptSplitTest` pins its SHA-256 and fails loudly if it
-  does), while `TRAINING_SYSTEM_PROMPT` — the same rules plus the company section — is what
-  the export trains against. **The swap, when a model trained on the new wording ships:** point
-  `SYSTEM_PROMPT` at the training one and regenerate `parser/extraction-schema.json` from
-  `chartering-ml` (`make schema`), because the JSON grammar is what actually decides whether
-  the model can emit a company at all. Until both are done the live parser cannot return one,
-  which is why leaving it alone costs nothing.
+- **The company is part of what is annotated, and the live prompt asks for it since V3.**
+  The skeletons ask for the firm's full style - name, website, city, country, address, people
+  with job titles, contacts with labels - in `CompanyStyleReader.Style`'s own shape, so the
+  model's reading drops into the place the regex reader occupies. `SYSTEM_PROMPT` and
+  `TRAINING_SYSTEM_PROMPT` are one text today (`AnalysisPromptSplitTest` pins its SHA-256,
+  `ef478cb5…`); the V1/V2 parser was trained on the rules alone (`9714dcc2…`). They are still
+  two names because the next section added for a future model goes into the training one
+  first, and the live one follows only with a model trained on it and
+  `parser/extraction-schema.json` regenerated from `chartering-ml` (`make schema`) in the same
+  commit - the grammar is what decides whether the model can emit a field at all.
 - **`analysis_samples` is not `mail_messages`**, the same distinction `mail_replies` makes.
   That table is a mirror of the IMAP server and its rows come and go with the mailbox; a
   corpus on top of it would lose examples to housekeeping, and the annotation — the expensive
@@ -926,10 +923,13 @@ forms send (`CargoRequest`, `VesselRequest`, `VesselPositionRequest`) and is sav
 those forms with the text beside it (`FormWithReference`). The importer's arrangement again:
 nothing stored between reading and saving, and an abandoned paste costs nothing.
 
-- **The company block is not the model's.** The model was trained on cargoes and positions and
-  knows a sender only as company, person and email, so `CompanyStyleReader` reads addresses,
-  phones and websites by their shape, without it — which is also why it still works with the
-  model server down. A run of digits is a phone only behind a label or written with `+`/`00`,
+- **The company block is the model's where it gave one, the shape reader's otherwise.**
+  `CompanyStyleReader.readWithModel` takes the V3 parser's `company` reading - it settles what
+  shapes cannot: which line is the firm, whose mobile is whose, a job title against an
+  honorific - and keeps nothing the text does not contain (every email, every phone's digits,
+  every name and city checked against the text; a person dropped takes their lines' ownership
+  with them). An empty reading, an older model and a model server that is down all fall back
+  to the shape reader, which reads addresses, phones and websites by their shape. A run of digits is a phone only behind a label or written with `+`/`00`,
   or every IMO and dotted date would be one. A mobile or direct line is a person's; the office
   line and the fax are the firm's even inside one person's signature.
 - **`CompanyMatcher` proposes and never picks:** same email, same name, same phone (last nine

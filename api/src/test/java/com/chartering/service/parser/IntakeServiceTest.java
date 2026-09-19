@@ -136,7 +136,7 @@ class IntakeServiceTest {
     }
 
     private static Extraction emptyEmail() {
-        return new Extraction("other", List.of(), List.of(), null, null);
+        return new Extraction("other", List.of(), List.of(), null, null, null);
     }
 
     @Test
@@ -211,7 +211,7 @@ class IntakeServiceTest {
     }
 
     private static Extraction positionEmail(Extraction.ExtractedVessel... vs) {
-        return new Extraction("vessel_opening", List.of(), List.of(vs), null, null);
+        return new Extraction("vessel_opening", List.of(), List.of(vs), null, null, null);
     }
 
     private VesselPosition live(Company reporter, LocalDate from, LocalDate to,

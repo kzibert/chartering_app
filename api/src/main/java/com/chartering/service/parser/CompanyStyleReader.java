@@ -130,6 +130,90 @@ public final class CompanyStyleReader {
         return domain != null && WEBMAIL.contains(domain.toLowerCase(Locale.ROOT));
     }
 
+    private static final Set<String> PHONE_LABELS = Set.of("Work", "Mobile", "Direct", "Fax");
+
+    /**
+     * The model's reading of the signature when it gave one, this class's own reading otherwise.
+     *
+     * <p><b>Why the model wins where it answered.</b> Everything below reads shapes, and it is
+     * blind to exactly the parts a shape cannot settle - which line is the firm and which a
+     * division, whose mobile is whose, that "Chartering Dept." is a job title. A model trained
+     * on the corpus's company section (the V3 parser, 2026-09-19) reads those, and it hands
+     * back this record's own shape. A model trained before that section answers
+     * {@code broker} and no {@code company}, and so does a signature-less email; both fall
+     * through to the shape reader, which is what they got before.
+     *
+     * <p><b>Nothing the text does not contain is kept.</b> A contact is identity - a number
+     * matched on file decides which firm a position is filed against - so a digit the model
+     * invented is worse than one it missed. Every email must appear in the text (read through
+     * "(@)" and "(.)" obfuscation), every phone's digits must appear in order, every name,
+     * city and address must be there letter for letter once spacing and punctuation are set
+     * aside. A person dropped by that test takes the ownership of their lines with them.
+     */
+    public static Style readWithModel(String text, Extraction extraction) {
+        if (extraction != null && extraction.company() != null) {
+            Style modelled = fromModel(text, extraction.company());
+            if (!modelled.isEmpty()) return modelled;
+        }
+        return read(text, extraction == null ? null : extraction.broker());
+    }
+
+    static Style fromModel(String text, Extraction.ExtractedCompany company) {
+        String letters = squeeze(text);
+        String digits = text == null ? "" : text.replaceAll("\\D", "");
+
+        List<Person> people = new ArrayList<>();
+        Set<String> named = new LinkedHashSet<>();
+        for (Extraction.ExtractedPerson p : company.peopleOrEmpty()) {
+            String name = inText(p.fullName(), letters);
+            if (name == null || !named.add(name)) continue;
+            people.add(new Person(name, Extraction.text(p.title()), Extraction.text(p.jobTitle())));
+        }
+
+        List<ContactLine> contacts = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+        for (Extraction.ExtractedContact c : company.contactsOrEmpty()) {
+            String value = Extraction.text(c.value());
+            if (value == null) continue;
+            boolean email = "email".equalsIgnoreCase(Extraction.text(c.kind()));
+            String key = email ? value.toLowerCase(Locale.ROOT) : value.replaceAll("\\D", "").replaceFirst("^0+", "");
+            boolean present = email
+                    ? key.contains("@") && letters.contains(squeeze(key))
+                    : key.length() >= 7 && digits.contains(key);
+            if (!present || !seen.add(key)) continue;
+            String label = email ? null : PHONE_LABELS.contains(c.label()) ? c.label() : "Work";
+            String owner = Extraction.text(c.personName());
+            contacts.add(new ContactLine(email ? "email" : "phone", email ? key : value, label,
+                    owner != null && named.contains(owner) ? owner : null));
+        }
+
+        String website = inText(company.website(), letters);
+        return new Style(inText(company.name(), letters),
+                website == null ? null : website.toLowerCase(Locale.ROOT),
+                inText(company.city(), letters),
+                inText(company.country(), letters),
+                inText(company.address(), letters),
+                people, contacts);
+    }
+
+    /** The value, stripped, when the text holds it once spacing and punctuation are set aside. */
+    private static String inText(String value, String squeezedText) {
+        String v = Extraction.text(value);
+        if (v == null) return null;
+        String s = squeeze(v);
+        return !s.isEmpty() && squeezedText.contains(s) ? v : null;
+    }
+
+    /** Letters, digits and '@' only, lower-cased: how two spellings of one line are compared. */
+    private static String squeeze(String s) {
+        if (s == null) return "";
+        StringBuilder b = new StringBuilder(s.length());
+        s.toLowerCase(Locale.ROOT).codePoints()
+                .filter(cp -> Character.isLetterOrDigit(cp) || cp == '@')
+                .forEach(b::appendCodePoint);
+        return b.toString();
+    }
+
     /**
      * @param text   the pasted text, whole
      * @param broker the model's reading of who signed it, when the model ran; its company and
