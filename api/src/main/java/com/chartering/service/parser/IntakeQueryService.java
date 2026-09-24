@@ -153,7 +153,7 @@ public class IntakeQueryService {
                 endpoint.url(),
                 reachable ? null : client.lastError(),
                 sweeps.isRunning(),
-                counts.pending(), counts.accepted(), counts.rejected(),
+                counts.pending(), counts.minor(), counts.accepted(), counts.rejected(),
                 unparsed,
                 unparsedPosts,
                 intakeSources,
@@ -172,12 +172,15 @@ public class IntakeQueryService {
 
     @Transactional(readOnly = true)
     public PageResponse<IntakeItemResponse> search(IntakeItemKind kind, IntakeItemStatus status,
-                                                   Pageable pageable) {
+                                                   Boolean minor, Pageable pageable) {
         requireEnabled();
         Specification<IntakeItem> spec = (root, query, cb) -> {
             List<Predicate> where = new ArrayList<>();
             if (kind != null) where.add(cb.equal(root.get("kind"), kind));
             if (status != null) where.add(cb.equal(root.get("status"), status));
+            // The queue and the "Minor updates" sub-tab are one table split on this flag; null
+            // is both, which is what the answered and discarded views want - history is history.
+            if (minor != null) where.add(cb.equal(root.get("minor"), minor));
             return where.isEmpty() ? null : cb.and(where.toArray(new Predicate[0]));
         };
         Page<IntakeItem> page = items.findAll(spec, pageable);
@@ -201,6 +204,19 @@ public class IntakeQueryService {
         // would buy it nothing. Same rule the lookup and the shortlist follow.
         return mapper.toIntakeItemResponse(item, payload, summarise(item, payload),
                 lookupFor(item), itemSources.forItem(id), suggestionsFor(payload));
+    }
+
+    /**
+     * The company question waiting about one firm, whole, for its own record to offer.
+     *
+     * <p>Minor or not: the record is where a minor question is meant to be answered, and a major
+     * one is no less answerable there. Asked of the pending items rather than of the minor ones,
+     * so the button and the queue can never disagree about whether something is waiting.
+     */
+    @Transactional(readOnly = true)
+    public java.util.Optional<IntakeItemResponse> pendingForCompany(Long companyId) {
+        requireEnabled();
+        return items.pendingForCompany(companyId).stream().findFirst().map(i -> get(i.getId()));
     }
 
     /**
@@ -434,19 +450,8 @@ public class IntakeQueryService {
             IntakePayloads.CompanyDetails stored =
                     json.treeToValue(payload, IntakePayloads.CompanyDetails.class);
             if (stored.draft() == null) return payload;
-            com.chartering.dto.IntakePasteCompanyRequest req =
-                    new com.chartering.dto.IntakePasteCompanyRequest();
-            req.setCompanyId(item.getCompanyId());
-            req.setCompany(stored.draft().company());
-            req.setPeople(stored.draft().people().stream()
-                    .map(p -> new com.chartering.dto.IntakePasteCompanyRequest.PersonChange(
-                            p.fullName(), p.title(), p.jobTitle(), null))
-                    .toList());
-            req.setContacts(stored.draft().contacts().stream()
-                    .map(c -> new com.chartering.dto.IntakePasteCompanyRequest.ContactChange(
-                            c.kind(), c.value(), c.label(), c.personName(), null))
-                    .toList());
-            payload.set("comparison", json.valueToTree(paste.compare(req)));
+            payload.set("comparison", json.valueToTree(paste.compare(
+                    CompanyStyleIntake.requestFor(item.getCompanyId(), stored.draft()))));
         } catch (Exception e) {
             log.warn("Intake item {}: could not recompare with the company: {}",
                     item.getId(), e.getMessage());

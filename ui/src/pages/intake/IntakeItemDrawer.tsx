@@ -31,7 +31,7 @@ import CreateHerModal from './CreateHerModal';
 import CompanyCard from './CompanyStyleCard';
 import { intakeApi } from '../../api/intake';
 import { ROLE_WORDS } from './capacities';
-import { kindMeta } from './labels';
+import { MINOR_HINT, kindMeta } from './labels';
 import { correctionsFrom, isCapacityField, otherReading, readAs } from './corrections';
 import type {
   FieldDiff,
@@ -95,8 +95,10 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
 
   // Everything ticked when the drawer opens: the common answer is "the list is right", and a
   // screen that starts with nothing selected makes the common answer the most clicking.
+  // Except the minor rows, where the common answer is the other one - a rounding, a value
+  // already decided, a record other firms confirm - so the record keeps them unless ticked.
   useEffect(() => {
-    setChosen(diffs.map((d) => d.field));
+    setChosen(diffs.filter((d) => !d.minor).map((d) => d.field));
     // Cleared with the rows, not merged into them: the rows are recomputed against her record
     // every time the drawer opens, and a correction held over from a figure that is no longer
     // in dispute would be written against a row nobody is looking at.
@@ -221,6 +223,11 @@ export default function IntakeItemDrawer({ itemId, onClose }: Props) {
           <Space size={8} wrap>
             <Tag color={kindMeta(item.kind).colour}>{kindMeta(item.kind).label}</Tag>
             <span>{item.subjectLabel || '—'}</span>
+            {item.minor && (
+              <Tooltip title={MINOR_HINT}>
+                <Tag>minor</Tag>
+              </Tooltip>
+            )}
           </Space>
         ) : (
           'Loading…'
@@ -500,7 +507,30 @@ function VesselFieldsBody({
             : undefined
         }
         columns={[
-          { title: 'Field', dataIndex: 'label', key: 'label', width: 110 },
+          {
+            title: 'Field',
+            dataIndex: 'label',
+            key: 'label',
+            width: 130,
+            // Why a row was weighed as minor, where it was: "Within 2% of the record", "Already
+            // decided on 12 Sep". It is the reason the row starts unticked, and a reviewer can
+            // only disagree with a reason they can read.
+            render: (label: string, row: FieldDiff) => (
+              <>
+                <div>
+                  {label}
+                  {row.minor && (
+                    <Tag style={{ marginInlineStart: 6, fontSize: 11 }}>minor</Tag>
+                  )}
+                </div>
+                {row.note && (
+                  <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                    {row.note}
+                  </Typography.Text>
+                )}
+              </>
+            ),
+          },
           {
             title: 'On file',
             dataIndex: 'current',

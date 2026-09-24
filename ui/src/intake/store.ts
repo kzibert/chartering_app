@@ -29,6 +29,7 @@ export const intakeKeys = {
   settings: [...KEY, 'settings'] as const,
   vesselFields: [...KEY, 'vessel-fields'] as const,
   cargoSources: (cargoId: number) => [...KEY, 'cargo-sources', cargoId] as const,
+  companyPending: (companyId: number) => [...KEY, 'company-pending', companyId] as const,
 };
 
 export function useIntakeInvalidator() {
@@ -129,6 +130,17 @@ export const useVesselFieldLabels = (enabled: boolean) =>
     queryFn: intakeApi.vesselFields,
     enabled,
     staleTime: Infinity,
+  });
+
+/**
+ * The company question waiting about one firm, for its own record to offer. Under the intake
+ * key, so answering the item anywhere takes the button away.
+ */
+export const usePendingCompanyItem = (companyId: number | undefined, enabled: boolean) =>
+  useQuery({
+    queryKey: intakeKeys.companyPending(companyId ?? 0),
+    queryFn: () => intakeApi.pendingForCompany(companyId!),
+    enabled: enabled && companyId != null,
   });
 
 /** Who has told us about one cargo. Read on the cargo's own drawer, not only here. */

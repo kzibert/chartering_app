@@ -59,6 +59,14 @@ export interface FieldDiff {
   label: string;
   current?: string;
   incoming?: string;
+  /**
+   * Weighed as not worth the queue: a small difference, a value the desk already moved away
+   * from, or one broker against a record several others confirm. Absent on rows nobody
+   * weighed, which read as asked.
+   */
+  minor?: boolean;
+  /** Why, in the words the table prints beside the row. */
+  note?: string;
 }
 
 /** A hull whose particulars resemble the one being described — the third matching tier. */
@@ -131,6 +139,11 @@ export interface IntakeItemResponse {
   id: number;
   kind: IntakeItemKind;
   status: IntakeItemStatus;
+  /**
+   * Kept for the record rather than the queue: it waits on the Minor updates sub-tab (and, for
+   * a company, behind a button on the firm's own record) and does not count toward Needs review.
+   */
+  minor: boolean;
   /** The ship or the commodity, as the email spelled it. */
   subjectLabel?: string;
   /** One line rendered from the payload by the server, so both layouts word it the same. */
@@ -260,7 +273,10 @@ export interface IntakeStatusResponse {
   modelUrl?: string;
   reachabilityError?: string;
   running?: boolean;
+  /** The queue alone — what Needs review means. */
   pendingItems?: number;
+  /** Pending questions kept for the record, on the Minor updates sub-tab. */
+  minorItems?: number;
   acceptedItems?: number;
   rejectedItems?: number;
   unparsed?: number;
@@ -520,6 +536,8 @@ export interface IntakePasteCompanyComparison {
 export interface IntakeItemFilter {
   kind?: IntakeItemKind;
   status?: IntakeItemStatus;
+  /** false is the queue, true the Minor updates sub-tab; absent, both. */
+  minor?: boolean;
   page?: number;
   size?: number;
   sort?: string;
@@ -614,6 +632,15 @@ export const intakeApi = {
     client
       .post<IntakePasteCompanyResponse>(`/intake/items/${id}/company`, body)
       .then((r) => r.data),
+
+  /**
+   * The company question waiting about one firm — every signature it has sent, aggregated —
+   * or null when nothing is. What the company's own record asks before offering the button.
+   */
+  pendingForCompany: (companyId: number) =>
+    client
+      .get<IntakeItemResponse | ''>(`/intake/companies/${companyId}/pending`)
+      .then((r) => (r.status === 204 || !r.data ? null : r.data)),
 
   cargoSources: (cargoId: number) =>
     client.get<CargoSourceResponse[]>(`/intake/cargoes/${cargoId}/sources`).then((r) => r.data),
