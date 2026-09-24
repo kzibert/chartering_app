@@ -93,26 +93,38 @@ CREATE INDEX ix_vessel_field_reports_vessel
 -- payload is the newest reading, which is the one a merge would fill from - and every other
 -- item's arrivals move onto it, so no broker who sent the cargo goes missing whichever way it
 -- is answered. Only pending items: an answered one is a record of a decision.
+--
+-- One source row per email is moved, not one per item. V21's shape moved every loser's row,
+-- which is safe when an email raises one item per hull; here one email can name two cargo
+-- lines that both look like the same cargo on file (cargo 147 had one email on three items),
+-- and moving all of them onto the survivor in one statement breaks
+-- ux_intake_item_sources_item_parsed. The rest go with their items below.
 UPDATE public.intake_item_sources s
-SET intake_item_id = keep.keep_id
+SET intake_item_id = moving.keep_id
 FROM (
-    SELECT i.id AS loser_id,
-           (SELECT max(i2.id) FROM public.intake_items i2
-            WHERE i2.cargo_id = i.cargo_id
-              AND i2.kind = 'CARGO_MERGE'
-              AND i2.status = 'PENDING') AS keep_id
-    FROM public.intake_items i
-    WHERE i.kind = 'CARGO_MERGE'
-      AND i.status = 'PENDING'
-      AND i.cargo_id IS NOT NULL
-) keep
-WHERE s.intake_item_id = keep.loser_id
-  AND keep.loser_id <> keep.keep_id
-  AND NOT EXISTS (
-      SELECT 1 FROM public.intake_item_sources other
-      WHERE other.intake_item_id = keep.keep_id
-        AND other.parsed_email_id = s.parsed_email_id
-  );
+    SELECT DISTINCT ON (keep.keep_id, s2.parsed_email_id)
+           s2.id AS source_id, keep.keep_id
+    FROM public.intake_item_sources s2
+    JOIN (
+        SELECT i.id AS loser_id,
+               (SELECT max(i2.id) FROM public.intake_items i2
+                WHERE i2.cargo_id = i.cargo_id
+                  AND i2.kind = 'CARGO_MERGE'
+                  AND i2.status = 'PENDING') AS keep_id
+        FROM public.intake_items i
+        WHERE i.kind = 'CARGO_MERGE'
+          AND i.status = 'PENDING'
+          AND i.cargo_id IS NOT NULL
+    ) keep ON keep.loser_id = s2.intake_item_id
+    WHERE keep.loser_id <> keep.keep_id
+      AND NOT EXISTS (
+          SELECT 1 FROM public.intake_item_sources other
+          WHERE other.intake_item_id = keep.keep_id
+            AND other.parsed_email_id = s2.parsed_email_id
+      )
+    ORDER BY keep.keep_id, s2.parsed_email_id, s2.id
+) moving
+WHERE s.id = moving.source_id;
 
 DELETE FROM public.intake_item_sources s
 USING public.intake_items i
