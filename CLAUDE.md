@@ -100,8 +100,8 @@ Three things bite here:
   `V22__recover_former_names_from_change_log.sql` and
   `V23__add_cargo_max_ballast_days.sql` and `V24__add_feed.sql` and
   `V25__add_intake_decisions.sql` and `V26__add_web_intake.sql` and
-  `V27__capture_web_into_analysis.sql` and `V28__add_intake_review_history.sql` exist; the
-  next one is V29.
+  `V27__capture_web_into_analysis.sql` and `V28__add_intake_review_history.sql` and
+  `V29__add_mail_reply_cc.sql` exist; the next one is V30.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
@@ -295,6 +295,16 @@ Sent folder.
   `is_reply_default` for replies, each with its own partial unique index. A circular closes
   with the desk's full block; a reply inside somebody else's thread usually wants three
   lines.
+- **A firm can be written to from its record, not only answered.** *Reach out* on the
+  company drawer lists the firm's email addresses — company-wide desk addresses first, then
+  people — and a click writes to one while ticks pick several, the first as To and the rest
+  on copy. It sends through `POST /mailbox/compose`, which is the reply path less the thread:
+  the same route (the mailbox, or Brevo under `MAIL_REPLY_PROVIDER=BREVO`), the same From,
+  footer library starting on the reply default, merge (against the To contact) and row in
+  `mail_replies` — with no `mail_message_id` and the copies in `cc_addresses` (V29). The
+  From line, the not-configured warning and the footer picker are `pages/mailbox/SendRoute`,
+  shared by both composers so the two cannot drift. Bounced and banned addresses are listed
+  but cannot be picked.
 - **`mail_replies` is not `mail_messages`.** That table is a mirror of the server, written
   only by the sync; a row this app invented would be a message no folder holds. The reply
   table exists anyway because it is written the moment the send returns (so the day's count

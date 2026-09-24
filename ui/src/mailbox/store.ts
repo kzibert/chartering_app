@@ -4,6 +4,7 @@ import { mailFoldersApi, mailRulesApi, mailboxApi } from '../api/mailbox';
 import type {
   MailFolderRequest,
   MailLinkRequest,
+  MailComposeRequest,
   MailReplyRequest,
   MailRuleRequest,
   MailboxFilter,
@@ -168,7 +169,13 @@ export function useMailMessageMutations() {
     },
   });
 
-  return { setRead, setReadBulk, markAllRead, move, moveBulk, link, unlink, relink, reply };
+  /** A new message from a company's record. Only the day's count moves; no message changes. */
+  const compose = useMutation({
+    mutationFn: (body: MailComposeRequest) => mailboxApi.compose(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['circulations', 'today'] }),
+  });
+
+  return { setRead, setReadBulk, markAllRead, move, moveBulk, link, unlink, relink, reply, compose };
 }
 
 export function useMailFolderMutations() {

@@ -5,6 +5,7 @@ import com.chartering.config.MailboxProperties;
 import com.chartering.dto.MailLinkRequest;
 import com.chartering.dto.MailMessageDetailResponse;
 import com.chartering.dto.MailMessageResponse;
+import com.chartering.dto.MailComposeRequest;
 import com.chartering.dto.MailReplyRequest;
 import com.chartering.dto.MailReplyResponse;
 import com.chartering.dto.MailServerFolderResponse;
@@ -118,6 +119,18 @@ public class MailboxController {
             @PathVariable Long id,
             @Valid @RequestBody MailReplyRequest body) {
         return ResponseEntity.status(HttpStatus.CREATED).body(mailReplies.reply(id, body));
+    }
+
+    @PostMapping("/compose")
+    @Operation(summary = "Write a new message from the app",
+            description = "What a company's Reach out sends: one message to one address with "
+                    + "any others on copy, by the same route a reply takes (the mailbox over "
+                    + "SMTP, or Brevo under MAIL_REPLY_PROVIDER=BREVO) and with the same footer "
+                    + "and merge. No quote and no thread headers - there is nothing to answer. "
+                    + "Placeholders merge against contactId when it is the To address. Recorded "
+                    + "and counted like a reply once sent; a refusal is a 503 and is not stored.")
+    public ResponseEntity<MailReplyResponse> compose(@Valid @RequestBody MailComposeRequest body) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(mailReplies.compose(body));
     }
 
     @PatchMapping("/messages/{id}/read")

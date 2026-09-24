@@ -4,8 +4,10 @@ import com.chartering.config.MailCampaignProperties;
 import com.chartering.exception.MailSendFailedException;
 import com.chartering.model.MailMessage;
 import com.chartering.model.MailReply;
+import com.chartering.repository.ContactRepository;
 import com.chartering.repository.MailMessageRepository;
 import com.chartering.repository.MailReplyRepository;
+import com.chartering.dto.MailComposeRequest;
 import com.chartering.dto.MailReplyRequest;
 import com.chartering.service.EmailFooterService;
 import com.chartering.service.HtmlSanitizer;
@@ -52,6 +54,7 @@ class MailReplyServiceTest {
     // is what these assertions are about. MailReplyRoutingTest covers the Brevo one.
     @Mock private BrevoReplySender brevo;
     @Mock private SettingsService settings;
+    @Mock private ContactRepository contacts;
 
     private MailCampaignProperties props;
     private MailReplyService service;
@@ -100,7 +103,7 @@ class MailReplyServiceTest {
         Mockito.when(messages.findById(7L)).thenReturn(Optional.of(original));
 
         service = new MailReplyService(messages, replies, footers, new MailTemplateService(),
-                new HtmlSanitizer(), transport, smtp, brevo, settings, props);
+                new HtmlSanitizer(), transport, smtp, brevo, settings, props, contacts);
     }
 
     /**
@@ -171,5 +174,24 @@ class MailReplyServiceTest {
                 .isInstanceOf(MailSendFailedException.class);
 
         Mockito.verify(replies, Mockito.never()).save(Mockito.any(MailReply.class));
+    }
+
+    /** Over SMTP the copies are real Cc recipients, and the message starts a thread of its own. */
+    @Test
+    void aNewMessageGoesToOneAndCopiesTheRest() throws Exception {
+        login("chartering@example.com");
+        MailComposeRequest req = new MailComposeRequest();
+        req.setTo("ops@firm.example");
+        req.setCc(List.of("desk@firm.example"));
+        req.setSubject("Open tonnage");
+        req.setBodyHtml("<p>Please see below.</p>");
+
+        service.compose(req);
+
+        assertThat(sent.getRecipients(jakarta.mail.Message.RecipientType.TO)[0].toString())
+                .isEqualTo("ops@firm.example");
+        assertThat(sent.getRecipients(jakarta.mail.Message.RecipientType.CC)[0].toString())
+                .isEqualTo("desk@firm.example");
+        assertThat(sent.getHeader("In-Reply-To")).isNull();
     }
 }

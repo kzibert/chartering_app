@@ -93,9 +93,20 @@ public class BrevoReplySender {
      */
     public String send(String fromAddress, String fromName, String to, String subject,
                        String html, String text, String inReplyTo) {
+        return send(fromAddress, fromName, to, List.of(), subject, html, text, inReplyTo);
+    }
+
+    /**
+     * The same, with copies — a message written from a company's record rather than an answer.
+     * Brevo takes them as its own {@code cc} list, so each copied address sees the others as a
+     * mail client would show them.
+     */
+    public String send(String fromAddress, String fromName, String to, List<String> cc,
+                       String subject, String html, String text, String inReplyTo) {
         SendRequest body = new SendRequest(
                 new Contact(fromAddress, blankToNull(fromName)),
                 List.of(new Contact(to, null)),
+                cc == null || cc.isEmpty() ? null : cc.stream().map(a -> new Contact(a, null)).toList(),
                 subject,
                 html,
                 text,
@@ -108,7 +119,7 @@ public class BrevoReplySender {
                     .retrieve()
                     .onStatus(HttpStatusCode::isError, (req, response) -> {
                         throw new MailSendFailedException(
-                                "Brevo would not send this reply. " + describeSenderRefusal(
+                                "Brevo would not send this message. " + describeSenderRefusal(
                                         response.getStatusCode().value(),
                                         BrevoCircularSender.describe(response),
                                         fromAddress),
@@ -123,12 +134,12 @@ public class BrevoReplySender {
             // failed. Said plainly, because the person reading this is deciding whether to
             // press Send again, and a second copy of a reply is a real cost.
             throw new MailSendFailedException(
-                    "Brevo did not answer in time, so it is not certain whether this reply went "
+                    "Brevo did not answer in time, so it is not certain whether this message went "
                             + "out. Check the mailbox before sending it again. " + brevo.getBaseUrl()
                             + " said: " + CircularSendException.rootMessage(e), e);
         } catch (RuntimeException e) {
             throw new MailSendFailedException(
-                    "Brevo would not send this reply: " + CircularSendException.rootMessage(e), e);
+                    "Brevo would not send this message: " + CircularSendException.rootMessage(e), e);
         }
     }
 
@@ -208,6 +219,7 @@ public class BrevoReplySender {
     @JsonInclude(JsonInclude.Include.NON_NULL)
     private record SendRequest(Contact sender,
                                List<Contact> to,
+                               List<Contact> cc,
                                String subject,
                                String htmlContent,
                                String textContent,

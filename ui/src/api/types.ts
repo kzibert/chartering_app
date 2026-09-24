@@ -1349,6 +1349,21 @@ export interface MailReplyRequest {
   includeOriginal?: boolean;
 }
 
+/**
+ * A new message written from a company's record: to one address, the rest copied. The
+ * reply's shape less the quote — same route out, same footer, same merge.
+ */
+export interface MailComposeRequest {
+  to: string;
+  cc?: string[];
+  subject: string;
+  bodyHtml: string;
+  /** null = no footer. */
+  footerId?: number | null;
+  /** The contact the To address is, so {{greeting}} and friends merge against them. */
+  contactId?: number;
+}
+
 export interface MailReplyResponse {
   id: number;
   mailMessageId?: number;

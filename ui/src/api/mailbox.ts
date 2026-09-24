@@ -5,6 +5,7 @@ import type {
   MailLinkRequest,
   MailMessage,
   MailMessageDetail,
+  MailComposeRequest,
   MailReplyRequest,
   MailReplyResponse,
   MailServerFolder,
@@ -38,6 +39,10 @@ export const mailboxApi = {
     client
       .post<MailReplyResponse>(`/mailbox/messages/${id}/reply`, body)
       .then((r) => r.data),
+
+  /** A new message — Reach out on a company's record. Same route and recording as a reply. */
+  compose: (body: MailComposeRequest) =>
+    client.post<MailReplyResponse>('/mailbox/compose', body).then((r) => r.data),
 
   setRead: (id: number, read: boolean) =>
     client
