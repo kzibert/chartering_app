@@ -728,4 +728,51 @@ class IntakeServiceTest {
         assertThat(outcome.itemsRaised()).isZero();
         verify(items, never()).save(any());
     }
+
+    // ---------------------------------------------------------- a sender named late
+
+    @Test
+    void aPositionFiledFromNobodyGainsItsReporterOnceTheSenderIsOnFile() {
+        // Filed while the address was unknown; the mailbox has since linked it to Interscan.
+        VesselPosition filed = position(501L, null, OffsetDateTime.parse("2026-09-18T08:00:00Z"));
+        filed.setSourceMailMessage(message);
+        // Interscan's own earlier reading of her: now two LIVE rows from one reporter, and the
+        // older is the one a list replaced.
+        VesselPosition earlier = position(400L, interscan, OffsetDateTime.parse("2026-09-10T08:00:00Z"));
+        onFile.add(filed);
+        onFile.add(earlier);
+        when(positions.findUnreportedWithSource()).thenReturn(List.of(filed));
+
+        int named = service.attributeUnreported();
+
+        assertThat(named).isEqualTo(1);
+        assertThat(filed.getReportedByCompany()).isSameAs(interscan);
+        assertThat(filed.getStatus()).isEqualTo(PositionStatus.LIVE);
+        assertThat(earlier.getStatus()).isEqualTo(PositionStatus.SUPERSEDED);
+    }
+
+    @Test
+    void aSignatureThatStillMatchesNobodyLeavesTheRowAlone() {
+        FeedItem post = new FeedItem();
+        post.setId(300L);
+        post.setText("MV AGN LAGERTHA /27-29 SEPT MARMARA\n\nSomebody\nA Firm Not On File");
+        when(styles.read(any(), any())).thenReturn(new CompanyStyleIntake.Reading(null, List.of(), null));
+        Cargo cargo = new Cargo();
+        cargo.setId(8L);
+        cargo.setSourceFeedItem(post);
+        when(cargoes.findUnbrokeredWithSource()).thenReturn(List.of(cargo));
+
+        assertThat(service.attributeUnreported()).isZero();
+        assertThat(cargo.getBrokerCompany()).isNull();
+    }
+
+    private VesselPosition position(Long id, Company reporter, OffsetDateTime reportedAt) {
+        VesselPosition p = new VesselPosition();
+        p.setId(id);
+        p.setVessel(pacificDawn);
+        p.setStatus(PositionStatus.LIVE);
+        p.setReportedByCompany(reporter);
+        p.setReportedAt(reportedAt);
+        return p;
+    }
 }

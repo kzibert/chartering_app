@@ -47,7 +47,7 @@ import java.util.function.Function;
  *       as {@code CirculationListEntry}, and the position rows are themselves a history:
  *       nothing overwrites one, so the earlier readings are already there to compare.
  *   <li>{@code CargoVesselMatch} — one row per pairing holding the last decision, which
- *       is what the Match tab shows anyway.
+ *       is what the match drawers show anyway.
  *   <li>{@code ParsedEmail}, {@code IntakeItem}, {@code CargoSource} — written by the email
  *       parser, not authored. Each is already a record of its own event, so logging them
  *       would be logging the log, and at the worst scale in this application: one circular

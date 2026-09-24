@@ -75,4 +75,10 @@ public interface CargoRepository extends JpaRepository<Cargo, Long>, JpaSpecific
     List<Cargo> findDuplicateCandidates(List<CargoStatus> statuses);
 
     long countByStatus(CargoStatus status);
+
+    /** The same for cargoes: arrived by mail or off a board, with nobody on it as the broker. */
+    @Query("select c from Cargo c left join fetch c.sourceMailMessage left join fetch c.sourceFeedItem "
+            + "where c.brokerCompany is null "
+            + "and (c.sourceMailMessage is not null or c.sourceFeedItem is not null)")
+    List<Cargo> findUnbrokeredWithSource();
 }

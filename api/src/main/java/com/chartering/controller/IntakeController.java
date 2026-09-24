@@ -193,6 +193,18 @@ public class IntakeController {
                 .orElseGet(() -> ResponseEntity.noContent().build());
     }
 
+    @GetMapping("/positions/{positionId}/company-pending")
+    @Operation(summary = "The company question that would name who reported a position",
+            description = "Asked where a position has no reporter: the signature it was read "
+                    + "from named a firm that is not on file yet, and the question to add it is "
+                    + "waiting. Answering it names the reporter on the position. 204 when the "
+                    + "position has a reporter or nothing is waiting.")
+    public ResponseEntity<IntakeItemResponse> pendingCompanyForPosition(@PathVariable Long positionId) {
+        return queries.pendingCompanyForPosition(positionId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
+    }
+
     @GetMapping("/items/{id}")
     @Operation(summary = "One item, with the whole reading behind it")
     public ResponseEntity<IntakeItemResponse> item(@PathVariable Long id) {
@@ -239,7 +251,12 @@ public class IntakeController {
     public ResponseEntity<IntakePasteCompanyResponse> acceptCompany(
             @PathVariable Long id,
             @Valid @RequestBody IntakePasteCompanyRequest req) {
-        return ResponseEntity.ok(intake.acceptCompanyDetails(id, req, currentUser()));
+        var applied = intake.acceptCompanyDetails(id, req, currentUser());
+        // Its own transaction, after the firm and its addresses are committed: what this
+        // signature already put on Open Fleet and Cargoes gains its reporter now rather than
+        // at the next timed pass. See IntakeService.attributeUnreported.
+        intake.attributeUnreported();
+        return ResponseEntity.ok(applied);
     }
 
     // ------------------------------------------------------------------ web sources

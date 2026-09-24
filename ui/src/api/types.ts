@@ -137,6 +137,9 @@ export interface VesselLastPositionResponse {
   cargoPreferences?: string;
   reportedByCompanyId?: number;
   reportedByCompanyName?: string;
+  /** The email or board post it was read from. */
+  sourceMailMessageId?: number;
+  sourceFeedItemId?: number;
   reportedAt?: string;
   ageDays: number;
   notes?: string;
@@ -473,16 +476,6 @@ export interface MatchSettingsRequest {
   maxBallastDays?: number;
 }
 
-/** One live cargo and how much tonnage stands against it. */
-export interface MatchSummaryResponse {
-  cargo: CargoResponse;
-  suitable: number;
-  /** Suitable ships nothing has been decided about — whether there is work here. */
-  untouched: number;
-  ruledOut: number;
-  bestScore: number;
-}
-
 export interface MatchOutcomeRequest {
   outcome: MatchOutcome;
   note?: string;
@@ -527,6 +520,11 @@ export interface VesselPositionResponse {
   reportedByCompanyName?: string;
   reportedByPersonId?: number;
   reportedByPersonName?: string;
+  /**
+   * Whether the reporting firm is already on her record — owner or a linked broker. Open Fleet
+   * offers to relate them where it is false; absent where nobody is named.
+   */
+  reporterLinked?: boolean;
 
   fromMail: boolean;
   sourceMailMessageId?: number;

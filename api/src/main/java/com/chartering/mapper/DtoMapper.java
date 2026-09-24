@@ -80,7 +80,7 @@ public class DtoMapper {
      * and sending an id would make the screen fetch one per row.
      */
     public VesselPositionResponse toVesselPositionResponse(
-            VesselPosition p, List<VesselExNameResponse> exNames) {
+            VesselPosition p, List<VesselExNameResponse> exNames, Boolean reporterLinked) {
         TradeArea openArea = effectiveArea(p.getOpenPort(), p.getOpenArea());
         Company reporter = p.getReportedByCompany();
         Person reporterPerson = p.getReportedByPerson();
@@ -100,6 +100,7 @@ public class DtoMapper {
                 reporter != null ? reporter.getName() : null,
                 reporterPerson != null ? reporterPerson.getId() : null,
                 reporterPerson != null ? reporterPerson.getFullName() : null,
+                reporter != null ? reporterLinked : null,
                 p.isFromMail(),
                 p.getSourceFeedItem() != null ? p.getSourceFeedItem().getId() : null,
                 p.getSourceFeedItem() != null && p.getSourceFeedItem().getSource() != null
@@ -144,6 +145,8 @@ public class DtoMapper {
                 p.getLastCargo(), p.getCargoPreferences(),
                 reporter != null ? reporter.getId() : null,
                 reporter != null ? reporter.getName() : null,
+                p.getSourceMailMessage() != null ? p.getSourceMailMessage().getId() : null,
+                p.getSourceFeedItem() != null ? p.getSourceFeedItem().getId() : null,
                 p.getReportedAt(), ageDays(p.getReportedAt()), p.getNotes());
     }
 

@@ -220,6 +220,19 @@ public class IntakeQueryService {
     }
 
     /**
+     * The company question that would name who reported a position, when nobody is named yet.
+     *
+     * <p>The other half of the "Reported by" line: a firm on file opens its record, and one not
+     * on file yet but already asked about opens the question, because answering it is how the
+     * reading gains its reporter ({@link IntakeService#attributeUnreported}).
+     */
+    @Transactional(readOnly = true)
+    public java.util.Optional<IntakeItemResponse> pendingCompanyForPosition(Long positionId) {
+        requireEnabled();
+        return itemSources.pendingCompanyItemsForPosition(positionId).stream().findFirst().map(this::get);
+    }
+
+    /**
      * The {@code NEW_VESSEL} shortlist, joined to the fleet as it stands.
      *
      * <p><b>The particulars are fetched rather than stored, and that is the whole reason this

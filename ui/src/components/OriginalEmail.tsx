@@ -54,13 +54,28 @@ export interface EmailSource {
  * sat on a queue row of its own. One source shows no picker: there is nothing to choose.
  */
 export default function OriginalEmail({
-  mailMessageId,
-  feedItemId,
-  sources,
-  initialMailMessageId,
   open,
   onClose,
-}: {
+  ...rest
+}: OriginalEmailViewProps & {
+  open: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <Modal
+      open={open}
+      onCancel={onClose}
+      footer={null}
+      width={900}
+      title={rest.feedItemId != null && rest.mailMessageId == null ? 'The original post' : 'The original email'}
+      destroyOnClose
+    >
+      <OriginalEmailView {...rest} active={open} />
+    </Modal>
+  );
+}
+
+interface OriginalEmailViewProps {
   /** The item's own message — what to show when there is no source list (a list row). */
   mailMessageId?: number;
   /** The item's own post, for the same case where the arrival came off a board. */
@@ -69,9 +84,28 @@ export default function OriginalEmail({
   sources?: EmailSource[];
   /** Which of `sources` to open on, when the reader picked one from a list; else the newest. */
   initialMailMessageId?: number;
-  open: boolean;
-  onClose: () => void;
+  /** How tall the body may grow before it scrolls. */
+  height?: string;
+}
+
+/**
+ * The same thing without the modal, for a screen that keeps the email beside what was read
+ * out of it — the cargo's full tonnage list does, because a ship offered against a figure
+ * the broker never wrote is the mistake that screen exists to prevent. The subject is a row
+ * of its own here rather than the modal's title, so the two read identically.
+ */
+export function OriginalEmailView({
+  mailMessageId,
+  feedItemId,
+  sources,
+  initialMailMessageId,
+  height = '55vh',
+  active = true,
+}: OriginalEmailViewProps & {
+  /** Fetch only while shown; the modal passes its open flag. */
+  active?: boolean;
 }) {
+  const open = active;
   // Only the ones still held can be opened; the rest are named but not readable, which is
   // what ON DELETE SET NULL on the source row means in practice — a mailbox folder emptied, a
   // board whose source was removed.
@@ -118,15 +152,12 @@ export default function OriginalEmail({
   const m = data?.message;
   const p = post.data;
 
+  if (choices.length === 0) {
+    return <Typography.Text type="secondary">No email or post behind this record.</Typography.Text>;
+  }
+
   return (
-    <Modal
-      open={open}
-      onCancel={onClose}
-      footer={null}
-      width={900}
-      title={m?.subject || p?.title || (showing?.feedItemId != null ? 'The original post' : 'The original email')}
-      destroyOnClose
-    >
+    <>
       {choices.length > 1 && (
         <Space direction="vertical" size={4} style={{ marginBottom: 12, width: '100%' }}>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -176,6 +207,7 @@ export default function OriginalEmail({
       {p && (
         <>
           <Descriptions size="small" column={1} style={{ marginBottom: 12 }}>
+            {p.title && <Descriptions.Item label="Title">{p.title}</Descriptions.Item>}
             <Descriptions.Item label="From">
               {p.sourceName}
               {p.url && (
@@ -192,7 +224,7 @@ export default function OriginalEmail({
             </Descriptions.Item>
           </Descriptions>
 
-          <MessageBody text={p.text} height="55vh" />
+          <MessageBody text={p.text} height={height} />
 
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             A copy taken when the board was read. Boards roll their entries off the bottom, so
@@ -204,6 +236,7 @@ export default function OriginalEmail({
       {m && (
         <>
           <Descriptions size="small" column={1} style={{ marginBottom: 12 }}>
+            {m.subject && <Descriptions.Item label="Subject">{m.subject}</Descriptions.Item>}
             <Descriptions.Item label="From">
               {m.fromName ? `${m.fromName} <${m.fromAddress}>` : m.fromAddress}
             </Descriptions.Item>
@@ -222,13 +255,13 @@ export default function OriginalEmail({
             )}
           </Descriptions>
 
-          <MessageBody html={data?.bodyHtml} text={data?.bodyText} height="55vh" />
+          <MessageBody html={data?.bodyHtml} text={data?.bodyText} height={height} />
 
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             Reading this here does not mark it read in the mailbox.
           </Typography.Text>
         </>
       )}
-    </Modal>
+    </>
   );
 }

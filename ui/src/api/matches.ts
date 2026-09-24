@@ -4,7 +4,6 @@ import type {
   MatchResponse,
   MatchSettingsRequest,
   MatchSettingsResponse,
-  MatchSummaryResponse,
 } from './types';
 
 /**
@@ -14,9 +13,6 @@ import type {
  * same fifteen ships every morning, four of them already offered.
  */
 export const matchesApi = {
-  /** Every live cargo with the tonnage against it counted. The tab's landing view. */
-  overview: () => client.get<MatchSummaryResponse[]>('/matches').then((r) => r.data),
-
   forCargo: (cargoId: number, includeRuledOut = false, minScore?: number) =>
     client
       .get<MatchResponse[]>(`/matches/cargo/${cargoId}`, {

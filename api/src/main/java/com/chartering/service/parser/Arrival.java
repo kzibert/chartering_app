@@ -83,7 +83,8 @@ public record Arrival(MailMessage message,
      * signature nothing on file matches is a firm nobody here has met, which is exactly what the
      * {@code COMPANY_DETAILS} question raised beside it is for. The position is still filed —
      * where a ship is open is worth having from a firm we cannot name yet — and it gains its
-     * reporter the moment somebody answers that question and the next list arrives.
+     * reporter once somebody answers that question, including the rows already filed from
+     * this post ({@code IntakeService.attributeUnreported}).
      */
     public static Arrival of(FeedItem post, CompanyStyleIntake.Reading signature,
                              Company company, Person person) {

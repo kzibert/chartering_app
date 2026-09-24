@@ -39,6 +39,9 @@ public record VesselLastPositionResponse(
 
         Long reportedByCompanyId,
         String reportedByCompanyName,
+        /** The email or board post it was read from, so the record can open what was written. */
+        Long sourceMailMessageId,
+        Long sourceFeedItemId,
         OffsetDateTime reportedAt,
         /** Whole days since the reading — computed server-side so every view agrees on it. */
         long ageDays,

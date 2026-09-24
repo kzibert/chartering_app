@@ -113,9 +113,6 @@ export const useWhatsappSettings = () =>
  * Scores are computed per request, so these queries are not cached long: a position added a
  * minute ago changes the answer, and every write in this feature invalidates 'matches'.
  */
-export const useMatchOverview = () =>
-  useQuery({ queryKey: ['matches', 'overview'], queryFn: matchesApi.overview });
-
 export const useMatchesForCargo = (cargoId?: number, includeRuledOut = false) =>
   useQuery({
     queryKey: ['matches', 'cargo', cargoId, includeRuledOut],
@@ -227,7 +224,7 @@ export const useCargo = (id?: number) =>
 export function useCargoMutations() {
   const invalidate = useInvalidator();
   const markDeleted = useMarkDeleted();
-  // 'matches' rides along on every write: the Match tab scores live cargoes against live
+  // 'matches' rides along on every write: the match drawers score live cargoes against live
   // positions on each request, so a cargo that moved to FIXED or grew a draft limit changes
   // what that screen should be showing.
   const touched = ['cargoes', 'cargo', 'matches'] as const;

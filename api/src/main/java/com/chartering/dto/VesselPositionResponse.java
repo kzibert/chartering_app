@@ -37,6 +37,12 @@ public record VesselPositionResponse(
         String reportedByCompanyName,
         Long reportedByPersonId,
         String reportedByPersonName,
+        /**
+         * Whether the reporting firm is already on her record in any capacity - owner or a
+         * linked broker. Open Fleet offers to relate the two where it is false. Null where
+         * nobody is named, and where the caller did not work it out (Match does not need it).
+         */
+        Boolean reporterLinked,
 
         boolean fromMail,
         /**

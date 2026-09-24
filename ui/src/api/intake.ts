@@ -637,6 +637,15 @@ export const intakeApi = {
    * The company question waiting about one firm — every signature it has sent, aggregated —
    * or null when nothing is. What the company's own record asks before offering the button.
    */
+  /**
+   * The company question that would name who reported a position, or null. Only asked where
+   * the position has no reporter; answering it names one.
+   */
+  pendingCompanyForPosition: (positionId: number) =>
+    client
+      .get<IntakeItemResponse | ''>(`/intake/positions/${positionId}/company-pending`)
+      .then((r) => (r.status === 204 || !r.data ? null : r.data)),
+
   pendingForCompany: (companyId: number) =>
     client
       .get<IntakeItemResponse | ''>(`/intake/companies/${companyId}/pending`)

@@ -29,4 +29,20 @@ public interface IntakeItemSourceRepository extends JpaRepository<IntakeItemSour
     List<IntakeItemSource> forItem(Long itemId);
 
     boolean existsByIntakeItemIdAndParsedEmailId(Long intakeItemId, Long parsedEmailId);
+
+    /**
+     * The company questions still waiting that were raised by the email or post a position was
+     * read from — only while the position has no reporter, since a named one is answered.
+     * Through the sources rather than the item's own parse, because a company question folds
+     * every later email from the firm into the first one's item.
+     */
+    @Query("""
+            select distinct s.intakeItem.id from IntakeItemSource s, VesselPosition p
+            where p.id = :positionId and p.reportedByCompany is null
+              and s.intakeItem.kind = com.chartering.model.IntakeItemKind.COMPANY_DETAILS
+              and s.intakeItem.status = com.chartering.model.IntakeItemStatus.PENDING
+              and ((s.feedItem is not null and s.feedItem = p.sourceFeedItem)
+                or (s.mailMessage is not null and s.mailMessage = p.sourceMailMessage))
+            """)
+    List<Long> pendingCompanyItemsForPosition(Long positionId);
 }
