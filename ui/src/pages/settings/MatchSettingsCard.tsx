@@ -25,7 +25,7 @@ interface FormValues {
 }
 
 /**
- * What the Match tab assumes when it weighs a ship against a cargo.
+ * What matching assumes when it weighs a ship against a cargo.
  *
  * **Here rather than in the code**, because these are the numbers a broker argues with the
  * screen about. "That is not a handysize speed." "We do take part cargoes on the small

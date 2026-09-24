@@ -39,6 +39,7 @@ public class VesselPositionService {
     private final CompanyRepository companyRepository;
     private final PersonRepository personRepository;
     private final MailMessageRepository mailMessageRepository;
+    private final com.chartering.repository.VesselCompanyLinkRepository linkRepository;
     private final DtoMapper mapper;
 
     public record PositionFilter(String vesselName,
@@ -95,7 +96,7 @@ public class VesselPositionService {
     @Transactional(readOnly = true)
     public VesselPositionResponse get(Long id) {
         VesselPosition p = load(id);
-        return mapper.toVesselPositionResponse(p, exNamesOf(p.getVessel().getId()));
+        return toResponse(p);
     }
 
     /**
@@ -115,7 +116,7 @@ public class VesselPositionService {
             supersedePrevious(p);
         }
         VesselPosition saved = positionRepository.save(p);
-        return mapper.toVesselPositionResponse(saved, exNamesOf(saved.getVessel().getId()));
+        return toResponse(saved);
     }
 
     /**
@@ -142,7 +143,7 @@ public class VesselPositionService {
         VesselPosition p = load(id);
         apply(p, req);
         VesselPosition saved = positionRepository.save(p);
-        return mapper.toVesselPositionResponse(saved, exNamesOf(saved.getVessel().getId()));
+        return toResponse(saved);
     }
 
     /**
@@ -157,7 +158,7 @@ public class VesselPositionService {
         VesselPosition p = load(id);
         p.setStatus(status);
         VesselPosition saved = positionRepository.save(p);
-        return mapper.toVesselPositionResponse(saved, exNamesOf(saved.getVessel().getId()));
+        return toResponse(saved);
     }
 
     @Transactional
@@ -184,8 +185,40 @@ public class VesselPositionService {
     private java.util.function.Function<VesselPosition, VesselPositionResponse> withExNames(
             List<VesselPosition> rows) {
         Map<Long, List<VesselExNameResponse>> byVessel = exNamesFor(rows);
+        java.util.Set<List<Long>> linked = linkedPairs(rows);
         return p -> mapper.toVesselPositionResponse(
-                p, byVessel.getOrDefault(p.getVessel().getId(), List.of()));
+                p, byVessel.getOrDefault(p.getVessel().getId(), List.of()), reporterLinked(p, linked));
+    }
+
+    private VesselPositionResponse toResponse(VesselPosition p) {
+        return mapper.toVesselPositionResponse(p, exNamesOf(p.getVessel().getId()),
+                reporterLinked(p, linkedPairs(List.of(p))));
+    }
+
+    /**
+     * Which firms are already on each vessel's record, for the page in one query - the same
+     * reason the former names are read that way: Open Fleet asks it of every row.
+     */
+    private java.util.Set<List<Long>> linkedPairs(List<VesselPosition> rows) {
+        List<Long> ids = rows.stream().filter(p -> p.getReportedByCompany() != null)
+                .map(p -> p.getVessel().getId()).distinct().toList();
+        if (ids.isEmpty()) return java.util.Set.of();
+        return linkRepository.linkPairs(ids).stream()
+                .map(r -> List.of((Long) r[0], (Long) r[1]))
+                .collect(Collectors.toSet());
+    }
+
+    /**
+     * Whether the reporter is on her record in any capacity. The owner column counts as well as
+     * the links: an owner set on the vessel form before links existed has no link row, and
+     * offering to relate the owner to her own ship would be offering nonsense.
+     */
+    private static Boolean reporterLinked(VesselPosition p, java.util.Set<List<Long>> linked) {
+        if (p.getReportedByCompany() == null) return null;
+        Long reporter = p.getReportedByCompany().getId();
+        com.chartering.model.Company owner = p.getVessel().getOwner();
+        return (owner != null && reporter.equals(owner.getId()))
+                || linked.contains(List.of(p.getVessel().getId(), reporter));
     }
 
     private Map<Long, List<VesselExNameResponse>> exNamesFor(List<VesselPosition> rows) {

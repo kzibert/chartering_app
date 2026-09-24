@@ -90,3 +90,15 @@ export const parseStatusMeta = (status: ParseStatus) =>
     colour: 'default',
     hint: '',
   };
+
+/**
+ * What "minor" means, in one place for the tag, the sub-tab and the company record.
+ *
+ * A minor question is real and kept, and answered by the same drawer - it only does not count
+ * toward Needs review. It is recomputed as mail arrives, so it can move back onto the queue.
+ */
+export const MINOR_HINT =
+  'Kept for the record rather than the queue: a company whose name and email addresses have not ' +
+  'changed, or particulars that differ only by a rounding, by a value already decided, or ' +
+  'against a record other firms confirm. It moves back to Needs review if a later email makes ' +
+  'it a real question.';

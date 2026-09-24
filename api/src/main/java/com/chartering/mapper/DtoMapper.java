@@ -80,7 +80,7 @@ public class DtoMapper {
      * and sending an id would make the screen fetch one per row.
      */
     public VesselPositionResponse toVesselPositionResponse(
-            VesselPosition p, List<VesselExNameResponse> exNames) {
+            VesselPosition p, List<VesselExNameResponse> exNames, Boolean reporterLinked) {
         TradeArea openArea = effectiveArea(p.getOpenPort(), p.getOpenArea());
         Company reporter = p.getReportedByCompany();
         Person reporterPerson = p.getReportedByPerson();
@@ -100,6 +100,7 @@ public class DtoMapper {
                 reporter != null ? reporter.getName() : null,
                 reporterPerson != null ? reporterPerson.getId() : null,
                 reporterPerson != null ? reporterPerson.getFullName() : null,
+                reporter != null ? reporterLinked : null,
                 p.isFromMail(),
                 p.getSourceFeedItem() != null ? p.getSourceFeedItem().getId() : null,
                 p.getSourceFeedItem() != null && p.getSourceFeedItem().getSource() != null
@@ -144,6 +145,8 @@ public class DtoMapper {
                 p.getLastCargo(), p.getCargoPreferences(),
                 reporter != null ? reporter.getId() : null,
                 reporter != null ? reporter.getName() : null,
+                p.getSourceMailMessage() != null ? p.getSourceMailMessage().getId() : null,
+                p.getSourceFeedItem() != null ? p.getSourceFeedItem().getId() : null,
                 p.getReportedAt(), ageDays(p.getReportedAt()), p.getNotes());
     }
 
@@ -256,6 +259,7 @@ public class DtoMapper {
                 m.getFiledByRuleId(),
                 c != null ? c.getId() : null,
                 c != null ? c.getName() : null,
+                c != null ? c.isConfirmed() : null,
                 p != null ? p.getId() : null,
                 p != null ? p.getFullName() : null,
                 m.isLinkManual());
@@ -451,7 +455,7 @@ public class DtoMapper {
         // company on the arrival row rather than anything on the item.
         Company sender = m != null ? m.getCompany() : null;
         return new IntakeItemResponse(
-                item.getId(), item.getKind(), item.getStatus(),
+                item.getId(), item.getKind(), item.getStatus(), item.isMinor(),
                 item.getSubjectLabel(), summary,
                 item.getVesselId(), item.getCargoId(), item.getCompanyId(),
                 m != null ? m.getId() : null,

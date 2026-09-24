@@ -100,7 +100,8 @@ Three things bite here:
   `V22__recover_former_names_from_change_log.sql` and
   `V23__add_cargo_max_ballast_days.sql` and `V24__add_feed.sql` and
   `V25__add_intake_decisions.sql` and `V26__add_web_intake.sql` and
-  `V27__capture_web_into_analysis.sql` exist; the next one is V28.
+  `V27__capture_web_into_analysis.sql` and `V28__add_intake_review_history.sql` and
+  `V29__add_mail_reply_cc.sql` exist; the next one is V30.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
@@ -294,6 +295,16 @@ Sent folder.
   `is_reply_default` for replies, each with its own partial unique index. A circular closes
   with the desk's full block; a reply inside somebody else's thread usually wants three
   lines.
+- **A firm can be written to from its record, not only answered.** *Reach out* on the
+  company drawer lists the firm's email addresses — company-wide desk addresses first, then
+  people — and a click writes to one while ticks pick several, the first as To and the rest
+  on copy. It sends through `POST /mailbox/compose`, which is the reply path less the thread:
+  the same route (the mailbox, or Brevo under `MAIL_REPLY_PROVIDER=BREVO`), the same From,
+  footer library starting on the reply default, merge (against the To contact) and row in
+  `mail_replies` — with no `mail_message_id` and the copies in `cc_addresses` (V29). The
+  From line, the not-configured warning and the footer picker are `pages/mailbox/SendRoute`,
+  shared by both composers so the two cannot drift. Bounced and banned addresses are listed
+  but cannot be picked.
 - **`mail_replies` is not `mail_messages`.** That table is a mirror of the server, written
   only by the sync; a row this app invented would be a message no folder holds. The reply
   table exists anyway because it is written the moment the send returns (so the day's count
@@ -352,19 +363,16 @@ Flyway builds one schema, not one per environment.
   typed twice. The subject and date a post is shown under are
   `AnalysisAnnotationTemplates.subjectFor`/`dateFor` — **called by the parser too**, so what
   the model is trained on and what it is asked at inference are the same shape.
-- **The company is part of what is annotated, and the prompt is deliberately two constants.**
-  The skeletons ask for the firm's full style — name, website, city, country, address, people
-  with job titles, contacts with labels — in `CompanyStyleReader.Style`'s own shape, so a
-  model that learns it drops into the place the regex reader already occupies. But the running
-  finetune was measured under a prompt that says nothing about a company, and a prompt a model
-  has not seen is a prompt it answers worse. So `SYSTEM_PROMPT` is what `EmailParserClient`
-  sends and has not moved (`AnalysisPromptSplitTest` pins its SHA-256 and fails loudly if it
-  does), while `TRAINING_SYSTEM_PROMPT` — the same rules plus the company section — is what
-  the export trains against. **The swap, when a model trained on the new wording ships:** point
-  `SYSTEM_PROMPT` at the training one and regenerate `parser/extraction-schema.json` from
-  `chartering-ml` (`make schema`), because the JSON grammar is what actually decides whether
-  the model can emit a company at all. Until both are done the live parser cannot return one,
-  which is why leaving it alone costs nothing.
+- **The company is part of what is annotated, and the live prompt asks for it since V3.**
+  The skeletons ask for the firm's full style - name, website, city, country, address, people
+  with job titles, contacts with labels - in `CompanyStyleReader.Style`'s own shape, so the
+  model's reading drops into the place the regex reader occupies. `SYSTEM_PROMPT` and
+  `TRAINING_SYSTEM_PROMPT` are one text today (`AnalysisPromptSplitTest` pins its SHA-256,
+  `ef478cb5…`); the V1/V2 parser was trained on the rules alone (`9714dcc2…`). They are still
+  two names because the next section added for a future model goes into the training one
+  first, and the live one follows only with a model trained on it and
+  `parser/extraction-schema.json` regenerated from `chartering-ml` (`make schema`) in the same
+  commit - the grammar is what decides whether the model can emit a field at all.
 - **`analysis_samples` is not `mail_messages`**, the same distinction `mail_replies` makes.
   That table is a mirror of the IMAP server and its rows come and go with the mailbox; a
   corpus on top of it would lose examples to housekeeping, and the annotation — the expensive
@@ -391,8 +399,11 @@ Flyway builds one schema, not one per environment.
 
 ### Cargoes, open fleet, and the match between them
 
-Three tabs and one rule engine. A day here is cargoes arriving, tonnage positions arriving,
-and the two being put against each other; these are those three things.
+Two tabs and one rule engine. A day here is cargoes arriving, tonnage positions arriving,
+and the two being put against each other. The third used to be a Match tab of its own; it
+is now a drawer opened from the record it answers for (`pages/match/MatchDrawer`) —
+**Matching vessels** on a live cargo, **Matching cargoes** on a vessel. Nobody opened Match
+to browse: the question is always asked about one cargo or one ship, from its record.
 
 **Where a cargo came from is one column with three answers.** `cargoes.source_kind` is
 `MANUAL`, `MAIL` or `WEB` — typed on a form, read out of the mailbox by the sweep, or read off
@@ -616,7 +627,10 @@ settles the pairs a hundred points over eight checks cannot, which is a great ma
 
 Match reads in both directions, because the desk does. Most of the mail here is somebody
 else's tonnage asking for work — "pls propose suitable cgoes for our below home tonnages"
-arrives weekly — and answering it is the same scorer read the other way round.
+arrives weekly — and answering it is the same scorer read the other way round. Cargoes are
+scored against a *position*, not a hull: from an Open fleet row it is the row clicked (when
+live), from anywhere else her latest reading, and only while it is live — a vessel with no
+live reading has no button.
 
 Every reason is shown with its figures ("Draws 7.9m, berth takes 7.0m"), never as "failed
 draft check". The value of the screen is that a broker can disagree with it, and they can
@@ -825,11 +839,13 @@ So three things stop and become `intake_items`:
   again. ANGORA asked about JELENA's bale four days running. So an answer that leaves the
   email as wrong tomorrow as it is today writes `intake_field_decisions` — a row left
   unticked (`KEPT`) or one the reviewer overrode (`CORRECTED`) — and a later reading of that
-  value from that firm is dropped before an item is raised. **Accepting writes no row**: the
-  record now holds the figure, so tomorrow's list agrees and there is nothing to raise.
-  Scoped to the correspondent, which is the judgement in it — that one broker is wrong about
-  her bale says nothing about the next one, and a second firm carrying the same figure is a
-  second opinion nobody here has weighed. The value is stored as it was *compared* (a
+  value from that firm is dropped before an item is raised. **Accepting writes a row too
+  since V28** (`ACCEPTED`), and every answer that moved the record stores what it held
+  (`replaced_value`): tomorrow's list from that firm agrees anyway, but the next broker still
+  carrying the old figure used to raise the same pair the other way round — CARLOW was asked
+  seven times over two figures that way. Dropping is scoped to the correspondent, which is the
+  judgement in it — that one broker is wrong about her bale says nothing about the next one.
+  What another firm reports is *weighed* instead (below). The value is stored as it was *compared* (a
   capacity already in m³, no unit on it) and matched back through the same half-percent
   tolerance, so a broker who re-rounds on Wednesday is still reporting Tuesday's figure.
   **A third answer, beside the record and the email: correct the row.** A list is regularly
@@ -839,6 +855,20 @@ So three things stop and become `intake_items`:
   name, never skipped), written through the same writer an accepted value uses, and recorded
   as a decision so the email's own figure stops coming back. The drawer drops settled rows on
   the **detail call only** — it costs a query per item, and the list row prints one line.
+  **Every row is then weighed, and most repeats are minor rather than asked**
+  (`VesselReviewPolicy`). `vessel_field_reports` keeps every figure every firm has reported
+  for every particular — one row per hull, field, firm and value, with first/last seen and a
+  count, agreeing with the record or not. A row is *minor* when the desk has already moved
+  away from that value (kept the record over it, or replaced it) unless two or more firms have
+  reported it since; when the difference is a rounding (`VesselFieldDiff.smallDifference`: 2%
+  DWT and draft, 3% DWCC and capacities, a build year one apart); or when two or more *other*
+  firms, heard in the last year, report what is on file and outnumber this value. Name and IMO
+  are always asked. Nothing is dropped by weighing: an item whose rows are all minor is
+  `intake_items.minor` and waits on the Intake tab's **Minor updates** sub-tab, off the
+  Needs review count, with minor rows starting unticked and their reason printed beside them.
+  The flag is recomputed when another arrival merges in and by a timed pass
+  (`IntakeService.reweighPending`, from `IntakeReconcileRunner`), because the record moves on
+  its own.
 - **`COMPANY_DETAILS`** — the firm that signed it, against the firm on file. Every circular
   ends in a full style, and it is the one part of the mail that is *about the sender* rather
   than about the market; the contacts database goes stale in exactly that place while the market
@@ -857,12 +887,30 @@ So three things stop and become `intake_items`:
   delegates to `IntakePasteService.acceptCompany` — the same service, so a signature is allowed
   to write exactly the same things whichever screen reviewed it: only what was ticked, nothing
   flagged main or `circ`, notes appended rather than replaced.
-- **`CARGO_MERGE`** — a cargo that looks like one in hand. Never merged silently: two cargoes
-  cannot be un-merged. The key is same commodity + the load point actually agreeing +
-  quantity within 20% + laycans overlapping, where **an absent field abstains rather than
-  agreeing or objecting** — a cargo email is mostly silent. A merge gap-fills and leaves every
-  disagreement alone: neither broker is the charterer, so there is no reason to believe the
-  second over the first.
+  **The waiting item is an aggregate, not the newest signature.** Each further email from the
+  firm is folded in (`CompanyStyleIntake.aggregate`): every person and address any of its mail
+  has carried, the newer reading winning a field where two speak, compared again on the whole;
+  `seenStyles` keeps every fingerprint so a discard suppresses all of them. **It is minor unless
+  the name or an email address changed** — a new firm, a real rename (not a legal form, per
+  `CompanyNames.similarityKey`) or an address the firm does not have; a website, a city, a phone
+  or a new face waits on Minor updates. The company's own drawer asks
+  `GET /intake/companies/{id}/pending` and, while the aggregate would still change something,
+  shows **Update from correspondence**, opening the same item drawer (`CorrespondenceUpdate`).
+- **`CARGO_MERGE`** — a cargo that looks like one in hand. The test is a set of **anchors**
+  (`CargoMatcher`), each agreeing, abstaining or objecting, any objection ruling the pair out:
+  commodity and load point must agree; discharge point, quantity (within 20%), laycan
+  (overlapping with five days' grace) and charterer may abstain but may not object. **An absent
+  field abstains** — a cargo email is mostly silent. A candidate is **certain** and merged on
+  arrival, with no item, where the sender is already a source of that cargo and two of
+  {quantity within 5%, discharge point, laycan} agree — a broker re-sending his own enquiry,
+  which was six of cargo 122's seven items — or where all three agree *and* the load point
+  agrees at port level. Everything else is **probable** and is asked, because two firms working
+  one cargo and two firms with similar cargoes look alike from here. A merge of either kind
+  gap-fills and leaves every disagreement alone — neither broker is the charterer, so there is
+  no reason to believe the second over the first — and the arrival stays on the cargo as a
+  source, a certain one noting "Merged on arrival" with its anchors. **One pending item per
+  candidate cargo**; later sightings join it as sources, and answering it puts every one of
+  them on whichever cargo the answer names.
 
 **A position that repeats is a re-confirmation, not a new row.** An identical reading from the
 same reporter against a row still LIVE moves that row's `reported_at` forward — and only
@@ -926,10 +974,13 @@ forms send (`CargoRequest`, `VesselRequest`, `VesselPositionRequest`) and is sav
 those forms with the text beside it (`FormWithReference`). The importer's arrangement again:
 nothing stored between reading and saving, and an abandoned paste costs nothing.
 
-- **The company block is not the model's.** The model was trained on cargoes and positions and
-  knows a sender only as company, person and email, so `CompanyStyleReader` reads addresses,
-  phones and websites by their shape, without it — which is also why it still works with the
-  model server down. A run of digits is a phone only behind a label or written with `+`/`00`,
+- **The company block is the model's where it gave one, the shape reader's otherwise.**
+  `CompanyStyleReader.readWithModel` takes the V3 parser's `company` reading - it settles what
+  shapes cannot: which line is the firm, whose mobile is whose, a job title against an
+  honorific - and keeps nothing the text does not contain (every email, every phone's digits,
+  every name and city checked against the text; a person dropped takes their lines' ownership
+  with them). An empty reading, an older model and a model server that is down all fall back
+  to the shape reader, which reads addresses, phones and websites by their shape. A run of digits is a phone only behind a label or written with `+`/`00`,
   or every IMO and dotted date would be one. A mobile or direct line is a person's; the office
   line and the fax are the firm's even inside one person's signature.
 - **`CompanyMatcher` proposes and never picks:** same email, same name, same phone (last nine

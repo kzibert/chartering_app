@@ -110,7 +110,7 @@ public class IntakePasteService {
         }
 
         CompanyStyleReader.Style style =
-                CompanyStyleReader.read(text, extraction == null ? null : extraction.broker());
+                CompanyStyleReader.readWithModel(text, extraction);
         List<CompanyMatcher.Match> matches = style.isEmpty() ? List.of() : companyMatcher.match(style);
         // The firm the text is from, when that is beyond doubt — used as the broker of a cargo
         // and the reporter of a position, both of which the form still shows and lets change.
@@ -579,7 +579,7 @@ public class IntakePasteService {
     }
 
     /** Emails case-insensitively, phones by their digits — "+90 212 555" is "0090212555". */
-    private static String contactKey(String kind, String value) {
+    static String contactKey(String kind, String value) {
         if ("phone".equalsIgnoreCase(kind)) {
             String tail = CompanyMatcher.tail(value);
             return "phone:" + (tail != null ? tail : value.replaceAll("\\D", ""));

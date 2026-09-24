@@ -17,8 +17,8 @@ interface Props {
   onToggleExpanded: (id: number) => void;
   /**
    * Open the cargo's own record. Only reachable on the by-ship side, where the cargo is
-   * what each row names — on the by-cargo side every row is about the one cargo already
-   * picked on the left, and a link to it on all fifteen rows would say nothing.
+   * what each row names — on the by-cargo side every row is about the one cargo whose
+   * drawer the list was opened from, and a link to it on all fifteen rows would say nothing.
    */
   onOpenCargo: (cargoId: number) => void;
   /** The mirror of it: the vessel's record, from the rows that name a vessel. */

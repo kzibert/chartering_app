@@ -137,6 +137,9 @@ export interface VesselLastPositionResponse {
   cargoPreferences?: string;
   reportedByCompanyId?: number;
   reportedByCompanyName?: string;
+  /** The email or board post it was read from. */
+  sourceMailMessageId?: number;
+  sourceFeedItemId?: number;
   reportedAt?: string;
   ageDays: number;
   notes?: string;
@@ -473,16 +476,6 @@ export interface MatchSettingsRequest {
   maxBallastDays?: number;
 }
 
-/** One live cargo and how much tonnage stands against it. */
-export interface MatchSummaryResponse {
-  cargo: CargoResponse;
-  suitable: number;
-  /** Suitable ships nothing has been decided about — whether there is work here. */
-  untouched: number;
-  ruledOut: number;
-  bestScore: number;
-}
-
 export interface MatchOutcomeRequest {
   outcome: MatchOutcome;
   note?: string;
@@ -527,6 +520,11 @@ export interface VesselPositionResponse {
   reportedByCompanyName?: string;
   reportedByPersonId?: number;
   reportedByPersonName?: string;
+  /**
+   * Whether the reporting firm is already on her record — owner or a linked broker. Open Fleet
+   * offers to relate them where it is false; absent where nobody is named.
+   */
+  reporterLinked?: boolean;
 
   fromMail: boolean;
   sourceMailMessageId?: number;
@@ -1318,6 +1316,8 @@ export interface MailMessage {
   imapFolder?: string;
   companyId?: number;
   companyName?: string;
+  /** The linked company's record is confirmed. Absent when there is no company. */
+  companyConfirmed?: boolean;
   personId?: number;
   personName?: string;
   /** The company link was set by hand; no re-link pass will overwrite it. */
@@ -1347,6 +1347,21 @@ export interface MailReplyRequest {
   footerId?: number | null;
   /** Quote the message being answered underneath. Omitted counts as true. */
   includeOriginal?: boolean;
+}
+
+/**
+ * A new message written from a company's record: to one address, the rest copied. The
+ * reply's shape less the quote — same route out, same footer, same merge.
+ */
+export interface MailComposeRequest {
+  to: string;
+  cc?: string[];
+  subject: string;
+  bodyHtml: string;
+  /** null = no footer. */
+  footerId?: number | null;
+  /** The contact the To address is, so {{greeting}} and friends merge against them. */
+  contactId?: number;
 }
 
 export interface MailReplyResponse {

@@ -3,6 +3,7 @@ package com.chartering.service.mail;
 import com.chartering.config.MailCampaignProperties;
 import com.chartering.dto.CampaignRecipientRequest;
 import com.chartering.dto.EmailFooterResponse;
+import com.chartering.dto.MailComposeRequest;
 import com.chartering.dto.MailReplyRequest;
 import com.chartering.dto.MailReplyResponse;
 import com.chartering.exception.MailNotConfiguredException;
@@ -13,6 +14,7 @@ import com.chartering.model.Contact;
 import com.chartering.model.MailMessage;
 import com.chartering.model.MailReply;
 import com.chartering.model.Person;
+import com.chartering.repository.ContactRepository;
 import com.chartering.repository.MailMessageRepository;
 import com.chartering.repository.MailReplyRepository;
 import com.chartering.service.EmailFooterService;
@@ -38,6 +40,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.UnsupportedEncodingException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -87,6 +91,7 @@ public class MailReplyService {
     private final BrevoReplySender brevo;
     private final SettingsService settings;
     private final MailCampaignProperties props;
+    private final ContactRepository contacts;
 
     /**
      * Which transport replies leave by on this deployment. Parsed forgivingly, the same way
@@ -126,29 +131,9 @@ public class MailReplyService {
         MailMessage original = messages.findById(messageId)
                 .orElseThrow(() -> new ResourceNotFoundException("Message", messageId));
 
-        if (!props.isEnabled()) {
-            throw new MailNotConfiguredException(
-                    "Sending is switched off on this server (MAIL_ENABLED), so nothing can go "
-                            + "out from here. The reply has not been sent.");
-        }
-
         CirculationSettings cfg = settings.circulation();
         CircularProvider route = replyProvider();
-        List<String> missing = missingSettings(cfg);
-        if (!missing.isEmpty()) {
-            throw new MailNotConfiguredException(
-                    (route == CircularProvider.BREVO
-                            ? "Brevo is not fully configured, so the reply was not sent. Still "
-                            : "The mailbox is not fully configured, so the reply was not sent. Still ")
-                            + "needed: " + String.join(", ", missing) + ".");
-        }
-        // Resolved before anything is composed, so a transport that is not there at all fails
-        // the same way a missing setting does rather than half way through a send.
-        JavaMailSenderImpl sender = route == CircularProvider.BREVO ? null : transport.senderFor(cfg);
-        if (route == CircularProvider.SMTP && sender == null) {
-            throw new MailNotConfiguredException(
-                    "No SMTP transport is configured on this server, so the reply was not sent.");
-        }
+        JavaMailSenderImpl sender = requireRoute(cfg, route, "reply");
 
         EmailFooterResponse footer = req.getFooterId() == null ? null : footers.get(req.getFooterId());
         String composed = compose(req, original, footer);
@@ -168,7 +153,8 @@ public class MailReplyService {
                     original.getMessageId());
         } else {
             sentMessageId = messageIdFor(from);
-            send(sender, cfg, from, req, original, html, sentMessageId);
+            send(sender, cfg, from, req.getTo().trim(), List.of(), req.getSubject().trim(), html,
+                    sentMessageId, original.getMessageId(), "reply");
         }
 
         MailReply record = new MailReply();
@@ -187,6 +173,109 @@ public class MailReplyService {
                 messageId, route.label(), req.getSubject(), req.getTo());
         return new MailReplyResponse(record.getId(), original.getId(), record.getToAddress(),
                 record.getSubject(), record.getFooterName(), record.getSentAt());
+    }
+
+    /**
+     * Compose, send and record a new message - written from a company's record rather than in
+     * answer to anything.
+     *
+     * <p>Everything a reply is, less the thread: the same route out (the mailbox, or Brevo
+     * where the host blocks SMTP), the same footer and merge, the same row in
+     * {@code mail_replies}, recorded only once the provider has taken it. What it adds is
+     * copies - the first address picked is who it is to, the rest are copied - and what it
+     * drops is the quote and the In-Reply-To, since there is nothing to answer.
+     */
+    @Transactional
+    public MailReplyResponse compose(MailComposeRequest req) {
+        CirculationSettings cfg = settings.circulation();
+        CircularProvider route = replyProvider();
+        JavaMailSenderImpl sender = requireRoute(cfg, route, "message");
+
+        String to = req.getTo().trim();
+        List<String> cc = copies(to, req.getCc());
+        String subject = req.getSubject().trim();
+
+        EmailFooterResponse footer = req.getFooterId() == null ? null : footers.get(req.getFooterId());
+        StringBuilder composed = new StringBuilder(sanitizer.clean(req.getBodyHtml()));
+        if (footer != null) {
+            composed.append(sanitizer.clean(footer.html()));
+        }
+        Contact picked = req.getContactId() == null ? null
+                : contacts.findById(req.getContactId()).orElse(null);
+        String html = templates.renderHtml(composed.toString(), recipientFor(picked, to));
+
+        String from = replyFromAddress(cfg);
+        String sentMessageId;
+        if (route == CircularProvider.BREVO) {
+            sentMessageId = brevo.send(from, cfg.fromName(), to, cc, subject, html,
+                    templates.htmlToText(html), null);
+        } else {
+            sentMessageId = messageIdFor(from);
+            send(sender, cfg, from, to, cc, subject, html, sentMessageId, null, "message");
+        }
+
+        MailReply record = new MailReply();
+        record.setMessageId(sentMessageId);
+        record.setToAddress(to);
+        record.setCcAddresses(cc.isEmpty() ? null : String.join(", ", cc));
+        record.setSubject(subject);
+        record.setBodyHtml(html);
+        record.setFooterId(footer == null ? null : footer.id());
+        record.setFooterName(footer == null ? null : footer.name());
+        record.setSentAt(LocalDateTime.now());
+        record.setSentBy(currentUser());
+        replies.save(record);
+
+        log.info("Sent a new message via {}: \"{}\" to {}{}", route.label(), subject, to,
+                cc.isEmpty() ? "" : " cc " + String.join(", ", cc));
+        return new MailReplyResponse(record.getId(), null, record.getToAddress(),
+                record.getSubject(), record.getFooterName(), record.getSentAt());
+    }
+
+    /**
+     * The copies as they will go out: trimmed, each once, and never the {@code To} address
+     * again - copying somebody on a message addressed to them sends them two.
+     */
+    static List<String> copies(String to, List<String> cc) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        if (cc != null) {
+            for (String a : cc) {
+                if (!isSet(a)) continue;
+                String t = a.trim();
+                if (t.equalsIgnoreCase(to)) continue;
+                if (out.stream().noneMatch(x -> x.equalsIgnoreCase(t))) out.add(t);
+            }
+        }
+        return new ArrayList<>(out);
+    }
+
+    /**
+     * Whether anything can go out by the route in force, and the SMTP transport where that is
+     * the route. Asked before anything is composed, so a transport that is not there at all
+     * fails the same way a missing setting does rather than half way through a send.
+     *
+     * @param what "reply" or "message", for the words on the screen
+     */
+    private JavaMailSenderImpl requireRoute(CirculationSettings cfg, CircularProvider route, String what) {
+        if (!props.isEnabled()) {
+            throw new MailNotConfiguredException(
+                    "Sending is switched off on this server (MAIL_ENABLED), so nothing can go "
+                            + "out from here. The " + what + " has not been sent.");
+        }
+        List<String> missing = missingSettings(cfg);
+        if (!missing.isEmpty()) {
+            throw new MailNotConfiguredException(
+                    (route == CircularProvider.BREVO
+                            ? "Brevo is not fully configured, so the " + what + " was not sent. Still "
+                            : "The mailbox is not fully configured, so the " + what + " was not sent. Still ")
+                            + "needed: " + String.join(", ", missing) + ".");
+        }
+        JavaMailSenderImpl sender = route == CircularProvider.BREVO ? null : transport.senderFor(cfg);
+        if (route == CircularProvider.SMTP && sender == null) {
+            throw new MailNotConfiguredException(
+                    "No SMTP transport is configured on this server, so the " + what + " was not sent.");
+        }
+        return sender;
     }
 
     /** When this message was last answered from here, or null. */
@@ -258,6 +347,28 @@ public class MailReplyService {
                 c == null ? null : c.getName());
     }
 
+    /**
+     * The merge fields for a message written from a company's record: whoever the picked
+     * address belongs to, by the same greeting rule as above. An address typed over the one
+     * picked, or typed by hand, merges against nobody, and the placeholders fall back the way
+     * they do for an unlinked message.
+     */
+    private CampaignRecipientRequest recipientFor(Contact ct, String to) {
+        if (ct == null || ct.getContactValue() == null
+                || !to.equalsIgnoreCase(ct.getContactValue().trim())) {
+            return new CampaignRecipientRequest(to, null, null, null, null, null);
+        }
+        Person p = ct.getPerson();
+        Company c = ct.getCompany() != null ? ct.getCompany() : p == null ? null : p.getCompany();
+        String greeting = ct.getGreetingName() != null && !ct.getGreetingName().isBlank()
+                ? ct.getGreetingName()
+                : p == null ? null : p.getGreetingName();
+        return new CampaignRecipientRequest(to, ct.getId(), greeting,
+                p == null ? null : p.getFullName(),
+                p == null ? null : p.getTitle(),
+                c == null ? null : c.getName());
+    }
+
     // ---------------------------------------------------------------- sending
 
     /**
@@ -284,8 +395,8 @@ public class MailReplyService {
     }
 
     private void send(JavaMailSenderImpl sender, CirculationSettings cfg, String from,
-                      MailReplyRequest req, MailMessage original, String html,
-                      String ourMessageId) {
+                      String to, List<String> cc, String subject, String html,
+                      String ourMessageId, String inReplyTo, String what) {
         try {
             // Our own Message-ID, by overriding the one JavaMail would invent at
             // saveChanges(). Knowing it is what lets the provider's Sent-folder copy be
@@ -298,8 +409,11 @@ public class MailReplyService {
                 }
             };
             mime.setFrom(new InternetAddress(from, cfg.fromName(), "UTF-8"));
-            mime.setRecipient(Message.RecipientType.TO, new InternetAddress(req.getTo().trim()));
-            mime.setSubject(req.getSubject().trim(), "UTF-8");
+            mime.setRecipient(Message.RecipientType.TO, new InternetAddress(to));
+            for (String copy : cc) {
+                mime.addRecipient(Message.RecipientType.CC, new InternetAddress(copy));
+            }
+            mime.setSubject(subject, "UTF-8");
             // No Reply-To, deliberately, though circulars set one. MAIL_REPLY_TO exists
             // because a circular may go out from an address that is not read; this one goes
             // out from the mailbox the conversation is already in, and pointing the answer
@@ -309,9 +423,9 @@ public class MailReplyService {
             // recipient's client threads on these headers, not on "Re:". References carries
             // only the message answered — the chain above it lives in headers the sync does
             // not store, and a short true chain threads where a guessed one does not.
-            if (isSet(original.getMessageId())) {
-                mime.setHeader("In-Reply-To", original.getMessageId());
-                mime.setHeader("References", original.getMessageId());
+            if (isSet(inReplyTo)) {
+                mime.setHeader("In-Reply-To", inReplyTo);
+                mime.setHeader("References", inReplyTo);
             }
 
             MimeBodyPart textPart = new MimeBodyPart();
@@ -337,8 +451,8 @@ public class MailReplyService {
             // told which account tried to talk to which host, an authentication failure
             // against a host somebody repointed reads as exactly that.
             throw new MailSendFailedException(
-                    "The mail server would not send this reply. %s:%d, as %s, said: %s"
-                            .formatted(sender.getHost(), sender.getPort(),
+                    "The mail server would not send this %s. %s:%d, as %s, said: %s"
+                            .formatted(what, sender.getHost(), sender.getPort(),
                                     isSet(sender.getUsername()) ? sender.getUsername() : "no user",
                                     CircularSendException.rootMessage(e)), e);
         }

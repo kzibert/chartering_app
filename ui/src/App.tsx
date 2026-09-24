@@ -6,7 +6,6 @@ import Dashboard from './pages/Dashboard';
 import VesselsPage from './pages/vessels/VesselsPage';
 import CargoesPage from './pages/cargoes/CargoesPage';
 import OpenFleetPage from './pages/openFleet/OpenFleetPage';
-import MatchPage from './pages/match/MatchPage';
 import CompaniesPage from './pages/companies/CompaniesPage';
 import PeoplePage from './pages/people/PeoplePage';
 import CirculationListsPage from './pages/circulationLists/CirculationListsPage';
@@ -68,7 +67,9 @@ function AuthenticatedApp() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/cargoes" element={<CargoesPage />} />
         <Route path="/open-fleet" element={<OpenFleetPage />} />
-        <Route path="/match" element={<MatchPage />} />
+        {/* Match moved into the records it answers for: tonnage on a cargo's drawer, cargoes
+            on a vessel's. Old bookmarks land on the cargoes, which is where it starts. */}
+        <Route path="/match" element={<Navigate to="/cargoes" replace />} />
         <Route path="/vessels" element={<VesselsPage />} />
         <Route path="/companies" element={<CompaniesPage />} />
         <Route path="/people" element={<PeoplePage />} />

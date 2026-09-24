@@ -108,6 +108,12 @@ public final class IntakePayloads {
      *                   it "do not file these details" would last until the same broker's next
      *                   list, because the comparison would find the same rows again. Only a
      *                   signature that has moved comes back
+     * @param minor      nothing in it touches the firm's name or an email address — see
+     *                   {@code CompanyStyleIntake#isMinor}. Null on items raised before V28
+     * @param seenStyles every fingerprint aggregated into this item, since the draft is now the
+     *                   union of every signature behind it rather than the newest one. A discard
+     *                   has to suppress all of them, or the first broker's next list would bring
+     *                   back half of what was just turned down
      */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -116,6 +122,18 @@ public final class IntakePayloads {
                                  String companyName,
                                  String matchedBy,
                                  List<String> changes,
-                                 String styleHash) {
+                                 String styleHash,
+                                 Boolean minor,
+                                 List<String> seenStyles) {
+
+        public CompanyDetails(com.chartering.dto.IntakePasteDraftResponse.CompanyDraft draft,
+                              Long companyId, String companyName, String matchedBy,
+                              List<String> changes, String styleHash) {
+            this(draft, companyId, companyName, matchedBy, changes, styleHash, null, null);
+        }
+
+        public boolean isMinor() {
+            return Boolean.TRUE.equals(minor);
+        }
     }
 }

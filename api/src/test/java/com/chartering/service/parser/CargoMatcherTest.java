@@ -9,6 +9,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -212,5 +213,123 @@ class CargoMatcherTest {
 
         assertThat(found).isPresent();
         assertThat(found.get().cargo().getId()).isEqualTo(4L);
+    }
+
+    // ------------------------------------------------------------------ anchors and strength
+
+    private static final TradeArea EAST_MED = area(3L, "East Med");
+
+    private static ResolvedCargo resolved(String quantity, Port load, TradeArea dischargeArea,
+                                          LocalDate from, LocalDate to) {
+        return new ResolvedCargo(parsed("Wheat", quantity, null, null),
+                load, load == null ? WEST_MED : load.getTradeArea(),
+                null, dischargeArea, from, to, null);
+    }
+
+    private static Cargo onFile(String quantity, Port load, TradeArea dischargeArea,
+                                LocalDate from, LocalDate to) {
+        Cargo c = existing("Wheat", quantity, load == null ? WEST_MED : null, from, to);
+        c.setLoadPort(load);
+        c.setDischargeArea(dischargeArea);
+        return c;
+    }
+
+    @Test
+    void refusesACargoBoundSomewhereElse() {
+        // Before the discharge point was an anchor, the same load port was enough to propose
+        // two cargoes bound for two different seas as one.
+        Cargo toEgypt = onFile("25000", null, EAST_MED, null, null);
+
+        assertThat(CargoMatcher.findDuplicate(resolved("25000", null, WEST_MED, null, null),
+                List.of(toEgypt), Set.of())).isEmpty();
+    }
+
+    @Test
+    void refusesTwoDifferentCharterers() {
+        com.chartering.model.Company a = new com.chartering.model.Company();
+        a.setId(1L);
+        a.setName("Cofco");
+        com.chartering.model.Company b = new com.chartering.model.Company();
+        b.setId(2L);
+        b.setName("Bunge");
+        Cargo onFile = onFile("25000", null, null, null, null);
+        onFile.setChartererCompany(a);
+
+        ResolvedCargo incoming = new ResolvedCargo(parsed("Wheat", "25000", null, null),
+                null, WEST_MED, null, null, null, null, b);
+
+        assertThat(CargoMatcher.findDuplicate(incoming, List.of(onFile), Set.of())).isEmpty();
+    }
+
+    @Test
+    void aBrokerResendingHisOwnEnquiryIsCertain() {
+        // Cargo 122: asked seven times, six of them by a broker already on it as a source.
+        LocalDate from = LocalDate.of(2026, 9, 10);
+        LocalDate to = LocalDate.of(2026, 9, 15);
+        Cargo his = onFile("25000", null, null, from, to);
+
+        Optional<CargoMatcher.Candidate> found = CargoMatcher.findDuplicate(
+                resolved("25000", null, null, from, to), List.of(his), Set.of(7L));
+
+        assertThat(found).isPresent();
+        assertThat(found.get().certain()).isTrue();
+        assertThat(found.get().reasons()).contains("This sender has sent it before");
+    }
+
+    @Test
+    void theSameCargoFromAnotherBrokerIsStillAQuestion() {
+        // Same figures, but nobody has said this firm sent it before and the load point is only
+        // a sea: two firms with similar cargoes look exactly like this.
+        LocalDate from = LocalDate.of(2026, 9, 10);
+        LocalDate to = LocalDate.of(2026, 9, 15);
+        Cargo theirs = onFile("25000", null, EAST_MED, from, to);
+
+        Optional<CargoMatcher.Candidate> found = CargoMatcher.findDuplicate(
+                resolved("25000", null, EAST_MED, from, to), List.of(theirs), Set.of());
+
+        assertThat(found).isPresent();
+        assertThat(found.get().certain()).isFalse();
+    }
+
+    @Test
+    void everyAnchorAtPortLevelIsCertainWhoeverSendsIt() {
+        Port chornomorsk = port(20L, "Chornomorsk", WEST_MED);
+        LocalDate from = LocalDate.of(2026, 9, 10);
+        LocalDate to = LocalDate.of(2026, 9, 15);
+        Cargo onFile = onFile("25000", chornomorsk, EAST_MED, from, to);
+
+        Optional<CargoMatcher.Candidate> found = CargoMatcher.findDuplicate(
+                resolved("24800", chornomorsk, EAST_MED, from.plusDays(2), to.plusDays(2)),
+                List.of(onFile), Set.of());
+
+        assertThat(found).isPresent();
+        assertThat(found.get().certain()).isTrue();
+    }
+
+    @Test
+    void aLooseQuantityIsNeverCertain() {
+        // 25,000 against 21,000 is within the 20% that keeps it a candidate, and outside the 5%
+        // that makes it the same figure.
+        LocalDate from = LocalDate.of(2026, 9, 10);
+        Cargo his = onFile("21000", null, null, from, from.plusDays(5));
+
+        Optional<CargoMatcher.Candidate> found = CargoMatcher.findDuplicate(
+                resolved("25000", null, null, null, null), List.of(his), Set.of(7L));
+
+        assertThat(found).isPresent();
+        assertThat(found.get().certain()).isFalse();
+    }
+
+    @Test
+    void prefersTheCargoThisSenderAlreadySent() {
+        Cargo somebodyElses = onFile("25000", null, null, null, null);
+        somebodyElses.setId(8L);
+        Cargo his = onFile("25000", null, null, null, null);
+        his.setId(7L);
+
+        Optional<CargoMatcher.Candidate> found = CargoMatcher.findDuplicate(
+                resolved("25000", null, null, null, null), List.of(somebodyElses, his), Set.of(7L));
+
+        assertThat(found.get().cargo().getId()).isEqualTo(7L);
     }
 }

@@ -65,6 +65,18 @@ public class IntakeItem {
     @Column(name = "company_id")
     private Long companyId;
 
+    /**
+     * A real question that is not worth the queue's attention: it waits on the Intake tab's
+     * "Minor updates" sub-tab, and for a firm behind a button on its own record, rather than
+     * counting toward "Needs review".
+     *
+     * <p>Recomputed whenever another arrival merges into the item, which is why it is a flag
+     * and not a status: a company question that was only a moved website becomes a real one
+     * the day a new email address turns up in the same firm's signature.
+     */
+    @Column(nullable = false)
+    private boolean minor;
+
     /** How the queue reads as a list of ships and cargoes rather than a list of ids. */
     @Column(name = "subject_label", length = 255)
     private String subjectLabel;

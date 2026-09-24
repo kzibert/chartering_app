@@ -29,6 +29,9 @@ export const intakeKeys = {
   settings: [...KEY, 'settings'] as const,
   vesselFields: [...KEY, 'vessel-fields'] as const,
   cargoSources: (cargoId: number) => [...KEY, 'cargo-sources', cargoId] as const,
+  companyPending: (companyId: number) => [...KEY, 'company-pending', companyId] as const,
+  positionCompanyPending: (positionId: number) =>
+    [...KEY, 'position-company-pending', positionId] as const,
 };
 
 export function useIntakeInvalidator() {
@@ -131,6 +134,28 @@ export const useVesselFieldLabels = (enabled: boolean) =>
     staleTime: Infinity,
   });
 
+/**
+ * The company question waiting about one firm, for its own record to offer. Under the intake
+ * key, so answering the item anywhere takes the button away.
+ */
+export const usePendingCompanyItem = (companyId: number | undefined, enabled: boolean) =>
+  useQuery({
+    queryKey: intakeKeys.companyPending(companyId ?? 0),
+    queryFn: () => intakeApi.pendingForCompany(companyId!),
+    enabled: enabled && companyId != null,
+  });
+
+/**
+ * The company question behind a position nobody is named as reporting. Under the intake key
+ * for the same reason as the one above: answering it anywhere takes the link away.
+ */
+export const usePendingCompanyForPosition = (positionId: number | undefined, enabled: boolean) =>
+  useQuery({
+    queryKey: intakeKeys.positionCompanyPending(positionId ?? 0),
+    queryFn: () => intakeApi.pendingCompanyForPosition(positionId!),
+    enabled: enabled && positionId != null,
+  });
+
 /** Who has told us about one cargo. Read on the cargo's own drawer, not only here. */
 export const useCargoSources = (cargoId?: number) =>
   useQuery({
@@ -147,7 +172,7 @@ export function useIntakeMutations() {
    * Answering an item invalidates far more than this feature.
    *
    * Accepting writes to a vessel, a cargo or a position, so the Vessels, Cargoes, Open Fleet
-   * and Match tabs are all stale the moment it returns. Clearing everything is the honest
+   * tabs and the match drawers are all stale the moment it returns. Clearing everything is the honest
    * thing to do and costs a refetch of whatever happens to be mounted — which is one screen.
    */
   const resolve = useMutation({
@@ -176,7 +201,7 @@ export function useIntakeMutations() {
    * Take the ticked figures from a lookup onto the vessel.
    *
    * Clears everything, like resolving: this writes to a vessel, so the Vessels, Open fleet
-   * and Match tabs are all stale the moment it returns.
+   * tabs and the match drawers are all stale the moment it returns.
    */
   const applyLookup = useMutation({
     mutationFn: (v: { id: number; body: ApplyLookupRequest }) =>

@@ -53,6 +53,13 @@ public class MailReply {
     @Column(name = "to_address", nullable = false, length = 320)
     private String toAddress;
 
+    /**
+     * Everyone copied, comma-joined, or null. Only a message written from a company's record
+     * has any: a reply goes to the one address that wrote.
+     */
+    @Column(name = "cc_addresses", columnDefinition = "text")
+    private String ccAddresses;
+
     @Column(columnDefinition = "text")
     private String subject;
 

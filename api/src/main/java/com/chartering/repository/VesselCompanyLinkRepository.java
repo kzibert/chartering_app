@@ -29,5 +29,9 @@ public interface VesselCompanyLinkRepository extends JpaRepository<VesselCompany
 
     Optional<VesselCompanyLink> findByVesselIdAndCompanyId(Long vesselId, Long companyId);
 
+    /** Every (vessel id, company id) pair linked, for a page of vessels at once. */
+    @Query("select l.vessel.id, l.company.id from VesselCompanyLink l where l.vessel.id in :vesselIds")
+    List<Object[]> linkPairs(@Param("vesselIds") java.util.Collection<Long> vesselIds);
+
     void deleteByVesselIdAndCompanyId(Long vesselId, Long companyId);
 }

@@ -28,6 +28,9 @@ public interface IntakeItemRepository
 
     long countByStatus(IntakeItemStatus status);
 
+    /** The queue's own count, or the "Minor updates" sub-tab's - see {@code IntakeItem.minor}. */
+    long countByStatusAndMinor(IntakeItemStatus status, boolean minor);
+
     @Query("select i.kind, count(i) from IntakeItem i where i.status = ?1 group by i.kind")
     List<Object[]> countByKind(IntakeItemStatus status);
 
@@ -122,6 +125,22 @@ public interface IntakeItemRepository
               and i.payload like concat('%', ?1, '%')
             """)
     long countRejectedWithStyle(String styleHash);
+
+    /**
+     * A merge question already waiting about this cargo.
+     *
+     * <p>The vessel rule, for the cargo side: cargo 122 was asked about seven times, one item per
+     * email, and answering one left six still asking. Another sighting of the same candidate is
+     * added to the question already open rather than queued behind it.
+     */
+    @Query("""
+            select i from IntakeItem i
+            where i.status = com.chartering.model.IntakeItemStatus.PENDING
+              and i.kind = com.chartering.model.IntakeItemKind.CARGO_MERGE
+              and i.cargoId = ?1
+            order by i.id desc
+            """)
+    List<IntakeItem> pendingCargoMerge(Long cargoId);
 
     /** Whether any question raised off one board is still waiting — asked before deleting it. */
     @Query("""

@@ -61,4 +61,14 @@ public interface VesselPositionRepository
     Optional<VesselPosition> findFirstByVesselIdOrderByReportedAtDescIdDesc(Long vesselId);
 
     long countByStatus(PositionStatus status);
+
+    /**
+     * Positions read out of an email or a post whose sender could not be named at the time.
+     * See {@code IntakeService.attributeUnreported}: the firm is often on file a day later.
+     */
+    @Query("select p from VesselPosition p left join fetch p.sourceMailMessage "
+            + "left join fetch p.sourceFeedItem left join fetch p.vessel "
+            + "where p.reportedByCompany is null "
+            + "and (p.sourceMailMessage is not null or p.sourceFeedItem is not null)")
+    List<VesselPosition> findUnreportedWithSource();
 }

@@ -11,6 +11,7 @@ import { usePersistedFilters } from '../../components/usePersistedState';
 import TradeAreaSelect from '../../components/TradeAreaSelect';
 import CompanySelect from '../../components/CompanySelect';
 import PositionForm from './PositionForm';
+import ReportedBy from './ReportedBy';
 import VesselDrawer from '../vessels/VesselDrawer';
 import VesselForm from '../vessels/VesselForm';
 import {
@@ -50,6 +51,10 @@ export default function OpenFleetPage() {
   // than by searching the name out in another tab. The controls that write to the *position*
   // — the status select, edit and delete — stop the click, so they still act on the reading.
   const [vesselId, setVesselId] = useState<number>();
+  // The reading clicked, so her matching cargoes are scored against that row's place and
+  // dates — with "newest per vessel" off an older reading is a row too, and it is the one
+  // somebody pointed at.
+  const [positionId, setPositionId] = useState<number>();
   const [vesselFormOpen, setVesselFormOpen] = useState(false);
   const [editingVessel, setEditingVessel] = useState<VesselResponse | null>(null);
 
@@ -153,11 +158,18 @@ export default function OpenFleetPage() {
             <Typography.Text type={s.color === 'red' ? 'danger' : undefined} style={{ color: s.color === 'orange' ? '#d46b08' : undefined }}>
               {s.text}
             </Typography.Text>
-            {p.reportedByCompanyName && (
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                {p.reportedByCompanyName}
-              </Typography.Text>
-            )}
+            <span style={{ fontSize: 12 }}>
+              <ReportedBy
+                positionId={p.id}
+                companyId={p.reportedByCompanyId}
+                companyName={p.reportedByCompanyName}
+                vesselId={p.vessel.id}
+                vesselName={p.vessel.name}
+                linked={p.reporterLinked}
+                mailMessageId={p.sourceMailMessageId}
+                feedItemId={p.sourceFeedItemId}
+              />
+            </span>
           </Space>
         );
       },
@@ -369,7 +381,23 @@ export default function OpenFleetPage() {
             },
             p.lastCargo != null && { label: 'Last cargo', value: p.lastCargo },
             { label: 'Reported', value: staleness(p.ageDays).text },
-            p.reportedByCompanyName != null && { label: 'By', value: p.reportedByCompanyName },
+            // A card row reading "By" and nothing is worse than none: shown where there is a
+            // firm, or a source whose signature may be waiting to become one.
+            (p.reportedByCompanyId != null || p.sourceMailMessageId != null || p.sourceFeedItemId != null) && {
+              label: 'By',
+              value: (
+                <ReportedBy
+                  positionId={p.id}
+                  companyId={p.reportedByCompanyId}
+                  companyName={p.reportedByCompanyName}
+                  vesselId={p.vessel.id}
+                  vesselName={p.vessel.name}
+                  linked={p.reporterLinked}
+                  mailMessageId={p.sourceMailMessageId}
+                  feedItemId={p.sourceFeedItemId}
+                />
+              ),
+            },
           ],
           actions: (p) => (
             <Button size="small" icon={<EditOutlined />} onClick={() => openForm(p)}>
@@ -381,12 +409,19 @@ export default function OpenFleetPage() {
           { field: 'reportedAt', label: 'Reported' },
           { field: 'openFrom', label: 'Open date' },
         ]}
-        onRow={(p) => ({ onClick: () => setVesselId(p.vessel.id), style: { cursor: 'pointer' } })}
+        onRow={(p) => ({
+          onClick: () => {
+            setVesselId(p.vessel.id);
+            setPositionId(p.status === 'LIVE' ? p.id : undefined);
+          },
+          style: { cursor: 'pointer' },
+        })}
       />
 
       <PositionForm open={formOpen} editing={editing} onClose={() => setFormOpen(false)} />
       <VesselDrawer
         vesselId={vesselId}
+        positionId={positionId}
         onClose={() => setVesselId(undefined)}
         onEdit={(v) => { setEditingVessel(v); setVesselFormOpen(true); }}
       />

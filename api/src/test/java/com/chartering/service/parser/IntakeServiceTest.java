@@ -58,6 +58,7 @@ class IntakeServiceTest {
     private List<VesselPosition> onFile;
     private com.chartering.repository.IntakeFieldDecisionRepository decisions;
     private com.chartering.repository.IntakeVesselAliasRepository aliases;
+    private VesselFieldReportRepository fieldReports;
 
     @BeforeEach
     void setUp() {
@@ -72,12 +73,14 @@ class IntakeServiceTest {
         lookupService = mock(com.chartering.service.lookup.VesselLookupService.class);
         decisions = mock(com.chartering.repository.IntakeFieldDecisionRepository.class);
         aliases = mock(com.chartering.repository.IntakeVesselAliasRepository.class);
+        fieldReports = mock(VesselFieldReportRepository.class);
         when(decisions.forVessel(any())).thenReturn(List.of());
         when(aliases.find(any(), any())).thenReturn(java.util.Optional.empty());
         styles = mock(CompanyStyleIntake.class);
+        when(styles.aggregate(any(), any())).thenAnswer(i -> i.getArgument(1));
         settingsService = mock(com.chartering.service.SettingsService.class);
         service = new IntakeService(items, cargoSources, cargoes, vessels, exNames, itemSources,
-                decisions, aliases, positions, resolver,
+                decisions, aliases, fieldReports, positions, resolver,
                 styles,
                 new com.chartering.config.ParserProperties(),
                 mock(com.chartering.repository.CompanyRepository.class),
@@ -121,6 +124,37 @@ class IntakeServiceTest {
         when(settingsService.ownAddresses()).thenReturn(java.util.Set.of());
     }
 
+    // ---------------------------------------------------------- a cargo sent again
+
+    @Test
+    void aBrokerResendingHisOwnCargoIsMergedWithoutAsking() {
+        // Cargo 122 was asked about seven times, six by a broker already on it as a source.
+        Cargo his = new Cargo();
+        his.setId(7L);
+        his.setCommodity("Wheat");
+        his.setQuantity(new BigDecimal("25000"));
+        his.setLoadPortText("Chornomorsk");
+        his.setLaycanFrom(LocalDate.of(2026, 9, 10));
+        his.setLaycanTo(LocalDate.of(2026, 9, 15));
+        when(cargoes.findDuplicateCandidates(any())).thenReturn(List.of(his));
+        when(cargoSources.cargoIdsReportedBy(3L)).thenReturn(java.util.Set.of(7L));
+        when(styles.read(any(), any())).thenReturn(new CompanyStyleIntake.Reading(null, List.of(), null));
+
+        Extraction.ExtractedCargo again = new Extraction.ExtractedCargo(
+                "Wheat", new BigDecimal("25000"), "MT", "", null, null, null,
+                "Chornomorsk", "", "", "", "2026-09-10", "2026-09-15", "",
+                "", "", null, null, null, null, null, null, null,
+                "", "", "", "", "");
+        IntakeService.ApplyOutcome outcome = service.apply(parsed,
+                new Extraction("cargo_offer", List.of(again), List.of(), null, null, null));
+
+        assertThat(outcome.itemsRaised()).isZero();
+        assertThat(outcome.cargoesApplied()).isZero();
+        verify(items, never()).save(any(IntakeItem.class));
+        verify(cargoSources).save(argThat(s -> s.getCargo() == his
+                && s.getNotes() != null && s.getNotes().startsWith("Merged on arrival")));
+    }
+
     // ---------------------------------------------------------- the firm that signed it
 
     /** A question about a firm on file, as CompanyStyleIntake would hand one over. */
@@ -136,7 +170,7 @@ class IntakeServiceTest {
     }
 
     private static Extraction emptyEmail() {
-        return new Extraction("other", List.of(), List.of(), null, null);
+        return new Extraction("other", List.of(), List.of(), null, null, null);
     }
 
     @Test
@@ -211,7 +245,7 @@ class IntakeServiceTest {
     }
 
     private static Extraction positionEmail(Extraction.ExtractedVessel... vs) {
-        return new Extraction("vessel_opening", List.of(), List.of(vs), null, null);
+        return new Extraction("vessel_opening", List.of(), List.of(vs), null, null, null);
     }
 
     private VesselPosition live(Company reporter, LocalDate from, LocalDate to,
@@ -693,5 +727,52 @@ class IntakeServiceTest {
         assertThat(outcome.positionsApplied()).isZero();
         assertThat(outcome.itemsRaised()).isZero();
         verify(items, never()).save(any());
+    }
+
+    // ---------------------------------------------------------- a sender named late
+
+    @Test
+    void aPositionFiledFromNobodyGainsItsReporterOnceTheSenderIsOnFile() {
+        // Filed while the address was unknown; the mailbox has since linked it to Interscan.
+        VesselPosition filed = position(501L, null, OffsetDateTime.parse("2026-09-18T08:00:00Z"));
+        filed.setSourceMailMessage(message);
+        // Interscan's own earlier reading of her: now two LIVE rows from one reporter, and the
+        // older is the one a list replaced.
+        VesselPosition earlier = position(400L, interscan, OffsetDateTime.parse("2026-09-10T08:00:00Z"));
+        onFile.add(filed);
+        onFile.add(earlier);
+        when(positions.findUnreportedWithSource()).thenReturn(List.of(filed));
+
+        int named = service.attributeUnreported();
+
+        assertThat(named).isEqualTo(1);
+        assertThat(filed.getReportedByCompany()).isSameAs(interscan);
+        assertThat(filed.getStatus()).isEqualTo(PositionStatus.LIVE);
+        assertThat(earlier.getStatus()).isEqualTo(PositionStatus.SUPERSEDED);
+    }
+
+    @Test
+    void aSignatureThatStillMatchesNobodyLeavesTheRowAlone() {
+        FeedItem post = new FeedItem();
+        post.setId(300L);
+        post.setText("MV AGN LAGERTHA /27-29 SEPT MARMARA\n\nSomebody\nA Firm Not On File");
+        when(styles.read(any(), any())).thenReturn(new CompanyStyleIntake.Reading(null, List.of(), null));
+        Cargo cargo = new Cargo();
+        cargo.setId(8L);
+        cargo.setSourceFeedItem(post);
+        when(cargoes.findUnbrokeredWithSource()).thenReturn(List.of(cargo));
+
+        assertThat(service.attributeUnreported()).isZero();
+        assertThat(cargo.getBrokerCompany()).isNull();
+    }
+
+    private VesselPosition position(Long id, Company reporter, OffsetDateTime reportedAt) {
+        VesselPosition p = new VesselPosition();
+        p.setId(id);
+        p.setVessel(pacificDawn);
+        p.setStatus(PositionStatus.LIVE);
+        p.setReportedByCompany(reporter);
+        p.setReportedAt(reportedAt);
+        return p;
     }
 }

@@ -174,9 +174,35 @@ public class IntakeController {
             @Parameter(description = "Defaults to PENDING — the queue. Pass ACCEPTED or "
                     + "REJECTED to read back what was decided.")
             @RequestParam(required = false, defaultValue = "PENDING") IntakeItemStatus status,
+            @Parameter(description = "false is the queue, true the questions kept for the "
+                    + "record on the Minor updates sub-tab; left out, both")
+            @RequestParam(required = false) Boolean minor,
             @PageableDefault(size = 25, sort = "createdAt", direction = Sort.Direction.ASC)
             Pageable pageable) {
-        return ResponseEntity.ok(queries.search(kind, status, pageable));
+        return ResponseEntity.ok(queries.search(kind, status, minor, pageable));
+    }
+
+    @GetMapping("/companies/{companyId}/pending")
+    @Operation(summary = "The company question waiting about one firm, if any",
+            description = "What the company's own record asks before offering \"Update from "
+                    + "correspondence\": the details every email from the firm has carried, "
+                    + "aggregated into one item, minor or not. 204 when nothing is waiting.")
+    public ResponseEntity<IntakeItemResponse> pendingForCompany(@PathVariable Long companyId) {
+        return queries.pendingForCompany(companyId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
+    }
+
+    @GetMapping("/positions/{positionId}/company-pending")
+    @Operation(summary = "The company question that would name who reported a position",
+            description = "Asked where a position has no reporter: the signature it was read "
+                    + "from named a firm that is not on file yet, and the question to add it is "
+                    + "waiting. Answering it names the reporter on the position. 204 when the "
+                    + "position has a reporter or nothing is waiting.")
+    public ResponseEntity<IntakeItemResponse> pendingCompanyForPosition(@PathVariable Long positionId) {
+        return queries.pendingCompanyForPosition(positionId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
     }
 
     @GetMapping("/items/{id}")
@@ -225,7 +251,12 @@ public class IntakeController {
     public ResponseEntity<IntakePasteCompanyResponse> acceptCompany(
             @PathVariable Long id,
             @Valid @RequestBody IntakePasteCompanyRequest req) {
-        return ResponseEntity.ok(intake.acceptCompanyDetails(id, req, currentUser()));
+        var applied = intake.acceptCompanyDetails(id, req, currentUser());
+        // Its own transaction, after the firm and its addresses are committed: what this
+        // signature already put on Open Fleet and Cargoes gains its reporter now rather than
+        // at the next timed pass. See IntakeService.attributeUnreported.
+        intake.attributeUnreported();
+        return ResponseEntity.ok(applied);
     }
 
     // ------------------------------------------------------------------ web sources
