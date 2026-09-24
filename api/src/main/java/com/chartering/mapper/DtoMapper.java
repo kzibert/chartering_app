@@ -256,6 +256,7 @@ public class DtoMapper {
                 m.getFiledByRuleId(),
                 c != null ? c.getId() : null,
                 c != null ? c.getName() : null,
+                c != null ? c.isConfirmed() : null,
                 p != null ? p.getId() : null,
                 p != null ? p.getFullName() : null,
                 m.isLinkManual());
