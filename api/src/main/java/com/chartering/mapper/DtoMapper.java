@@ -451,7 +451,7 @@ public class DtoMapper {
         // company on the arrival row rather than anything on the item.
         Company sender = m != null ? m.getCompany() : null;
         return new IntakeItemResponse(
-                item.getId(), item.getKind(), item.getStatus(),
+                item.getId(), item.getKind(), item.getStatus(), item.isMinor(),
                 item.getSubjectLabel(), summary,
                 item.getVesselId(), item.getCargoId(), item.getCompanyId(),
                 m != null ? m.getId() : null,

@@ -35,7 +35,14 @@ import IntakeItemDrawer from './IntakeItemDrawer';
 import ParsedEmailDrawer from './ParsedEmailDrawer';
 import PasteModal from './PasteModal';
 import WebSources from './WebSources';
-import { EMAIL_TYPES, KINDS, PARSE_STATUSES, kindMeta, parseStatusMeta } from './labels';
+import {
+  EMAIL_TYPES,
+  KINDS,
+  MINOR_HINT,
+  PARSE_STATUSES,
+  kindMeta,
+  parseStatusMeta,
+} from './labels';
 import type {
   IntakeItemKind,
   IntakeItemResponse,
@@ -57,11 +64,14 @@ import type {
  * about this queue; where a board is added and configured is still the Feed tab, beside the
  * kinds it does not read.
  *
- * <b>Two views, because there are two questions.</b> The queue answers "what needs me": the
- * disagreements, the unknown hulls, the cargoes that look like duplicates. The log answers
- * the one a queue cannot — "was this morning's mail read at all, and what was made of it" —
- * which is how you notice a broker's daily list being classified as *neither* and quietly
- * producing nothing. Most days only the first is opened, which is why it is the default.
+ * <b>Three views, because there are three questions.</b> The queue answers "what needs me": the
+ * disagreements, the unknown hulls, the cargoes that look like duplicates. Minor updates holds
+ * what is real but not urgent — a firm whose name and addresses have not changed, particulars
+ * that differ by a rounding or by a value already decided — so the queue's count is the number
+ * of things that genuinely want a person this morning. The log answers the one a queue cannot
+ * — "was this morning's mail read at all, and what was made of it" — which is how you notice a
+ * broker's daily list being classified as *neither* and quietly producing nothing. Most days
+ * only the first is opened, which is why it is the default.
  *
  * The header is not decoration. Whether the model server is answering is the single most
  * likely thing to be wrong (it is a container on a desk, and desks get switched off), and
@@ -69,7 +79,7 @@ import type {
  */
 export default function IntakePage() {
   const status = useIntakeStatus();
-  const [view, setView] = useState<'queue' | 'log'>('queue');
+  const [view, setView] = useState<'queue' | 'minor' | 'log'>('queue');
   const [kind, setKind] = useState<IntakeItemKind>();
   const [itemStatus, setItemStatus] = useState<IntakeItemStatus>('PENDING');
   const [parseStatus, setParseStatus] = useState<ParseStatus>();
@@ -81,9 +91,12 @@ export default function IntakePage() {
   const tc = useTableControls({ size: 25 }, 'intake');
   const logTc = useTableControls({ size: 25 }, 'intake-log');
 
+  // The queue and Minor updates are one table split on a flag. Answered and discarded items
+  // are history whichever side they waited on, so the queue's history views show both.
+  const minorFilter = view === 'minor' ? true : itemStatus === 'PENDING' ? false : undefined;
   const items = useIntakeItems(
-    { kind, status: itemStatus, page: tc.state.page, size: tc.state.size },
-    enabled && view === 'queue',
+    { kind, status: itemStatus, minor: minorFilter, page: tc.state.page, size: tc.state.size },
+    enabled && view !== 'log',
   );
   const parsed = useParsedEmails(
     { status: parseStatus, page: logTc.state.page, size: logTc.state.size },
@@ -152,13 +165,27 @@ export default function IntakePage() {
         <Space wrap size={12}>
           <Segmented
             value={view}
-            onChange={(v) => setView(v as 'queue' | 'log')}
+            onChange={(v) => {
+              setView(v as 'queue' | 'minor' | 'log');
+              tc.resetPage();
+            }}
             options={[
               { label: 'Needs review', value: 'queue' },
+              {
+                label: (
+                  <Tooltip title={MINOR_HINT}>
+                    <span>
+                      Minor updates
+                      {(status.data?.minorItems ?? 0) > 0 ? ` (${status.data?.minorItems})` : ''}
+                    </span>
+                  </Tooltip>
+                ),
+                value: 'minor',
+              },
               { label: 'What was read', value: 'log' },
             ]}
           />
-          {view === 'queue' ? (
+          {view !== 'log' ? (
             <>
               <Select
                 allowClear
@@ -205,8 +232,9 @@ export default function IntakePage() {
         </Space>
       </Card>
 
-      {view === 'queue' ? (
+      {view !== 'log' ? (
         <QueueTable
+          minorView={view === 'minor'}
           rows={items.data?.content ?? []}
           total={items.data?.totalElements ?? 0}
           loading={items.isLoading}
@@ -402,12 +430,14 @@ function IntakeHeader({
 }
 
 function QueueTable({
+  minorView,
   rows,
   total,
   loading,
   tc,
   onOpen,
 }: {
+  minorView: boolean;
   rows: IntakeItemResponse[];
   total: number;
   loading: boolean;
@@ -422,9 +452,13 @@ function QueueTable({
       render: (_, r) => {
         const meta = kindMeta(r.kind);
         return (
-          <Tooltip title={meta.hint}>
-            <Tag color={meta.colour}>{meta.label}</Tag>
-          </Tooltip>
+          <Space size={4} wrap>
+            <Tooltip title={meta.hint}>
+              <Tag color={meta.colour}>{meta.label}</Tag>
+            </Tooltip>
+            {/* Only where the view does not already say so: the history views mix both. */}
+            {r.minor && !minorView && <Tag>minor</Tag>}
+          </Space>
         );
       },
     },
@@ -497,7 +531,9 @@ function QueueTable({
       onChange={tc.onChange}
       onRow={(r) => ({ onClick: () => onOpen(r.id), style: { cursor: 'pointer' } })}
       locale={{
-        emptyText: 'Nothing waiting. Positions and cargoes the parser was sure about have already been filed.',
+        emptyText: minorView
+          ? 'No minor updates waiting.'
+          : 'Nothing waiting. Positions and cargoes the parser was sure about have already been filed.',
       }}
       mobile={{
         title: (r) => r.subjectLabel || '—',

@@ -387,6 +387,94 @@ public final class VesselFieldDiff {
         return settled != null && same(settled, incoming);
     }
 
+    /**
+     * Every field this reading reports, canonically — what {@code vessel_field_reports} keeps.
+     *
+     * <p>Agreeing or not, because the history is worth most exactly where the record is right:
+     * three firms repeating what is on file is what makes a fourth firm's different figure a
+     * minor question rather than a correction.
+     */
+    public static Map<String, String> reportedValues(Vessel vessel, Extraction.ExtractedVessel reading) {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (Spec spec : SPECS) {
+            Object incoming = spec.incoming().apply(reading, vessel);
+            if (!isAbsent(incoming)) out.put(spec.field(), canonical(incoming));
+        }
+        return out;
+    }
+
+    /** What her record holds for a field, canonically, or null where it holds nothing. */
+    public static String currentValue(Vessel vessel, String field) {
+        Spec spec = specOf(field);
+        if (spec == null) return null;
+        Object current = spec.current().apply(vessel);
+        return isAbsent(current) ? null : canonical(current);
+    }
+
+    /**
+     * Whether two stored values are one figure, with the tolerance the diff uses.
+     *
+     * <p>For the history and the decisions, which hold text: a deadweight re-rounded by half a
+     * percent is the same statement, and a string test would count it as a second opinion.
+     */
+    public static boolean sameValue(String field, String a, String b) {
+        if (a == null || b == null) return false;
+        Spec spec = specOf(field);
+        if (spec == null) return a.equals(b);
+        Object x = parse(spec, a);
+        Object y = parse(spec, b);
+        if (x == null || y == null) return a.equals(b);
+        return same(x, y);
+    }
+
+    /**
+     * Below this, a disagreement is a broker's rounding rather than a different ship.
+     *
+     * <p>Relative, per field, and deliberately wider than the half percent at which a
+     * difference is a difference at all. Between the two sits "she is 28,150 against 28,400":
+     * worth keeping, not worth a morning. A draft is two per cent because 7.9 against 8.0 is a
+     * summer-against-tropical reading, not a new hull; capacities three because grain is quoted
+     * off plans and bale off whichever plan was nearer.
+     */
+    private static final Map<String, BigDecimal> SMALL_RELATIVE = Map.of(
+            "deadweightTonnage", new BigDecimal("0.02"),
+            "deadweightCargoCapacity", new BigDecimal("0.03"),
+            "maximumDraft", new BigDecimal("0.02"),
+            "grainCapacityM3", new BigDecimal("0.03"),
+            "baleCapacityM3", new BigDecimal("0.03"));
+
+    /**
+     * Why this disagreement is too small to be a question, or null where it is not small.
+     *
+     * <p>A build year one apart is small too — delivery against keel-laying, the one two
+     * brokers argue about for every ship built in December. Counts, flags, names and fittings
+     * are never small: a hull with four holds is not nearly one with five.
+     */
+    public static String smallDifference(String field, String current, String incoming) {
+        if (current == null || incoming == null) return null;
+        Spec spec = specOf(field);
+        if (spec == null) return null;
+        Object a = parse(spec, current);
+        Object b = parse(spec, incoming);
+        if ("yearBuilt".equals(field) && a instanceof Integer x && b instanceof Integer y) {
+            return Math.abs(x - y) <= 1 ? "A year apart - delivery against keel-laying" : null;
+        }
+        BigDecimal limit = SMALL_RELATIVE.get(field);
+        if (limit == null || !(a instanceof BigDecimal x) || !(b instanceof BigDecimal y)) return null;
+        BigDecimal larger = x.abs().max(y.abs());
+        if (larger.signum() == 0) return null;
+        BigDecimal share = x.subtract(y).abs().divide(larger, new MathContext(9, RoundingMode.HALF_UP));
+        if (share.compareTo(limit) > 0) return null;
+        return "Within " + limit.movePointRight(2).stripTrailingZeros().toPlainString()
+                + "% of the record (" + share.movePointRight(2).setScale(1, RoundingMode.HALF_UP)
+                .toPlainString() + "%)";
+    }
+
+    /** Whether a field says which hull she is, rather than what she is like. */
+    public static boolean isIdentity(String field) {
+        return "name".equals(field) || "imoNumber".equals(field);
+    }
+
     /** How a value is stored and handed back, with no unit on it. */
     public static String canonical(Object value) {
         if (value == null) return null;

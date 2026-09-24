@@ -3,7 +3,9 @@ package com.chartering.service.parser;
 import com.chartering.dto.IntakePasteCompanyRequest;
 import com.chartering.dto.IntakePasteCompanyComparison;
 import com.chartering.dto.IntakePasteDraftResponse;
+import com.chartering.dto.CompanyRequest;
 import com.chartering.model.Company;
+import com.chartering.service.CompanyNames;
 import com.chartering.repository.CompanyRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,7 +16,9 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 import java.util.Optional;
 
@@ -159,7 +163,143 @@ public class CompanyStyleIntake {
                 draft, onFile.getId(), onFile.getName(),
                 reading.matches().stream().filter(CompanyMatcher.Match::strong)
                         .findFirst().map(CompanyMatcher.Match::how).orElse(null),
-                lines, hash));
+                lines, hash, isMinor(onFile.getId(), draft, comparison), List.of(hash)));
+    }
+
+    /**
+     * Fold a fresh signature into the question already waiting about the same firm.
+     *
+     * <p><b>Why a union and not the newest.</b> The item used to carry whichever signature
+     * arrived last, and signatures from one firm are not one document: the chartering desk signs
+     * with its two mobiles, the operations desk with a direct line and a different person, and
+     * the Friday list with the office block only. Keeping the newest meant the item said less
+     * the more mail arrived. So the draft is every person and every address any of the firm's
+     * mail has carried, with the newest reading winning a field where two speak — the later
+     * block is the later statement — and the comparison is made again on the whole.
+     *
+     * <p>Which is also what decides whether the question is minor: a firm that moved its website
+     * on Monday and gained a new desk address on Thursday is a minor question on Monday and a
+     * real one on Thursday.
+     */
+    public IntakePayloads.CompanyDetails aggregate(IntakePayloads.CompanyDetails waiting,
+                                                   IntakePayloads.CompanyDetails fresh) {
+        if (waiting == null || waiting.draft() == null) return fresh;
+        IntakePasteDraftResponse.CompanyDraft draft = mergeDrafts(waiting.draft(), fresh.draft());
+        Long companyId = fresh.companyId() != null ? fresh.companyId() : waiting.companyId();
+
+        List<String> seen = new ArrayList<>(waiting.seenStyles() != null ? waiting.seenStyles()
+                : waiting.styleHash() == null ? List.of() : List.of(waiting.styleHash()));
+        if (fresh.styleHash() != null && !seen.contains(fresh.styleHash())) seen.add(fresh.styleHash());
+
+        if (companyId == null) {
+            // Still a firm nobody has on file: nothing to compare with, and a firm to create is
+            // never minor. The row's line is the newest one's, which describes the newest block.
+            return new IntakePayloads.CompanyDetails(draft, null, null, null,
+                    fresh.changes(), fresh.styleHash(), false, List.copyOf(seen));
+        }
+        IntakePasteCompanyComparison comparison = paste.compare(requestFor(companyId, draft));
+        List<String> lines = changes(comparison);
+        return new IntakePayloads.CompanyDetails(draft, companyId,
+                fresh.companyName() != null ? fresh.companyName() : waiting.companyName(),
+                fresh.matchedBy() != null ? fresh.matchedBy() : waiting.matchedBy(),
+                lines.isEmpty() ? List.of("Nothing the record does not already hold") : lines,
+                fresh.styleHash(), isMinor(companyId, draft, comparison), List.copyOf(seen));
+    }
+
+    /**
+     * Whether a question about a firm on file can wait on its own record rather than the queue.
+     *
+     * <p>The rule is the desk's: <b>the name and the email addresses are what the contacts
+     * database is for</b>, and everything else in a signature — a website, a city, a phone, a
+     * new face, a job title — is worth having and not worth a morning. So it is minor unless the
+     * firm's name has actually changed (not merely its legal form: "Fednav Ltd." is FEDNAV), or
+     * the block carries an email address the firm does not have. A firm not on file is never
+     * minor; that is the question the whole kind exists for.
+     */
+    static boolean isMinor(Long companyId, IntakePasteDraftResponse.CompanyDraft draft,
+                           IntakePasteCompanyComparison comparison) {
+        if (companyId == null || comparison == null) return false;
+        if (comparison.fields() != null) {
+            for (IntakePasteCompanyComparison.FieldRow f : comparison.fields()) {
+                if ("name".equals(f.field()) && !CompanyNames.similarityKey(f.current())
+                        .equals(CompanyNames.similarityKey(f.parsed()))) {
+                    return false;
+                }
+            }
+        }
+        List<IntakePasteCompanyComparison.ContactRow> rows =
+                comparison.contacts() == null ? List.of() : comparison.contacts();
+        List<IntakePasteDraftResponse.ContactDraft> contacts = nullToEmpty(draft.contacts());
+        // The comparison answers the request's contacts in order, and the request was built from
+        // these - so the two lists line up index for index.
+        for (int i = 0; i < Math.min(rows.size(), contacts.size()); i++) {
+            if ("email".equalsIgnoreCase(contacts.get(i).kind()) && rows.get(i).existingContactId() == null) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Two drafts of one firm as one: every person and every address either carried, the newer
+     * reading winning where both speak.
+     */
+    static IntakePasteDraftResponse.CompanyDraft mergeDrafts(IntakePasteDraftResponse.CompanyDraft older,
+                                                             IntakePasteDraftResponse.CompanyDraft newer) {
+        if (older == null) return newer;
+        if (newer == null) return older;
+        CompanyRequest company = newer.company() != null ? newer.company() : older.company();
+        CompanyRequest before = older.company();
+        if (company != null && before != null && company != before) {
+            if (isBlank(company.getName())) company.setName(before.getName());
+            if (isBlank(company.getCityName())) company.setCityName(before.getCityName());
+            if (isBlank(company.getCountry())) company.setCountry(before.getCountry());
+            if (isBlank(company.getWebsite())) company.setWebsite(before.getWebsite());
+            if (isBlank(company.getNotes())) company.setNotes(before.getNotes());
+        }
+
+        Map<String, IntakePasteDraftResponse.PersonDraft> people = new LinkedHashMap<>();
+        for (IntakePasteDraftResponse.PersonDraft p : nullToEmpty(older.people())) {
+            people.put(lower(p.fullName()), p);
+        }
+        for (IntakePasteDraftResponse.PersonDraft p : nullToEmpty(newer.people())) {
+            IntakePasteDraftResponse.PersonDraft was = people.get(lower(p.fullName()));
+            people.put(lower(p.fullName()), was == null ? p : new IntakePasteDraftResponse.PersonDraft(
+                    p.fullName(),
+                    isBlank(p.title()) ? was.title() : p.title(),
+                    isBlank(p.jobTitle()) ? was.jobTitle() : p.jobTitle()));
+        }
+
+        Map<String, IntakePasteDraftResponse.ContactDraft> contacts = new LinkedHashMap<>();
+        for (IntakePasteDraftResponse.ContactDraft c : nullToEmpty(older.contacts())) {
+            contacts.put(contactKey(c), c);
+        }
+        for (IntakePasteDraftResponse.ContactDraft c : nullToEmpty(newer.contacts())) {
+            IntakePasteDraftResponse.ContactDraft was = contacts.get(contactKey(c));
+            contacts.put(contactKey(c), was == null ? c : new IntakePasteDraftResponse.ContactDraft(
+                    c.kind(), c.value(),
+                    isBlank(c.label()) ? was.label() : c.label(),
+                    isBlank(c.personName()) ? was.personName() : c.personName()));
+        }
+
+        return new IntakePasteDraftResponse.CompanyDraft(company,
+                isBlank(newer.address()) ? older.address() : newer.address(),
+                List.copyOf(people.values()), List.copyOf(contacts.values()),
+                nullToEmpty(newer.matches()).isEmpty() ? older.matches() : newer.matches());
+    }
+
+    /** One address however it was written - the paste screen's own key, so the two agree. */
+    private static String contactKey(IntakePasteDraftResponse.ContactDraft c) {
+        return c.kind() == null || c.value() == null ? lower(c.kind()) + ":" + lower(c.value())
+                : IntakePasteService.contactKey(c.kind(), c.value());
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.isBlank();
+    }
+
+    private static <T> List<T> nullToEmpty(List<T> list) {
+        return list == null ? List.of() : list;
     }
 
     /**
@@ -170,10 +310,15 @@ public class CompanyStyleIntake {
      * would be two ideas of which parts of a signature are which.
      */
     public IntakePasteCompanyRequest request(Reading reading) {
+        return requestFor(reading.companyId(),
+                IntakePasteService.companyDraft(reading.style(), reading.matches()));
+    }
+
+    /** The same, from a draft - which is what an aggregated item holds. */
+    public static IntakePasteCompanyRequest requestFor(Long companyId,
+                                                       IntakePasteDraftResponse.CompanyDraft draft) {
         IntakePasteCompanyRequest req = new IntakePasteCompanyRequest();
-        req.setCompanyId(reading.companyId());
-        IntakePasteDraftResponse.CompanyDraft draft =
-                IntakePasteService.companyDraft(reading.style(), reading.matches());
+        req.setCompanyId(companyId);
         req.setCompany(draft.company());
         req.setPeople(draft.people().stream()
                 .map(p -> new IntakePasteCompanyRequest.PersonChange(

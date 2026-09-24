@@ -50,6 +50,16 @@ public class IntakeFieldDecision {
     /** Neither side was: the reviewer typed a third value. */
     public static final String CORRECTED = "CORRECTED";
 
+    /**
+     * The email was right and the record now says so.
+     *
+     * <p>Written since V28, and only for what it says about the value it <em>replaced</em>:
+     * tomorrow's copy of the same list agrees with the record and raises nothing, but another
+     * broker still reporting the old figure is now repeating a value the desk has already
+     * weighed and moved away from.
+     */
+    public static final String ACCEPTED = "ACCEPTED";
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -87,6 +97,13 @@ public class IntakeFieldDecision {
     /** Only on {@link #CORRECTED}: what went into the column instead. */
     @Column(name = "corrected_to", columnDefinition = "text")
     private String correctedTo;
+
+    /**
+     * What the record held before an {@link #ACCEPTED} or {@link #CORRECTED} answer moved it,
+     * canonically. Null on {@link #KEPT}, where the record did not move.
+     */
+    @Column(name = "replaced_value", columnDefinition = "text")
+    private String replacedValue;
 
     @Column(name = "intake_item_id")
     private Long intakeItemId;

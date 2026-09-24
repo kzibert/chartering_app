@@ -100,7 +100,8 @@ Three things bite here:
   `V22__recover_former_names_from_change_log.sql` and
   `V23__add_cargo_max_ballast_days.sql` and `V24__add_feed.sql` and
   `V25__add_intake_decisions.sql` and `V26__add_web_intake.sql` and
-  `V27__capture_web_into_analysis.sql` exist; the next one is V28.
+  `V27__capture_web_into_analysis.sql` and `V28__add_intake_review_history.sql` exist; the
+  next one is V29.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
@@ -822,11 +823,13 @@ So three things stop and become `intake_items`:
   again. ANGORA asked about JELENA's bale four days running. So an answer that leaves the
   email as wrong tomorrow as it is today writes `intake_field_decisions` — a row left
   unticked (`KEPT`) or one the reviewer overrode (`CORRECTED`) — and a later reading of that
-  value from that firm is dropped before an item is raised. **Accepting writes no row**: the
-  record now holds the figure, so tomorrow's list agrees and there is nothing to raise.
-  Scoped to the correspondent, which is the judgement in it — that one broker is wrong about
-  her bale says nothing about the next one, and a second firm carrying the same figure is a
-  second opinion nobody here has weighed. The value is stored as it was *compared* (a
+  value from that firm is dropped before an item is raised. **Accepting writes a row too
+  since V28** (`ACCEPTED`), and every answer that moved the record stores what it held
+  (`replaced_value`): tomorrow's list from that firm agrees anyway, but the next broker still
+  carrying the old figure used to raise the same pair the other way round — CARLOW was asked
+  seven times over two figures that way. Dropping is scoped to the correspondent, which is the
+  judgement in it — that one broker is wrong about her bale says nothing about the next one.
+  What another firm reports is *weighed* instead (below). The value is stored as it was *compared* (a
   capacity already in m³, no unit on it) and matched back through the same half-percent
   tolerance, so a broker who re-rounds on Wednesday is still reporting Tuesday's figure.
   **A third answer, beside the record and the email: correct the row.** A list is regularly
@@ -836,6 +839,20 @@ So three things stop and become `intake_items`:
   name, never skipped), written through the same writer an accepted value uses, and recorded
   as a decision so the email's own figure stops coming back. The drawer drops settled rows on
   the **detail call only** — it costs a query per item, and the list row prints one line.
+  **Every row is then weighed, and most repeats are minor rather than asked**
+  (`VesselReviewPolicy`). `vessel_field_reports` keeps every figure every firm has reported
+  for every particular — one row per hull, field, firm and value, with first/last seen and a
+  count, agreeing with the record or not. A row is *minor* when the desk has already moved
+  away from that value (kept the record over it, or replaced it) unless two or more firms have
+  reported it since; when the difference is a rounding (`VesselFieldDiff.smallDifference`: 2%
+  DWT and draft, 3% DWCC and capacities, a build year one apart); or when two or more *other*
+  firms, heard in the last year, report what is on file and outnumber this value. Name and IMO
+  are always asked. Nothing is dropped by weighing: an item whose rows are all minor is
+  `intake_items.minor` and waits on the Intake tab's **Minor updates** sub-tab, off the
+  Needs review count, with minor rows starting unticked and their reason printed beside them.
+  The flag is recomputed when another arrival merges in and by a timed pass
+  (`IntakeService.reweighPending`, from `IntakeReconcileRunner`), because the record moves on
+  its own.
 - **`COMPANY_DETAILS`** — the firm that signed it, against the firm on file. Every circular
   ends in a full style, and it is the one part of the mail that is *about the sender* rather
   than about the market; the contacts database goes stale in exactly that place while the market
@@ -854,12 +871,30 @@ So three things stop and become `intake_items`:
   delegates to `IntakePasteService.acceptCompany` — the same service, so a signature is allowed
   to write exactly the same things whichever screen reviewed it: only what was ticked, nothing
   flagged main or `circ`, notes appended rather than replaced.
-- **`CARGO_MERGE`** — a cargo that looks like one in hand. Never merged silently: two cargoes
-  cannot be un-merged. The key is same commodity + the load point actually agreeing +
-  quantity within 20% + laycans overlapping, where **an absent field abstains rather than
-  agreeing or objecting** — a cargo email is mostly silent. A merge gap-fills and leaves every
-  disagreement alone: neither broker is the charterer, so there is no reason to believe the
-  second over the first.
+  **The waiting item is an aggregate, not the newest signature.** Each further email from the
+  firm is folded in (`CompanyStyleIntake.aggregate`): every person and address any of its mail
+  has carried, the newer reading winning a field where two speak, compared again on the whole;
+  `seenStyles` keeps every fingerprint so a discard suppresses all of them. **It is minor unless
+  the name or an email address changed** — a new firm, a real rename (not a legal form, per
+  `CompanyNames.similarityKey`) or an address the firm does not have; a website, a city, a phone
+  or a new face waits on Minor updates. The company's own drawer asks
+  `GET /intake/companies/{id}/pending` and, while the aggregate would still change something,
+  shows **Update from correspondence**, opening the same item drawer (`CorrespondenceUpdate`).
+- **`CARGO_MERGE`** — a cargo that looks like one in hand. The test is a set of **anchors**
+  (`CargoMatcher`), each agreeing, abstaining or objecting, any objection ruling the pair out:
+  commodity and load point must agree; discharge point, quantity (within 20%), laycan
+  (overlapping with five days' grace) and charterer may abstain but may not object. **An absent
+  field abstains** — a cargo email is mostly silent. A candidate is **certain** and merged on
+  arrival, with no item, where the sender is already a source of that cargo and two of
+  {quantity within 5%, discharge point, laycan} agree — a broker re-sending his own enquiry,
+  which was six of cargo 122's seven items — or where all three agree *and* the load point
+  agrees at port level. Everything else is **probable** and is asked, because two firms working
+  one cargo and two firms with similar cargoes look alike from here. A merge of either kind
+  gap-fills and leaves every disagreement alone — neither broker is the charterer, so there is
+  no reason to believe the second over the first — and the arrival stays on the cargo as a
+  source, a certain one noting "Merged on arrival" with its anchors. **One pending item per
+  candidate cargo**; later sightings join it as sources, and answering it puts every one of
+  them on whichever cargo the answer names.
 
 **A position that repeats is a re-confirmation, not a new row.** An identical reading from the
 same reporter against a row still LIVE moves that row's `reported_at` forward — and only

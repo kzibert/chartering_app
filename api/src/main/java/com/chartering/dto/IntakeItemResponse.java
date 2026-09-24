@@ -30,6 +30,7 @@ public record IntakeItemResponse(
         Long id,
         IntakeItemKind kind,
         IntakeItemStatus status,
+        boolean minor,
         String subjectLabel,
         String summary,
         Long vesselId,

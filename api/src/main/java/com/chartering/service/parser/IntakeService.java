@@ -70,6 +70,7 @@ public class IntakeService {
     private final IntakeItemSourceRepository itemSources;
     private final IntakeFieldDecisionRepository decisions;
     private final IntakeVesselAliasRepository aliases;
+    private final VesselFieldReportRepository fieldReports;
     private final VesselPositionRepository positions;
     private final IntakeResolver resolver;
     private final CompanyStyleIntake styles;
@@ -232,15 +233,21 @@ public class IntakeService {
         }
 
         Vessel vessel = match.vessel();
+        // Before the comparison, and whatever it finds: the history is worth most where the
+        // record is right, since three firms repeating what is on file is what makes a fourth
+        // firm's figure a minor question rather than a correction.
+        recordReports(vessel, v, arrival, parsed);
         VesselFieldDiff.Result diff = VesselFieldDiff.compare(vessel, v);
         // What this firm has already been told about is not a question any more. Asked before
         // the item is raised rather than when it is opened, so the queue's count is the number
         // of questions actually waiting.
-        VesselFieldDiff.Result asking = withoutSettled(vessel, v, diff, Collections.singletonList(reporter));
+        List<Long> askedBy = Collections.singletonList(reporter);
+        VesselFieldDiff.Result asking = withoutSettled(vessel, v, diff, askedBy);
         int raised = 0;
-        if (asking.hasConflicts()
-                && raiseVesselFields(parsed, arrival, vessel, match.how(), v, asking)) {
-            raised = 1;
+        if (asking.hasConflicts()) {
+            VesselFieldDiff.Result weighed = new VesselFieldDiff.Result(
+                    weigh(vessel, v, asking.conflicts(), askedBy), asking.filled());
+            if (raiseVesselFields(parsed, arrival, vessel, match.how(), v, weighed)) raised = 1;
         }
         boolean applied = recordPosition(vessel, v, arrival);
         return new VesselOutcome(applied, raised);
@@ -288,6 +295,63 @@ public class IntakeService {
             if (VesselFieldDiff.reportsValue(vessel, reading, field, d.getValueText())) return true;
         }
         return false;
+    }
+
+    /**
+     * The rows, weighed against what the desk has decided and what the market has said — see
+     * {@link VesselReviewPolicy}. Nothing is dropped here; a row comes back asked or minor.
+     */
+    List<FieldDiff> weigh(Vessel vessel, Extraction.ExtractedVessel reading, List<FieldDiff> rows,
+                          Collection<Long> senders) {
+        if (rows.isEmpty() || vessel.getId() == null) return rows;
+        Map<String, String> incoming = VesselFieldDiff.reportedValues(vessel, reading);
+        Map<String, String> record = new java.util.HashMap<>();
+        for (FieldDiff row : rows) record.put(row.field(), VesselFieldDiff.currentValue(vessel, row.field()));
+        return VesselReviewPolicy.weigh(rows, senders, decisions.forVessel(vessel.getId()),
+                fieldReports.forVessel(vessel.getId()), incoming, record, OffsetDateTime.now());
+    }
+
+    /**
+     * Keep what this arrival said about every particular it reported — agreeing or not.
+     *
+     * <p>One row per hull, field, firm and value; a repeat moves its last-seen date and count
+     * rather than adding a row, so a daily list costs nothing after its first morning. The same
+     * arrival read twice (a re-parse) is not a second hearing and is not counted again.
+     */
+    private void recordReports(Vessel vessel, Extraction.ExtractedVessel reading, Arrival arrival,
+                               ParsedEmail parsed) {
+        if (vessel.getId() == null) return;
+        Map<String, String> values = VesselFieldDiff.reportedValues(vessel, reading);
+        if (values.isEmpty()) return;
+        Company who = arrival.company();
+        Long whoId = who == null ? null : who.getId();
+        OffsetDateTime at = arrival.reportedAt() != null ? arrival.reportedAt() : OffsetDateTime.now();
+
+        List<VesselFieldReport> known = fieldReports.forVessel(vessel.getId());
+        for (Map.Entry<String, String> e : values.entrySet()) {
+            VesselFieldReport row = known.stream()
+                    .filter(r -> r.getField().equals(e.getKey()))
+                    .filter(r -> Objects.equals(r.companyId(), whoId))
+                    .filter(r -> r.getValueText().equals(e.getValue()))
+                    .findFirst().orElse(null);
+            if (row == null) {
+                row = new VesselFieldReport();
+                row.setVesselId(vessel.getId());
+                row.setField(e.getKey());
+                row.setReportedByCompany(who);
+                row.setValueText(e.getValue());
+                row.setFirstSeenAt(at);
+                row.setLastSeenAt(at);
+                row.setLastParsedEmailId(parsed.getId());
+                fieldReports.save(row);
+                continue;
+            }
+            if (Objects.equals(row.getLastParsedEmailId(), parsed.getId())) continue;
+            row.setTimesSeen(row.getTimesSeen() + 1);
+            if (row.getLastSeenAt() == null || at.isAfter(row.getLastSeenAt())) row.setLastSeenAt(at);
+            if (row.getFirstSeenAt() == null || at.isBefore(row.getFirstSeenAt())) row.setFirstSeenAt(at);
+            row.setLastParsedEmailId(parsed.getId());
+        }
     }
 
     /**
@@ -375,16 +439,57 @@ public class IntakeService {
 
         List<Cargo> candidates = cargoes.findDuplicateCandidates(CargoService.RECOGNISED_ON_ARRIVAL_STATUSES);
         Optional<CargoMatcher.Candidate> duplicate =
-                CargoMatcher.findDuplicate(c, candidates, resolved.loadPort(), resolved.loadArea());
+                CargoMatcher.findDuplicate(resolved, candidates, sourcedBy(arrival));
 
         if (duplicate.isPresent()) {
+            CargoMatcher.Candidate candidate = duplicate.get();
+            // This very arrival, read again: it is already on the cargo and asks nothing.
+            if (alreadySourced(candidate.cargo(), arrival)) return new CargoOutcome(false, 0);
+            if (candidate.certain()) {
+                mergeOnArrival(candidate, resolved, arrival);
+                return new CargoOutcome(false, 0);
+            }
             return new CargoOutcome(false,
-                    raiseCargoMerge(parsed, arrival, resolved, duplicate.get()) ? 1 : 0);
+                    raiseCargoMerge(parsed, arrival, resolved, candidate) ? 1 : 0);
         }
 
         Cargo cargo = createCargo(resolved, arrival);
         addSource(cargo, arrival, null);
         return new CargoOutcome(true, 0);
+    }
+
+    /**
+     * The cargoes whoever sent this has already told us about — the sender anchor.
+     *
+     * <p>By firm where the sync or the signature placed one, by address where it could not: an
+     * unplaced sender writing every morning is still one correspondent, and his re-sent enquiry
+     * is no more a question than a placed one's.
+     */
+    private Set<Long> sourcedBy(Arrival arrival) {
+        if (arrival.company() != null) return cargoSources.cargoIdsReportedBy(arrival.company().getId());
+        if (arrival.fromAddress() != null) return cargoSources.cargoIdsReportedFrom(arrival.fromAddress());
+        return Set.of();
+    }
+
+    /**
+     * Fold a certain duplicate in without asking — gap-fill only, and say so on the source.
+     *
+     * <p>What makes this safe where a probable merge is not: it never overwrites (the second
+     * broker's figures are no truer than the first's, so a disagreement stays where it is), and
+     * the arrival stays on the cargo as a source with the anchors that decided it written on the
+     * row. Nothing is destroyed; what would have been a second row on the Cargoes tab is a second
+     * line in the cargo's sources instead, readable in full from its drawer.
+     */
+    private void mergeOnArrival(CargoMatcher.Candidate candidate, ResolvedCargo resolved,
+                                Arrival arrival) {
+        Cargo existing = candidate.cargo();
+        CargoFieldDiff.merge(existing, resolved, true);
+        addSource(existing, arrival, truncateNote("Merged on arrival: "
+                + String.join("; ", candidate.reasons())));
+    }
+
+    private static String truncateNote(String s) {
+        return s.length() <= 1000 ? s : s.substring(0, 1000);
     }
 
     // ------------------------------------------------------------------ raising items
@@ -460,7 +565,11 @@ public class IntakeService {
                 diff.conflicts(), diff.filled());
         IntakeItem item = save(parsed, IntakeItemKind.VESSEL_FIELDS, vessel.getId(), null,
                 vessel.getName(), payload);
+        // Every row a rounding, a decided value or a figure the market contradicts: kept, and
+        // off the queue. See VesselReviewPolicy.
+        item.setMinor(VesselReviewPolicy.allMinor(diff.conflicts()));
         addSource(item, parsed, arrival);
+        // Minor or not it is an item, and "raised" is what the parse log counts.
         return true;
     }
 
@@ -503,6 +612,54 @@ public class IntakeService {
             }
         }
         return converted;
+    }
+
+    /**
+     * Put every waiting particulars and company question on the right side of the queue again.
+     *
+     * <p><b>Why it runs on a timer rather than only when mail arrives.</b> Whether a question is
+     * minor depends on the record as much as on the email, and the record moves on its own: a
+     * phone added on the People tab, a deadweight corrected on the vessel form, a decision taken
+     * on another item about the same hull. An item raised last week under last week's record is
+     * weighed again here, the same way the drawer re-asks its rows each time it opens — and the
+     * items that were waiting when this rule arrived are weighed for the first time.
+     *
+     * @return how many items changed sides
+     */
+    @Transactional
+    public int reweighPending() {
+        int moved = 0;
+        for (IntakeItem item : items.pendingByKind(IntakeItemKind.VESSEL_FIELDS)) {
+            try {
+                IntakePayloads.VesselFields payload = read(item, IntakePayloads.VesselFields.class);
+                if (payload == null || payload.vesselId() == null || payload.vessel() == null) continue;
+                Vessel vessel = vessels.findById(payload.vesselId()).orElse(null);
+                if (vessel == null) continue;
+                boolean minor = VesselReviewPolicy.allMinor(shown(item, vessel, payload));
+                if (minor != item.isMinor()) {
+                    item.setMinor(minor);
+                    moved++;
+                }
+            } catch (Exception e) {
+                log.warn("Could not re-weigh intake item {}: {}", item.getId(), e.toString());
+            }
+        }
+        for (IntakeItem item : items.pendingByKind(IntakeItemKind.COMPANY_DETAILS)) {
+            try {
+                IntakePayloads.CompanyDetails payload = read(item, IntakePayloads.CompanyDetails.class);
+                if (payload == null || payload.draft() == null) continue;
+                boolean minor = item.getCompanyId() != null && CompanyStyleIntake.isMinor(
+                        item.getCompanyId(), payload.draft(),
+                        paste.compare(CompanyStyleIntake.requestFor(item.getCompanyId(), payload.draft())));
+                if (minor != item.isMinor()) {
+                    item.setMinor(minor);
+                    moved++;
+                }
+            } catch (Exception e) {
+                log.warn("Could not re-weigh intake item {}: {}", item.getId(), e.toString());
+            }
+        }
+        return moved;
     }
 
     private boolean convertToFieldsReview(IntakeItem item) {
@@ -558,6 +715,9 @@ public class IntakeService {
         pending.setPayload(write(new IntakePayloads.VesselFields(
                 existing.vesselId(), existing.vesselName(), matchNote(how), v,
                 List.copyOf(byField.values()), List.copyOf(filled))));
+        // Recomputed on the union: one significant row from a new arrival puts a minor item
+        // back on the queue, which is the point of it being a flag rather than a status.
+        pending.setMinor(VesselReviewPolicy.allMinor(List.copyOf(byField.values())));
         items.save(pending);
     }
 
@@ -587,6 +747,15 @@ public class IntakeService {
         IntakePayloads.CargoMerge payload = new IntakePayloads.CargoMerge(
                 resolved.parsed(), existing.getId(), describe(existing),
                 candidate.reasons(), preview.filled(), preview.differing());
+        // One question per cargo, however many brokers raise it - the vessel rule. The newest
+        // reading is the one shown and the one a merge fills from; every arrival stays on the
+        // item and goes onto the cargo as a source whichever way it is answered.
+        for (IntakeItem pending : items.pendingCargoMerge(existing.getId())) {
+            pending.setPayload(write(payload));
+            items.save(pending);
+            addSource(pending, parsed, arrival);
+            return false;
+        }
         addSource(save(parsed, IntakeItemKind.CARGO_MERGE, null, existing.getId(),
                 Extraction.text(resolved.parsed().commodity()), payload), parsed, arrival);
         return true;
@@ -630,7 +799,12 @@ public class IntakeService {
                 : items.pendingNewCompany(name);
         if (!pending.isEmpty()) {
             IntakeItem open = pending.get(0);
-            open.setPayload(write(payload));
+            // Aggregated rather than replaced: every person and address any of the firm's mail
+            // has carried, compared again on the whole - and minor again or not on the whole.
+            IntakePayloads.CompanyDetails merged =
+                    styles.aggregate(read(open, IntakePayloads.CompanyDetails.class), payload);
+            open.setPayload(write(merged));
+            open.setMinor(merged.isMinor());
             items.save(open);
             addSource(open, parsed, arrival);
             return false;
@@ -640,6 +814,9 @@ public class IntakeService {
 
         IntakeItem item = save(parsed, IntakeItemKind.COMPANY_DETAILS, null, null, name, payload);
         item.setCompanyId(payload.companyId());
+        // A moved website or a new mobile waits on the firm's own record and the Minor updates
+        // sub-tab; a new name or email address is a question for the queue.
+        item.setMinor(payload.isMinor());
         addSource(item, parsed, arrival);
         return true;
     }
@@ -785,7 +962,7 @@ public class IntakeService {
             if (vessel != null) {
                 List<FieldDiff> rows = shown(item, vessel, payload);
                 settled = settle(item, vessel, fieldsOf(rows), reported(vessel, payload, rows),
-                        IntakeFieldDecision.KEPT, Map.of(), user);
+                        IntakeFieldDecision.KEPT, Map.of(), Map.of(), user);
             }
             return "Kept what was on file; nothing changed."
                     + (settled > 0 ? " The same reading will not be raised again." : "");
@@ -805,6 +982,13 @@ public class IntakeService {
         // canonicalise differently - and a decision stored under a value the email never
         // reported would never match it again.
         Map<String, String> reported = reported(vessel, payload, onScreen);
+        // And what the record held, for the same reason: an accept moves the record off a value,
+        // and that value arriving later from another broker is a pair the desk has weighed.
+        Map<String, String> before = new LinkedHashMap<>();
+        for (FieldDiff row : onScreen) {
+            String was = VesselFieldDiff.currentValue(vessel, row.field());
+            if (was != null) before.put(row.field(), was);
+        }
 
         // An empty list means all of them, which is what the "Accept all" button sends. A
         // list that names nothing and meant nothing would be an accept that quietly did
@@ -840,8 +1024,15 @@ public class IntakeService {
         // — the record now holds it, so tomorrow's list agrees with it.
         settle(item, vessel,
                 fieldsOf(onScreen).stream().filter(f -> !chosen.contains(f)).toList(),
-                reported, IntakeFieldDecision.KEPT, Map.of(), user);
-        settle(item, vessel, typed.keySet(), reported, IntakeFieldDecision.CORRECTED, typed, user);
+                reported, IntakeFieldDecision.KEPT, Map.of(), Map.of(), user);
+        settle(item, vessel, typed.keySet(), reported, IntakeFieldDecision.CORRECTED, typed, before, user);
+        // Accepting used to write no row, on the reasoning that tomorrow's list then agrees. It
+        // does - and the next broker still carrying the old figure raised the same pair the
+        // other way round, which is how CARLOW came to be asked seven times. The row is what
+        // records that the desk moved away from that figure.
+        settle(item, vessel,
+                written.stream().filter(f -> !typed.containsKey(f)).toList(),
+                reported, IntakeFieldDecision.ACCEPTED, Map.of(), before, user);
 
         if (written.isEmpty()) return "Nothing changed — the record already reads that way.";
         String summary = "Updated "
@@ -865,9 +1056,9 @@ public class IntakeService {
      */
     List<FieldDiff> shown(IntakeItem item, Vessel vessel, IntakePayloads.VesselFields payload) {
         if (payload.vessel() == null) return payload.diffs() == null ? List.of() : payload.diffs();
-        return withoutSettled(vessel, payload.vessel(),
-                VesselFieldDiff.preview(vessel, payload.vessel()),
-                senderIdsOf(item)).conflicts();
+        List<Long> senders = senderIdsOf(item);
+        return weigh(vessel, payload.vessel(), withoutSettled(vessel, payload.vessel(),
+                VesselFieldDiff.preview(vessel, payload.vessel()), senders).conflicts(), senders);
     }
 
     private static List<String> fieldsOf(List<FieldDiff> rows) {
@@ -903,12 +1094,13 @@ public class IntakeService {
      * existing row rather than failing on the unique index, which is what the second copy of a
      * re-parsed email would otherwise do.
      *
-     * @param typed the corrected values, for the CORRECTED rows; empty for KEPT
+     * @param typed    the corrected values, for the CORRECTED rows; empty otherwise
+     * @param replaced what the record held before, for ACCEPTED and CORRECTED; empty for KEPT
      * @return how many decisions were written or refreshed
      */
     private int settle(IntakeItem item, Vessel vessel, Collection<String> fields,
                        Map<String, String> reported, String decision,
-                       Map<String, Object> typed, String user) {
+                       Map<String, Object> typed, Map<String, String> replaced, String user) {
         if (fields.isEmpty()) return 0;
         List<Company> senders = sendersOf(item);
         List<IntakeFieldDecision> existing = decisions.forVessel(vessel.getId());
@@ -933,6 +1125,7 @@ public class IntakeService {
                 row.setValueText(value);
                 row.setDecision(decision);
                 row.setCorrectedTo(VesselFieldDiff.canonical(typed.get(field)));
+                row.setReplacedValue(replaced.get(field));
                 row.setIntakeItemId(item.getId());
                 row.setDecidedAt(OffsetDateTime.now());
                 row.setDecidedBy(user);
@@ -985,6 +1178,23 @@ public class IntakeService {
         if (firms.isEmpty()) return "";
         return " \"" + name + "\" from " + String.join(", ", firms)
                 + " will be read as this ship from now on.";
+    }
+
+    /**
+     * Every arrival behind an item, newest first, one per parse; the item's own parse where it
+     * predates the sources table.
+     */
+    private List<Arrival> arrivalsOf(IntakeItem item) {
+        List<Arrival> out = new ArrayList<>();
+        List<Long> seen = new ArrayList<>();
+        for (IntakeItemSource source : itemSources.forItem(item.getId())) {
+            ParsedEmail p = source.getParsedEmail();
+            if (p == null || seen.contains(p.getId())) continue;
+            seen.add(p.getId());
+            out.add(arrivalOf(p));
+        }
+        if (out.isEmpty()) out.add(arrivalOf(item.getParsedEmail()));
+        return out;
     }
 
     /** Every firm behind an item, one entry each, with null for a sender the sync could not place. */
@@ -1085,14 +1295,20 @@ public class IntakeService {
 
     private String resolveCargoMerge(IntakeItem item, Action action) {
         IntakePayloads.CargoMerge payload = require(item, IntakePayloads.CargoMerge.class);
-        Arrival arrival = arrivalOf(item.getParsedEmail());
+        // Every arrival that asked it, newest first. The payload is the newest reading, so the
+        // newest arrival is the one a separate cargo is created from; the others go onto
+        // whichever cargo the answer names, so none of the brokers who sent it goes missing.
+        List<Arrival> arrivals = arrivalsOf(item);
+        Arrival arrival = arrivals.get(0);
         ResolvedCargo resolved = resolve(payload.cargo());
 
         if (action == Action.DISCARD) return "Discarded; no cargo written.";
 
         if (action == Action.ALTERNATIVE) {
             Cargo cargo = createCargo(resolved, arrival);
-            addSource(cargo, arrival, "Kept separate from cargo #" + payload.candidateId());
+            for (Arrival a : arrivals) {
+                addSource(cargo, a, "Kept separate from cargo #" + payload.candidateId());
+            }
             item.setCargoId(cargo.getId());
             return "Kept as a separate cargo.";
         }
@@ -1100,7 +1316,7 @@ public class IntakeService {
         Cargo existing = cargoes.findById(payload.candidateId()).orElseThrow(() ->
                 new com.chartering.exception.ResourceNotFoundException("Cargo", payload.candidateId()));
         CargoFieldDiff.Result merged = CargoFieldDiff.merge(existing, resolved, true);
-        addSource(existing, arrival, null);
+        for (Arrival a : arrivals) addSource(existing, a, null);
         return merged.filled().isEmpty()
                 ? "Merged; the cargo already held everything this email said."
                 : "Merged, filling " + merged.filled().size() + " empty field(s).";
@@ -1548,14 +1764,18 @@ public class IntakeService {
         return payload;
     }
 
-    /** Numbers the tab's header prints. */
-    public record Counts(long pending, long accepted, long rejected) {
+    /**
+     * Numbers the tab's header prints. {@code pending} is the queue alone — what "Needs review"
+     * means — and {@code minor} the questions kept for the record on their own sub-tab.
+     */
+    public record Counts(long pending, long minor, long accepted, long rejected) {
     }
 
     @Transactional(readOnly = true)
     public Counts counts() {
         return new Counts(
-                items.countByStatus(IntakeItemStatus.PENDING),
+                items.countByStatusAndMinor(IntakeItemStatus.PENDING, false),
+                items.countByStatusAndMinor(IntakeItemStatus.PENDING, true),
                 items.countByStatus(IntakeItemStatus.ACCEPTED),
                 items.countByStatus(IntakeItemStatus.REJECTED));
     }

@@ -60,11 +60,16 @@ public interface CargoRepository extends JpaRepository<Cargo, Long>, JpaSpecific
      * and for the same reason: a desk's live cargo list is tens of rows, not thousands, and
      * one query beats a page of criteria that still would not express the rule.
      *
-     * <p>The load point comes with them because the comparison reads it on every candidate.
+     * <p>The load point comes with them because the comparison reads it on every candidate,
+     * and the discharge point and charterer since they became anchors too (see
+     * {@code CargoMatcher}).
      */
     @Query("select c from Cargo c "
             + "left join fetch c.loadPort lp left join fetch lp.tradeArea "
             + "left join fetch c.loadArea "
+            + "left join fetch c.dischargePort dp left join fetch dp.tradeArea "
+            + "left join fetch c.dischargeArea "
+            + "left join fetch c.chartererCompany "
             + "where c.status in :statuses "
             + "order by c.id desc")
     List<Cargo> findDuplicateCandidates(List<CargoStatus> statuses);

@@ -40,10 +40,19 @@ public class IntakeReconcileRunner {
 
     @Scheduled(fixedDelay = TICK_MS, initialDelay = 45_000)
     public void run() {
-        // Both switches, because the pass needs both halves to exist: the queue is the
-        // parser's, and the numbers it reconciles against are the lookup's. With either off
+        if (!parser.isEnabled()) return;
+        // Needs only the parser: which side of the queue a question sits on depends on the
+        // record, and the record moves whether or not anything is being looked up.
+        try {
+            int moved = intake.reweighPending();
+            if (moved > 0) log.info("Intake: {} waiting item(s) moved between the queue and Minor updates", moved);
+        } catch (Exception e) {
+            log.error("Intake re-weighing pass failed", e);
+        }
+        // Both switches for the rest, because this half needs both to exist: the queue is the
+        // parser's, and the numbers it reconciles against are the lookup's. With the lookup off
         // there is nothing here that could have changed since the last tick.
-        if (!parser.isEnabled() || !lookups.isEnabled()) return;
+        if (!lookups.isEnabled()) return;
         try {
             int converted = intake.reconcileIdentifiedHulls();
             if (converted > 0) {

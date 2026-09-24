@@ -58,6 +58,7 @@ class IntakeServiceTest {
     private List<VesselPosition> onFile;
     private com.chartering.repository.IntakeFieldDecisionRepository decisions;
     private com.chartering.repository.IntakeVesselAliasRepository aliases;
+    private VesselFieldReportRepository fieldReports;
 
     @BeforeEach
     void setUp() {
@@ -72,12 +73,14 @@ class IntakeServiceTest {
         lookupService = mock(com.chartering.service.lookup.VesselLookupService.class);
         decisions = mock(com.chartering.repository.IntakeFieldDecisionRepository.class);
         aliases = mock(com.chartering.repository.IntakeVesselAliasRepository.class);
+        fieldReports = mock(VesselFieldReportRepository.class);
         when(decisions.forVessel(any())).thenReturn(List.of());
         when(aliases.find(any(), any())).thenReturn(java.util.Optional.empty());
         styles = mock(CompanyStyleIntake.class);
+        when(styles.aggregate(any(), any())).thenAnswer(i -> i.getArgument(1));
         settingsService = mock(com.chartering.service.SettingsService.class);
         service = new IntakeService(items, cargoSources, cargoes, vessels, exNames, itemSources,
-                decisions, aliases, positions, resolver,
+                decisions, aliases, fieldReports, positions, resolver,
                 styles,
                 new com.chartering.config.ParserProperties(),
                 mock(com.chartering.repository.CompanyRepository.class),
@@ -119,6 +122,37 @@ class IntakeServiceTest {
         when(items.pendingForCompany(anyLong())).thenReturn(List.of());
         when(items.pendingNewCompany(any())).thenReturn(List.of());
         when(settingsService.ownAddresses()).thenReturn(java.util.Set.of());
+    }
+
+    // ---------------------------------------------------------- a cargo sent again
+
+    @Test
+    void aBrokerResendingHisOwnCargoIsMergedWithoutAsking() {
+        // Cargo 122 was asked about seven times, six by a broker already on it as a source.
+        Cargo his = new Cargo();
+        his.setId(7L);
+        his.setCommodity("Wheat");
+        his.setQuantity(new BigDecimal("25000"));
+        his.setLoadPortText("Chornomorsk");
+        his.setLaycanFrom(LocalDate.of(2026, 9, 10));
+        his.setLaycanTo(LocalDate.of(2026, 9, 15));
+        when(cargoes.findDuplicateCandidates(any())).thenReturn(List.of(his));
+        when(cargoSources.cargoIdsReportedBy(3L)).thenReturn(java.util.Set.of(7L));
+        when(styles.read(any(), any())).thenReturn(new CompanyStyleIntake.Reading(null, List.of(), null));
+
+        Extraction.ExtractedCargo again = new Extraction.ExtractedCargo(
+                "Wheat", new BigDecimal("25000"), "MT", "", null, null, null,
+                "Chornomorsk", "", "", "", "2026-09-10", "2026-09-15", "",
+                "", "", null, null, null, null, null, null, null,
+                "", "", "", "", "");
+        IntakeService.ApplyOutcome outcome = service.apply(parsed,
+                new Extraction("cargo_offer", List.of(again), List.of(), null, null, null));
+
+        assertThat(outcome.itemsRaised()).isZero();
+        assertThat(outcome.cargoesApplied()).isZero();
+        verify(items, never()).save(any(IntakeItem.class));
+        verify(cargoSources).save(argThat(s -> s.getCargo() == his
+                && s.getNotes() != null && s.getNotes().startsWith("Merged on arrival")));
     }
 
     // ---------------------------------------------------------- the firm that signed it

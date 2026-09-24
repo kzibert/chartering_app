@@ -579,7 +579,7 @@ public class IntakePasteService {
     }
 
     /** Emails case-insensitively, phones by their digits — "+90 212 555" is "0090212555". */
-    private static String contactKey(String kind, String value) {
+    static String contactKey(String kind, String value) {
         if ("phone".equalsIgnoreCase(kind)) {
             String tail = CompanyMatcher.tail(value);
             return "phone:" + (tail != null ? tail : value.replaceAll("\\D", ""));

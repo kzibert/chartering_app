@@ -32,6 +32,7 @@ public record IntakeStatusResponse(
         String reachabilityError,
         Boolean running,
         Long pendingItems,
+        Long minorItems,
         Long acceptedItems,
         Long rejectedItems,
         Long unparsed,
@@ -60,7 +61,7 @@ public record IntakeStatusResponse(
 
     /** Off: nothing counted, nothing claimed. */
     public static IntakeStatusResponse disabled() {
-        return new IntakeStatusResponse(false, null, null, null, null, null, null, null,
+        return new IntakeStatusResponse(false, null, null, null, null, null, null, null, null,
                 null, null, null, null, null, null, null, null, null, null, null, null);
     }
 }

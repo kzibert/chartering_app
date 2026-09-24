@@ -174,9 +174,23 @@ public class IntakeController {
             @Parameter(description = "Defaults to PENDING — the queue. Pass ACCEPTED or "
                     + "REJECTED to read back what was decided.")
             @RequestParam(required = false, defaultValue = "PENDING") IntakeItemStatus status,
+            @Parameter(description = "false is the queue, true the questions kept for the "
+                    + "record on the Minor updates sub-tab; left out, both")
+            @RequestParam(required = false) Boolean minor,
             @PageableDefault(size = 25, sort = "createdAt", direction = Sort.Direction.ASC)
             Pageable pageable) {
-        return ResponseEntity.ok(queries.search(kind, status, pageable));
+        return ResponseEntity.ok(queries.search(kind, status, minor, pageable));
+    }
+
+    @GetMapping("/companies/{companyId}/pending")
+    @Operation(summary = "The company question waiting about one firm, if any",
+            description = "What the company's own record asks before offering \"Update from "
+                    + "correspondence\": the details every email from the firm has carried, "
+                    + "aggregated into one item, minor or not. 204 when nothing is waiting.")
+    public ResponseEntity<IntakeItemResponse> pendingForCompany(@PathVariable Long companyId) {
+        return queries.pendingForCompany(companyId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
     }
 
     @GetMapping("/items/{id}")

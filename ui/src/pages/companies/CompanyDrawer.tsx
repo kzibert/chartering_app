@@ -32,6 +32,7 @@ import RecordHistory from '../../components/RecordHistory';
 import ContactLine from '../../components/ContactLine';
 import { ContactRowExpansion } from '../../components/ContactRowExpansion';
 import CompanyPeopleTab from './CompanyPeopleTab';
+import CorrespondenceUpdate from './CorrespondenceUpdate';
 import VesselRoleTag, { ROLE_OPTIONS } from '../../components/VesselRoleTag';
 import EditToolbar, { useEditMode } from '../../components/EditToolbar';
 import VesselDrawer from '../vessels/VesselDrawer';
@@ -175,6 +176,7 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
               </Typography.Link>
             </Typography.Paragraph>
           )}
+          <CorrespondenceUpdate companyId={c.id} />
           <Tabs
             activeKey={tab}
             onChange={(k) => setTab(k as TabKey)}
