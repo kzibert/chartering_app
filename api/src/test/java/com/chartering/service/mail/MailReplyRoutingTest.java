@@ -1,10 +1,12 @@
 package com.chartering.service.mail;
 
 import com.chartering.config.MailCampaignProperties;
+import com.chartering.dto.MailComposeRequest;
 import com.chartering.dto.MailReplyRequest;
 import com.chartering.exception.MailNotConfiguredException;
 import com.chartering.model.MailMessage;
 import com.chartering.model.MailReply;
+import com.chartering.repository.ContactRepository;
 import com.chartering.repository.MailMessageRepository;
 import com.chartering.repository.MailReplyRepository;
 import com.chartering.service.EmailFooterService;
@@ -29,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -71,6 +74,8 @@ class MailReplyRoutingTest {
     private BrevoReplySender brevo;
     @Mock
     private SettingsService settings;
+    @Mock
+    private ContactRepository contacts;
 
     /** Real, not a mock: it is a plain properties holder and the test's job is to set it. */
     private final MailCampaignProperties props = new MailCampaignProperties();
@@ -80,7 +85,7 @@ class MailReplyRoutingTest {
     @BeforeEach
     void setUp() {
         service = new MailReplyService(messages, replies, footers, templates, sanitizer,
-                transport, smtp, brevo, settings, props);
+                transport, smtp, brevo, settings, props, contacts);
         props.setEnabled(true);
         // The circulars provider is BREVO throughout, precisely so that every assertion about
         // the reply route below is about the reply route and not about this.
@@ -197,5 +202,48 @@ class MailReplyRoutingTest {
                 .isInstanceOf(MailNotConfiguredException.class)
                 .hasMessageContaining("MAIL_ENABLED");
         verify(brevo, never()).send(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    // ---------------------------------------------------------- a new message, from a company
+
+    /**
+     * Reach out: the first address picked is who it is to, the rest are copied - each once,
+     * and never the To address a second time - and nothing is threaded, because nothing is
+     * being answered.
+     */
+    @Test
+    void aNewMessageCopiesTheRestOnceAndThreadsNothing() {
+        props.setReplyProvider("BREVO");
+        when(brevo.send(any(), any(), any(), any(List.class), any(), any(), any(), any()))
+                .thenReturn("<brevo-100@maritella.com>");
+
+        service.compose(composeRequest());
+
+        verify(brevo).send(eq(MAILBOX), eq("Maritella Chartering Desk"), eq("ops@firm.example"),
+                eq(List.of("desk@firm.example")), eq("Open tonnage"), anyString(),
+                eq("plain text"), isNull());
+        ArgumentCaptor<MailReply> saved = ArgumentCaptor.forClass(MailReply.class);
+        verify(replies).save(saved.capture());
+        assertThat(saved.getValue().getMailMessage()).isNull();
+        assertThat(saved.getValue().getCcAddresses()).isEqualTo("desk@firm.example");
+    }
+
+    @Test
+    void aNewMessageIsStoppedByTheMasterSwitchInItsOwnWords() {
+        props.setEnabled(false);
+
+        assertThatThrownBy(() -> service.compose(composeRequest()))
+                .isInstanceOf(MailNotConfiguredException.class)
+                .hasMessageContaining("The message has not been sent");
+        verify(replies, never()).save(any());
+    }
+
+    private static MailComposeRequest composeRequest() {
+        MailComposeRequest req = new MailComposeRequest();
+        req.setTo(" ops@firm.example ");
+        req.setCc(List.of("desk@firm.example", "OPS@firm.example", " desk@firm.example "));
+        req.setSubject("Open tonnage");
+        req.setBodyHtml("<p>Please see below.</p>");
+        return req;
     }
 }

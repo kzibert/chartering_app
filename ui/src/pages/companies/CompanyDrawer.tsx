@@ -14,6 +14,7 @@ import {
 } from 'antd';
 import {
   LinkOutlined,
+  MailOutlined,
   PlusOutlined,
   SwapOutlined,
 } from '@ant-design/icons';
@@ -40,6 +41,7 @@ import VesselForm from '../vessels/VesselForm';
 import { LinkVesselModal } from '../vessels/VesselOwnerModals';
 import ContactForm from '../contacts/ContactForm';
 import PersonForm from '../people/PersonForm';
+import ReachOutModal from './ReachOutModal';
 import { recordRecent } from '../../recent/store';
 import type {
   CompanyResponse,
@@ -74,6 +76,8 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
   const { confirm } = useCompanyMutations();
 
   const [vesselId, setVesselId] = useState<number>();
+  const [reachingOut, setReachingOut] = useState(false);
+  useEffect(() => setReachingOut(false), [companyId]);
 
   // Controlled so opening a person from the dashboard can land on the People tab;
   // as a side effect each company starts on its own initial tab rather than
@@ -125,7 +129,19 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
       onClose={onClose}
       // Just Edit. Ban and Delete moved inside it, where confirm went too — the header of
       // a drawer you opened to read something is no place for a one-click delete.
-      extra={c && onEdit && <Button onClick={() => onEdit(c)}>Edit</Button>}
+      extra={
+        c && (
+          <Space>
+            {/* Writing to the firm is reading it, not changing it, so it sits beside Edit
+                whether or not this caller can edit — the Intake tab's copy of this drawer
+                included. */}
+            <Button icon={<MailOutlined />} onClick={() => setReachingOut(true)}>
+              Reach out
+            </Button>
+            {onEdit && <Button onClick={() => onEdit(c)}>Edit</Button>}
+          </Space>
+        )
+      }
     >
       {isLoading || !c ? (
         <Spin />
@@ -278,6 +294,12 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
             editing={editingPerson}
             defaults={personDefaults}
             onClose={() => setPersonFormOpen(false)}
+          />
+          <ReachOutModal
+            open={reachingOut}
+            companyId={c.id}
+            companyName={c.name}
+            onClose={() => setReachingOut(false)}
           />
         </>
       )}
