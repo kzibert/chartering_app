@@ -1318,6 +1318,8 @@ export interface MailMessage {
   imapFolder?: string;
   companyId?: number;
   companyName?: string;
+  /** The linked company's record is confirmed. Absent when there is no company. */
+  companyConfirmed?: boolean;
   personId?: number;
   personName?: string;
   /** The company link was set by hand; no re-link pass will overwrite it. */

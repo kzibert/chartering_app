@@ -413,7 +413,9 @@ export function useCompanyMutations() {
   const confirm = useMutation({
     mutationFn: (v: { id: number; confirmed: boolean; body?: ConfirmRequest }) =>
       companiesApi.confirm(v.id, v.confirmed, v.body),
-    onSuccess: () => invalidate('companies', 'company'),
+    // 'mailbox' too: the message list marks mail from an unconfirmed company, and the
+    // company drawer is opened from it, so confirming there should clear the mark behind it.
+    onSuccess: () => invalidate('companies', 'company', 'mailbox'),
   });
   const ban = useMutation({
     mutationFn: (v: { id: number; banned: boolean }) => companiesApi.setBanned(v.id, v.banned),

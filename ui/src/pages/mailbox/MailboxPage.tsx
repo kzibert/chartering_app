@@ -56,6 +56,7 @@ import ResponsiveTable from '../../components/ResponsiveTable';
 import { useIsMobile } from '../../responsive/useIsMobile';
 import CompanyDrawer from '../companies/CompanyDrawer';
 import CompanyForm from '../companies/CompanyForm';
+import UnconfirmedCompanyMark from './UnconfirmedCompanyMark';
 import MessageDrawer from './MessageDrawer';
 import FoldersRulesModal from './FoldersRulesModal';
 import type {
@@ -363,6 +364,7 @@ export default function MailboxPage() {
                 {m.companyName}
               </Typography.Link>
             </Tooltip>
+            {m.companyConfirmed === false && <UnconfirmedCompanyMark />}
             {m.linkManual && (
               <Tooltip title="Linked by hand — automatic re-linking will not change it">
                 <Tag color="blue" style={{ flex: 'none', marginInlineEnd: 0 }}>
@@ -671,14 +673,17 @@ export default function MailboxPage() {
                     ? {
                         label: 'Company',
                         value: (
-                          <Typography.Link
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setCompanyId(m.companyId);
-                            }}
-                          >
-                            {m.companyName}
-                          </Typography.Link>
+                          <Space size={4}>
+                            <Typography.Link
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setCompanyId(m.companyId);
+                              }}
+                            >
+                              {m.companyName}
+                            </Typography.Link>
+                            {m.companyConfirmed === false && <UnconfirmedCompanyMark />}
+                          </Space>
                         ),
                       }
                     : { label: 'Company', value: 'unknown sender' },

@@ -30,6 +30,7 @@ import { useMailFolders, useMailMessage, useMailMessageMutations } from '../../m
 import CargoForm from '../cargoes/CargoForm';
 import PositionForm from '../openFleet/PositionForm';
 import LinkCompanyModal from './LinkCompanyModal';
+import UnconfirmedCompanyMark from './UnconfirmedCompanyMark';
 import MailReference from './MailReference';
 import MessageBody from './MessageBody';
 import ReplyModal from './ReplyModal';
@@ -237,6 +238,7 @@ export default function MessageDrawer({ messageId, onClose, onOpenCompany }: Pro
                     >
                       {m.companyName}
                     </span>
+                    {m.companyConfirmed === false && <UnconfirmedCompanyMark />}
                   </Button>
                   {/* No Tooltip around the trigger: nesting one inside Popconfirm makes the
                       two popups fight over it. The confirm text names the company instead,

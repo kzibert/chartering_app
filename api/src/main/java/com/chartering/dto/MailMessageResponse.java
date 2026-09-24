@@ -25,6 +25,13 @@ public record MailMessageResponse(
         Long filedByRuleId,
         Long companyId,
         String companyName,
+        /**
+         * Whether the linked company's record has been confirmed; absent with no company.
+         * The link comes from matching the sender against contacts, and most of those rows
+         * arrived by import or intake — a message filed under a firm nobody has checked yet
+         * is worth knowing about before answering it as that firm.
+         */
+        Boolean companyConfirmed,
         Long personId,
         String personName,
         /** true = the company link was set by hand and no re-link pass will overwrite it. */
