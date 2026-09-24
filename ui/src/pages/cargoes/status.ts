@@ -19,7 +19,7 @@ export const CARGO_STATUS_META: Record<CargoStatus, { label: string; color: stri
   NOT_WORKABLE: {
     label: 'Not workable',
     color: 'default',
-    hint: 'Not for this desk. Never on Match, and a re-send is recognised rather than filed as new',
+    hint: 'Not for this desk. Never matched against tonnage, and a re-send is recognised rather than filed as new',
   },
 };
 

@@ -5,7 +5,6 @@ import {
   ContainerOutlined,
   InboxOutlined,
   CompassOutlined,
-  NodeIndexOutlined,
   BankOutlined,
   TeamOutlined,
   UnorderedListOutlined,
@@ -34,7 +33,7 @@ const { Sider, Header, Content } = Layout;
 
 // No '/contacts': contacts live inside People now, grouped under the person who owns them.
 const KEYS = [
-  '/', '/cargoes', '/open-fleet', '/match', '/vessels', '/companies', '/people',
+  '/', '/cargoes', '/open-fleet', '/vessels', '/companies', '/people',
   '/circulation-lists', '/circulars', '/mailbox', '/feed', '/intake', '/analysis', '/history',
   '/settings',
 ];
@@ -82,7 +81,6 @@ export default function AppLayout({
     // are what you go and read when one of them raises a question.
     { key: '/cargoes', icon: <InboxOutlined />, label: 'Cargoes' },
     { key: '/open-fleet', icon: <CompassOutlined />, label: 'Open fleet' },
-    { key: '/match', icon: <NodeIndexOutlined />, label: 'Match' },
     { key: '/vessels', icon: <ContainerOutlined />, label: 'Vessels' },
     { key: '/companies', icon: <BankOutlined />, label: 'Companies' },
     { key: '/people', icon: <TeamOutlined />, label: 'People & contacts' },

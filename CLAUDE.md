@@ -389,8 +389,11 @@ Flyway builds one schema, not one per environment.
 
 ### Cargoes, open fleet, and the match between them
 
-Three tabs and one rule engine. A day here is cargoes arriving, tonnage positions arriving,
-and the two being put against each other; these are those three things.
+Two tabs and one rule engine. A day here is cargoes arriving, tonnage positions arriving,
+and the two being put against each other. The third used to be a Match tab of its own; it
+is now a drawer opened from the record it answers for (`pages/match/MatchDrawer`) —
+**Matching vessels** on a live cargo, **Matching cargoes** on a vessel. Nobody opened Match
+to browse: the question is always asked about one cargo or one ship, from its record.
 
 **Where a cargo came from is one column with three answers.** `cargoes.source_kind` is
 `MANUAL`, `MAIL` or `WEB` — typed on a form, read out of the mailbox by the sweep, or read off
@@ -614,7 +617,10 @@ settles the pairs a hundred points over eight checks cannot, which is a great ma
 
 Match reads in both directions, because the desk does. Most of the mail here is somebody
 else's tonnage asking for work — "pls propose suitable cgoes for our below home tonnages"
-arrives weekly — and answering it is the same scorer read the other way round.
+arrives weekly — and answering it is the same scorer read the other way round. Cargoes are
+scored against a *position*, not a hull: from an Open fleet row it is the row clicked (when
+live), from anywhere else her latest reading, and only while it is live — a vessel with no
+live reading has no button.
 
 Every reason is shown with its figures ("Draws 7.9m, berth takes 7.0m"), never as "failed
 draft check". The value of the screen is that a broker can disagree with it, and they can

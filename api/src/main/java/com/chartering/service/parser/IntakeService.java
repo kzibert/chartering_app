@@ -187,7 +187,15 @@ public class IntakeService {
      */
     private Arrival arrivalOf(ParsedEmail parsed) {
         if (parsed.getMailMessage() != null) return Arrival.of(parsed.getMailMessage());
-        return arrivalOf(parsed, styles.read(textOf(parsed), null));
+        return arrivalOf(parsed.getFeedItem());
+    }
+
+    /** A post's arrival from the post alone, for the paths that hold no parse row. */
+    private Arrival arrivalOf(FeedItem post) {
+        CompanyStyleIntake.Reading signature = styles.read(cut(post.getText()), null);
+        Company signer = signature.companyId() == null ? null
+                : companies.findById(signature.companyId()).orElse(null);
+        return Arrival.of(post, signature, signer, signerPerson(signer, signature));
     }
 
     /**
@@ -202,11 +210,100 @@ public class IntakeService {
      * model actually read.
      */
     private String textOf(ParsedEmail parsed) {
-        String text = parsed.getMailMessage() != null
+        return cut(parsed.getMailMessage() != null
                 ? parsed.getMailMessage().getBodyText()
-                : (parsed.getFeedItem() == null ? null : parsed.getFeedItem().getText());
+                : (parsed.getFeedItem() == null ? null : parsed.getFeedItem().getText()));
+    }
+
+    private String cut(String text) {
         int max = props.getMaxBodyChars();
         return text == null || text.length() <= max ? text : text.substring(0, max);
+    }
+
+    // ------------------------------------------------------------------ late attribution
+
+    /**
+     * Name the sender on what was filed before anybody could.
+     *
+     * <p><b>The gap this closes.</b> A position or a cargo read off a board is filed at once,
+     * with a null reporter where the signature names a firm nobody here has met, and the
+     * {@code COMPANY_DETAILS} question raised beside it is what brings the firm on file. But
+     * answering it only helped the <em>next</em> list: the rows already filed kept their null,
+     * so AGN LAGERTHA sat on Open Fleet from nobody, with Pge Shipping created from the very
+     * post that listed her. Mail has the same gap by a different door — an address becomes a
+     * contact a week after the circular it sent, the mailbox re-links the message, and the
+     * position read out of it never hears.
+     *
+     * <p><b>The arrival is asked again, with the same rule it was asked with.</b> For mail that
+     * is the message's sender as the mailbox now resolves it; for a post it is the signature,
+     * read and matched exactly as the sweep reads it — identity evidence or nothing, never a
+     * resemblance. So this cannot name a firm the sweep would not have named had the firm been
+     * on file that morning, and a signature still matching nobody stays null, as before.
+     *
+     * <p>Only nulls are written. A reporter somebody set, or one the sweep found, is an answer
+     * already, and a second reading has no standing to replace it. The cargo's broker is filled
+     * on the same rule as at intake — the firm it reached us through — and only where empty.
+     *
+     * <p><b>A reporter arriving late can make two readings one reporter's.</b> Superseding is
+     * scoped to the reporter, so two LIVE rows for one hull that were "nobody" and "FEYZ" are
+     * both current, while two that are both FEYZ's are a list and its correction. The older
+     * of those is superseded here, as it would have been had the reporter been known on the day.
+     *
+     * @return how many rows gained a reporter or a broker
+     */
+    @Transactional
+    public int attributeUnreported() {
+        // One circular files a dozen positions and a cargo; its signature is read once.
+        Map<String, Optional<Arrival>> seen = new java.util.HashMap<>();
+
+        int written = 0;
+        Set<List<Long>> reporters = new java.util.HashSet<>();
+        for (VesselPosition p : positions.findUnreportedWithSource()) {
+            Optional<Arrival> a = namedSender(seen, p.getSourceMailMessage(), p.getSourceFeedItem());
+            if (a.isEmpty()) continue;
+            p.setReportedByCompany(a.get().company());
+            if (p.getReportedByPerson() == null) p.setReportedByPerson(a.get().person());
+            reporters.add(List.of(p.getVessel().getId(), a.get().company().getId()));
+            written++;
+        }
+        for (List<Long> pair : reporters) {
+            List<VesselPosition> live = positions.findByVesselIdOrderByReportedAtDesc(pair.get(0)).stream()
+                    .filter(p -> p.getStatus() == PositionStatus.LIVE)
+                    .filter(p -> p.getReportedByCompany() != null
+                            && pair.get(1).equals(p.getReportedByCompany().getId()))
+                    .toList();
+            for (int i = 1; i < live.size(); i++) live.get(i).setStatus(PositionStatus.SUPERSEDED);
+        }
+
+        for (CargoSource src : cargoSources.findUnreportedWithSource()) {
+            Optional<Arrival> a = namedSender(seen, src.getMailMessage(), src.getFeedItem());
+            if (a.isEmpty()) continue;
+            src.setReportedByCompany(a.get().company());
+            if (src.getReportedByPerson() == null) src.setReportedByPerson(a.get().person());
+            written++;
+        }
+
+        List<Cargo> unbrokered = cargoes.findUnbrokeredWithSource();
+        if (!unbrokered.isEmpty()) {
+            ChangeContext.describe("Intake: broker named once the sender was on file");
+        }
+        for (Cargo c : unbrokered) {
+            Optional<Arrival> a = namedSender(seen, c.getSourceMailMessage(), c.getSourceFeedItem());
+            if (a.isEmpty()) continue;
+            c.setBrokerCompany(a.get().company());
+            if (c.getBrokerPerson() == null) c.setBrokerPerson(a.get().person());
+            written++;
+        }
+        return written;
+    }
+
+    /** The arrival behind a row, only where it now names a firm. */
+    private Optional<Arrival> namedSender(Map<String, Optional<Arrival>> seen, MailMessage m, FeedItem post) {
+        String key = m != null ? "mail:" + m.getId() : "post:" + post.getId();
+        return seen.computeIfAbsent(key, k -> {
+            Arrival a = m != null ? Arrival.of(m) : arrivalOf(post);
+            return a.company() == null ? Optional.empty() : Optional.of(a);
+        });
     }
 
     private record VesselOutcome(boolean positionApplied, int itemsRaised) {

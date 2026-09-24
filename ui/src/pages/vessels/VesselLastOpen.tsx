@@ -3,6 +3,7 @@ import { Button, Descriptions, Space, Tag, Tooltip, Typography } from 'antd';
 import { EditOutlined, PlusOutlined } from '@ant-design/icons';
 import { usePosition } from '../../api/hooks';
 import PositionForm from '../openFleet/PositionForm';
+import ReportedBy from '../openFleet/ReportedBy';
 import { POSITION_STATUS_META, formatOpenDates, staleness } from '../openFleet/status';
 import type { VesselLastPositionResponse } from '../../api/types';
 
@@ -10,6 +11,8 @@ interface Props {
   vesselId: number;
   vesselName: string;
   lastPosition?: VesselLastPositionResponse;
+  /** Firms on her record in any capacity, owner included — decides whether to offer relating the reporter. */
+  relatedCompanyIds: number[];
 }
 
 /**
@@ -30,7 +33,7 @@ interface Props {
  * time. The copy under the buttons says which is which, because nobody reads a tooltip
  * before their first click.
  */
-export default function VesselLastOpen({ vesselId, vesselName, lastPosition }: Props) {
+export default function VesselLastOpen({ vesselId, vesselName, lastPosition, relatedCompanyIds }: Props) {
   const [creating, setCreating] = useState(false);
   const [correctingId, setCorrectingId] = useState<number>();
 
@@ -84,16 +87,28 @@ export default function VesselLastOpen({ vesselId, vesselName, lastPosition }: P
               >
                 {age?.text}
               </Typography.Text>
-              {lastPosition.reportedByCompanyName && (
-                <Typography.Text type="secondary">by {lastPosition.reportedByCompanyName}</Typography.Text>
-              )}
+              <ReportedBy
+                positionId={lastPosition.id}
+                companyId={lastPosition.reportedByCompanyId}
+                companyName={lastPosition.reportedByCompanyName}
+                prefix="by "
+                vesselId={vesselId}
+                vesselName={vesselName}
+                mailMessageId={lastPosition.sourceMailMessageId}
+                feedItemId={lastPosition.sourceFeedItemId}
+                linked={
+                  lastPosition.reportedByCompanyId == null
+                    ? undefined
+                    : relatedCompanyIds.includes(lastPosition.reportedByCompanyId)
+                }
+              />
             </Space>
           </Descriptions.Item>
         </Descriptions>
       ) : (
         <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
           No position has ever been reported for {vesselName}. She will not appear on the Open
-          fleet tab or in Match until one is.
+          fleet tab or be matched against cargoes until one is.
         </Typography.Paragraph>
       )}
 

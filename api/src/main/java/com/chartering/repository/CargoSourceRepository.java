@@ -45,4 +45,10 @@ public interface CargoSourceRepository extends JpaRepository<CargoSource, Long> 
     @Query("select distinct s.cargo.id from CargoSource s "
             + "where s.reportedByCompany is null and lower(s.fromAddress) = lower(?1)")
     java.util.Set<Long> cargoIdsReportedFrom(String fromAddress);
+
+    /** Arrivals on a cargo whose sender could not be named when they were filed. */
+    @Query("select s from CargoSource s left join fetch s.mailMessage left join fetch s.feedItem "
+            + "where s.reportedByCompany is null "
+            + "and (s.mailMessage is not null or s.feedItem is not null)")
+    List<CargoSource> findUnreportedWithSource();
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button, Col, DatePicker, Form, Input, InputNumber, Row, Select, Space, Tag, Tooltip, Typography } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { NodeIndexOutlined, PlusOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { useCargoes, useCargoMutations } from '../../api/hooks';
@@ -11,6 +11,7 @@ import { usePersistedFilters } from '../../components/usePersistedState';
 import TradeAreaSelect from '../../components/TradeAreaSelect';
 import CargoDrawer from './CargoDrawer';
 import CargoForm from './CargoForm';
+import CargoMatchWindow from './CargoMatchWindow';
 import {
   CARGO_STATUS_META,
   CARGO_STATUS_OPTIONS,
@@ -81,6 +82,28 @@ export default function CargoesPage() {
   const [selectedId, setSelectedId] = useState<number>();
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<CargoResponse | null>(null);
+  // The cargo whose full tonnage list is open, straight from its row - the same window the
+  // drawer's own button opens, without reading the whole record on the way to it.
+  const [matchingId, setMatchingId] = useState<number>();
+  // An icon in the table, where a worded button was the widest thing on the row and pushed
+  // itself off the right edge; the words stay on a phone's card, which has the room.
+  const matchButton = (c: CargoResponse, iconOnly = false) =>
+    LIVE_CARGO_STATUSES.includes(c.status) && (
+      <Tooltip title="All matching vessels — every ship that suits this cargo, with the cargo and its email beside them">
+        <Button
+          size="small"
+          type={iconOnly ? 'text' : 'default'}
+          icon={<NodeIndexOutlined />}
+          aria-label="All matching vessels"
+          onClick={(e) => {
+            e.stopPropagation();
+            setMatchingId(c.id);
+          }}
+        >
+          {iconOnly ? null : 'All matching vessels'}
+        </Button>
+      </Tooltip>
+    );
 
   // The persisted filters hold dates as the strings the API takes, and a DatePicker handed a
   // string does not render it. Runs after usePersistedFilters' own restore, which it corrects.
@@ -205,6 +228,14 @@ export default function CargoesPage() {
           </Tooltip>
         </span>
       ),
+    },
+    {
+      title: '',
+      key: 'match',
+      width: 44,
+      fixed: 'right',
+      // Live cargoes only, as in the drawer: a fixed or declined one is not looking for tonnage.
+      render: (_, c) => matchButton(c, true),
     },
   ];
 
@@ -343,7 +374,7 @@ export default function CargoesPage() {
         dataSource={query.data?.content ?? []}
         pagination={tc.pagination(query.data?.totalElements ?? 0)}
         onChange={tc.onChange}
-        scroll={{ x: 1300 }}
+        scroll={{ x: 1340 }}
         mobile={{
           title: (c) => (
             <Space size={4} wrap>
@@ -367,6 +398,7 @@ export default function CargoesPage() {
             c.maxDwt != null && { label: 'DWT max', value: c.maxDwt.toLocaleString() },
             c.freightIdea != null && { label: 'Freight', value: c.freightIdea },
           ],
+          actions: (c) => matchButton(c) || null,
         }}
         mobileSort={[
           { field: 'lastSentAt', label: 'Last sent' },
@@ -389,6 +421,7 @@ export default function CargoesPage() {
           setFormOpen(true);
         }}
       />
+      <CargoMatchWindow cargoId={matchingId} onClose={() => setMatchingId(undefined)} />
       <CargoForm
         open={formOpen}
         editing={editing}

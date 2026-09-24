@@ -4,7 +4,6 @@ import com.chartering.dto.MatchOutcomeRequest;
 import com.chartering.dto.MatchResponse;
 import com.chartering.dto.MatchSettingsRequest;
 import com.chartering.dto.MatchSettingsResponse;
-import com.chartering.dto.MatchSummaryResponse;
 import com.chartering.service.MatchService;
 import com.chartering.service.MatchSettings;
 import io.swagger.v3.oas.annotations.Operation;
@@ -25,16 +24,6 @@ public class MatchController {
 
     private final MatchService matchService;
     private final MatchSettings settings;
-
-    @GetMapping
-    @Operation(summary = "Every live cargo with the tonnage against it counted",
-            description = "The Match tab's landing view, ordered by how much unworked tonnage "
-                    + "each cargo has - which is where a day's work actually starts. Nothing "
-                    + "here is stored: the scores are computed on the request, because a "
-                    + "stored one goes stale the moment a position or a cargo moves.")
-    public ResponseEntity<List<MatchSummaryResponse>> overview() {
-        return ResponseEntity.ok(matchService.overview());
-    }
 
     @GetMapping("/cargo/{cargoId}")
     @Operation(summary = "Tonnage for one cargo, best first",

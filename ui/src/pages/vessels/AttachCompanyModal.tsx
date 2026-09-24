@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Alert, Modal, Select, Space, Typography } from 'antd';
-import { useVesselMutations } from '../../api/hooks';
+import { useVessel, useVesselMutations } from '../../api/hooks';
 import CompanySelect from '../../components/CompanySelect';
 import { ROLE_LABEL, ROLE_OPTIONS } from '../../components/VesselRoleTag';
 import type { VesselCompanyLinkResponse, VesselCompanyRole } from '../../api/types';
@@ -10,23 +10,32 @@ export default function AttachCompanyModal({
   open,
   vesselId,
   vesselName,
-  existing,
+  existing: given,
+  company,
   onClose,
 }: {
   open: boolean;
   vesselId: number;
   vesselName: string;
-  /** Already-linked companies — used to warn about the replacements a save would cause. */
-  existing: VesselCompanyLinkResponse[];
+  /**
+   * Already-linked companies — used to warn about the replacements a save would cause. A
+   * caller that does not hold her record (a row on Open Fleet) leaves it out, and it is read
+   * here, so the warning about displacing her owner is never skipped for want of it.
+   */
+  existing?: VesselCompanyLinkResponse[];
+  /** The firm to attach, when the question is only in what capacity — who reported her. */
+  company?: { id: number; name: string };
   onClose: () => void;
 }) {
+  const fetched = useVessel(open && given == null ? vesselId : undefined).data?.links;
+  const existing = given ?? fetched ?? [];
   const { setLink } = useVesselMutations();
   const [companyId, setCompanyId] = useState<number>();
   const [role, setRole] = useState<VesselCompanyRole>('broker');
 
   useEffect(() => {
     if (open) {
-      setCompanyId(undefined);
+      setCompanyId(company?.id);
       setRole('broker');
     }
   }, [open]);
@@ -66,7 +75,13 @@ export default function AttachCompanyModal({
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
         <div>
           <Typography.Text type="secondary">Company</Typography.Text>
-          <CompanySelect allowClear value={companyId} onChange={setCompanyId} />
+          {company ? (
+            <div>
+              <Typography.Text strong>{company.name}</Typography.Text>
+            </div>
+          ) : (
+            <CompanySelect allowClear value={companyId} onChange={setCompanyId} />
+          )}
         </div>
         <div>
           <Typography.Text type="secondary">Acting as</Typography.Text>

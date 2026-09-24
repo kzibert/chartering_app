@@ -235,7 +235,10 @@ export default function CompanyCard({
       );
       setSaved({ id: r.companyId, name: r.companyName });
       onDone(`${r.created ? 'Created' : 'Saved to'} ${r.companyName}`);
-      ['companies', 'company', 'people', 'person', 'contacts', 'dashboard'].forEach((k) =>
+      // The positions and cargoes too: accepting a question from Intake names the sender on
+      // whatever that firm's signature had already put on Open Fleet and Cargoes.
+      ['companies', 'company', 'people', 'person', 'contacts', 'dashboard', 'positions', 'position',
+        'vessel', 'cargoes', 'cargo', 'intake'].forEach((k) =>
         qc.invalidateQueries({ queryKey: [k] }),
       );
     },

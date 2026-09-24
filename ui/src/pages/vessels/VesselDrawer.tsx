@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Descriptions, Drawer, List, Popconfirm, Select, Space, Spin, Tag, Tooltip, Typography } from 'antd';
-import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
+import { DeleteOutlined, NodeIndexOutlined, PlusOutlined } from '@ant-design/icons';
 import {
   useContactMutations,
   useVessel,
@@ -16,17 +16,23 @@ import AttachCompanyModal from './AttachCompanyModal';
 import VesselLastOpen from './VesselLastOpen';
 import VesselFromTheWeb from './VesselFromTheWeb';
 import CompanyDrawer from '../companies/CompanyDrawer';
+import MatchDrawer from '../match/MatchDrawer';
 import CompanyForm from '../companies/CompanyForm';
 import ContactForm from '../contacts/ContactForm';
 import type { CompanyResponse, ContactResponse, VesselResponse } from '../../api/types';
 
 interface Props {
   vesselId?: number;
+  /**
+   * The reading she was opened from, when there was one — an Open fleet row is a position,
+   * and the cargoes for her are scored against that position rather than whichever is newest.
+   */
+  positionId?: number;
   onClose: () => void;
   onEdit: (v: VesselResponse) => void;
 }
 
-export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
+export default function VesselDrawer({ vesselId, positionId, onClose, onEdit }: Props) {
   const { data, isLoading } = useVessel(vesselId);
   const v = data?.vessel;
   // A deployment fact, fetched once: where LOOKUP_ENABLED is off the feature is not part of
@@ -50,6 +56,15 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
   const [contactFormOpen, setContactFormOpen] = useState(false);
   const [editingContact, setEditingContact] = useState<ContactResponse | null>(null);
 
+  // Cargoes are scored against a position, never a hull: where she is free and when is half
+  // of every check. Opened from Open fleet that is the row clicked; opened anywhere else it is
+  // her latest reading, and only while it is live — a fixed ship is not looking for cargo,
+  // and scoring one where she was free a month ago would be scoring a ship that is not there.
+  const last = data?.lastPosition;
+  const matchPositionId = positionId ?? (last?.status === 'LIVE' ? last.id : undefined);
+  const [matchOpen, setMatchOpen] = useState(false);
+  useEffect(() => setMatchOpen(false), [vesselId]);
+
   const ownerId = data?.owner?.id;
   // A contact added here belongs to the owner company — that is what this list shows.
   const contactDefaults = useMemo(() => ({ companyId: ownerId }), [ownerId]);
@@ -72,7 +87,18 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
       onClose={onClose}
       // Just Edit. Ban and Delete moved inside it, where confirm went too — the header of
       // a drawer you opened to read something is no place for a one-click delete.
-      extra={v && <Button onClick={() => onEdit(v)}>Edit</Button>}
+      extra={
+        v && (
+          <Space>
+            {matchPositionId != null && (
+              <Button icon={<NodeIndexOutlined />} onClick={() => setMatchOpen(true)}>
+                Matching cargoes
+              </Button>
+            )}
+            <Button onClick={() => onEdit(v)}>Edit</Button>
+          </Space>
+        )
+      }
     >
       {isLoading || !v ? (
         <Spin />
@@ -112,7 +138,15 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
 
           {/* Where she is free, on the record you opened to ask about her. It reads from
               the same positions the Open fleet tab lists, so the two cannot disagree. */}
-          <VesselLastOpen vesselId={v.id} vesselName={v.name} lastPosition={data?.lastPosition} />
+          <VesselLastOpen
+            vesselId={v.id}
+            vesselName={v.name}
+            lastPosition={data?.lastPosition}
+            relatedCompanyIds={[
+              ...links.map((l) => l.companyId),
+              ...(data?.owner ? [data.owner.id] : []),
+            ]}
+          />
 
           {/* What a public ship database says about her, beside what the record holds.
               Absent entirely where LOOKUP_ENABLED is off - the detail call carries no lookup
@@ -230,6 +264,16 @@ export default function VesselDrawer({ vesselId, onClose, onEdit }: Props) {
             defaults={contactDefaults}
             onClose={() => setContactFormOpen(false)}
           />
+          {/* Mounted only once asked for, for the reason the cargo drawer gives. */}
+          {matchOpen && matchPositionId != null && (
+            <MatchDrawer
+              open
+              side="position"
+              positionId={matchPositionId}
+              subject={v.name}
+              onClose={() => setMatchOpen(false)}
+            />
+          )}
         </>
       )}
     </Drawer>

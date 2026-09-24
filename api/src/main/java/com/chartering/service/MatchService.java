@@ -54,49 +54,6 @@ public class MatchService {
     }
 
     /**
-     * The Match tab's landing view: every live cargo with the tonnage against it counted.
-     *
-     * <p>One pass over the live positions per cargo. With a hundred cargoes and a thousand
-     * positions that is a hundred thousand comparisons of a dozen fields each, which is
-     * nothing — and it is read once when the tab opens rather than per keystroke.
-     */
-    @Transactional(readOnly = true)
-    public List<MatchSummaryResponse> overview() {
-        List<Cargo> cargoes = cargoRepository.findForMatching(CargoService.LIVE_STATUSES);
-        if (cargoes.isEmpty()) return List.of();
-
-        List<VesselPosition> positions = livePositions();
-        MatchContext ctx = context();
-
-        List<MatchSummaryResponse> out = new ArrayList<>(cargoes.size());
-        for (Cargo cargo : cargoes) {
-            Map<Long, CargoVesselMatch> decided = decisionsFor(cargo.getId());
-            int suitable = 0;
-            int untouched = 0;
-            int ruledOut = 0;
-            int best = 0;
-            for (VesselPosition p : positions) {
-                MatchScorer.Result r = MatchScorer.score(cargo, p, ctx);
-                if (r.ruledOut()) {
-                    ruledOut++;
-                    continue;
-                }
-                suitable++;
-                best = Math.max(best, r.score());
-                CargoVesselMatch decision = decided.get(p.getVessel().getId());
-                if (decision == null) untouched++;
-            }
-            out.add(new MatchSummaryResponse(
-                    mapper.toCargoResponse(cargo), suitable, untouched, ruledOut, best));
-        }
-        // Most work first: a cargo with a dozen unworked ships against it is where the day
-        // starts, and one with none needs a different kind of attention than a good score.
-        out.sort(Comparator.comparingInt(MatchSummaryResponse::untouched).reversed()
-                .thenComparing(Comparator.comparingInt(MatchSummaryResponse::bestScore).reversed()));
-        return out;
-    }
-
-    /**
      * Tonnage for one cargo, best first.
      *
      * @param includeRuledOut also return the pairs that failed a check, with the reason. Worth
@@ -240,8 +197,9 @@ public class MatchService {
                                      Map<Long, List<VesselExNameResponse>> exNames) {
         return new MatchResponse(
                 cargo,
+                // Not worked out: nothing on the match list offers to relate the reporter.
                 mapper.toVesselPositionResponse(position,
-                        exNames.getOrDefault(position.getVessel().getId(), List.of())),
+                        exNames.getOrDefault(position.getVessel().getId(), List.of()), null),
                 r.score(), r.ruledOut(), r.unknownCount(),
                 r.checks().stream()
                         .map(c -> new MatchCheckResponse(c.code(), c.label(),
