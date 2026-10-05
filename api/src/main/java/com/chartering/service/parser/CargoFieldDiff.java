@@ -52,7 +52,7 @@ public final class CargoFieldDiff {
         c.field("quantity", "Quantity", null,
                 existing::getQuantity, p.quantity(), existing::setQuantity);
         c.field("quantityTolerance", "Tolerance", null,
-                existing::getQuantityTolerance, Extraction.text(p.quantityTolerance()),
+                existing::getQuantityTolerance, Extraction.text(p.quantityTolerance(), 30),
                 existing::setQuantityTolerance);
         c.field("stowageFactor", "Stowage factor", null,
                 existing::getStowageFactor, p.stowageFactor(), existing::setStowageFactor);
@@ -60,13 +60,13 @@ public final class CargoFieldDiff {
         c.field("loadPort", "Load port", null,
                 existing::getLoadPort, resolved.loadPort(), existing::setLoadPort);
         c.field("loadPortText", "Load port (as written)", null,
-                existing::getLoadPortText, Extraction.text(p.loadPort()), existing::setLoadPortText);
+                existing::getLoadPortText, Extraction.text(p.loadPort(), 160), existing::setLoadPortText);
         c.field("loadArea", "Load area", null,
                 existing::getLoadArea, resolved.loadArea(), existing::setLoadArea);
         c.field("dischargePort", "Discharge port", null,
                 existing::getDischargePort, resolved.dischargePort(), existing::setDischargePort);
         c.field("dischargePortText", "Discharge port (as written)", null,
-                existing::getDischargePortText, Extraction.text(p.dischargePort()),
+                existing::getDischargePortText, Extraction.text(p.dischargePort(), 160),
                 existing::setDischargePortText);
         c.field("dischargeArea", "Discharge area", null,
                 existing::getDischargeArea, resolved.dischargeArea(), existing::setDischargeArea);
@@ -76,7 +76,7 @@ public final class CargoFieldDiff {
         c.field("laycanTo", "Laycan to", null,
                 existing::getLaycanTo, resolved.laycanTo(), existing::setLaycanTo);
         c.field("laycanText", "Laycan (as written)", null,
-                existing::getLaycanText, Extraction.text(p.laycanText()), existing::setLaycanText);
+                existing::getLaycanText, Extraction.text(p.laycanText(), 80), existing::setLaycanText);
 
         c.field("minDwt", "Min DWT", "t", existing::getMinDwt, p.minDwt(), existing::setMinDwt);
         c.field("maxDwt", "Max DWT", "t", existing::getMaxDwt, p.maxDwt(), existing::setMaxDwt);
@@ -93,15 +93,15 @@ public final class CargoFieldDiff {
                 existing::getRequiresImoFitted, p.requiresImoFitted(), existing::setRequiresImoFitted);
 
         c.field("freightIdea", "Freight idea", null,
-                existing::getFreightIdea, Extraction.text(p.freightIdea()), existing::setFreightIdea);
+                existing::getFreightIdea, Extraction.text(p.freightIdea(), 120), existing::setFreightIdea);
         c.field("commission", "Commission", null,
-                existing::getCommission, Extraction.text(p.commission()), existing::setCommission);
+                existing::getCommission, Extraction.text(p.commission(), 60), existing::setCommission);
         c.field("terms", "Terms", null,
-                existing::getTerms, Extraction.text(p.terms()), existing::setTerms);
+                existing::getTerms, Extraction.text(p.terms(), 200), existing::setTerms);
         c.field("loadRate", "Load rate", null,
-                existing::getLoadRate, Extraction.text(p.loadRate()), existing::setLoadRate);
+                existing::getLoadRate, Extraction.text(p.loadRate(), 60), existing::setLoadRate);
         c.field("dischargeRate", "Discharge rate", null,
-                existing::getDischargeRate, Extraction.text(p.dischargeRate()),
+                existing::getDischargeRate, Extraction.text(p.dischargeRate(), 60),
                 existing::setDischargeRate);
         c.field("chartererCompany", "Charterer", null,
                 existing::getChartererCompany, resolved.charterer(), existing::setChartererCompany);
