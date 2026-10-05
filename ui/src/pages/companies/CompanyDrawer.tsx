@@ -41,7 +41,7 @@ import VesselForm from '../vessels/VesselForm';
 import { LinkVesselModal } from '../vessels/VesselOwnerModals';
 import ContactForm from '../contacts/ContactForm';
 import PersonForm from '../people/PersonForm';
-import ReachOutModal from './ReachOutModal';
+import { useComposer } from '../../compose/store';
 import { recordRecent } from '../../recent/store';
 import type {
   CompanyResponse,
@@ -76,8 +76,7 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
   const { confirm } = useCompanyMutations();
 
   const [vesselId, setVesselId] = useState<number>();
-  const [reachingOut, setReachingOut] = useState(false);
-  useEffect(() => setReachingOut(false), [companyId]);
+  const { openReachOut } = useComposer();
 
   // Controlled so opening a person from the dashboard can land on the People tab;
   // as a side effect each company starts on its own initial tab rather than
@@ -135,7 +134,7 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
             {/* Writing to the firm is reading it, not changing it, so it sits beside Edit
                 whether or not this caller can edit — the Intake tab's copy of this drawer
                 included. */}
-            <Button icon={<MailOutlined />} onClick={() => setReachingOut(true)}>
+            <Button icon={<MailOutlined />} onClick={() => openReachOut({ id: c.id, name: c.name })}>
               Reach out
             </Button>
             {onEdit && <Button onClick={() => onEdit(c)}>Edit</Button>}
@@ -294,12 +293,6 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
             editing={editingPerson}
             defaults={personDefaults}
             onClose={() => setPersonFormOpen(false)}
-          />
-          <ReachOutModal
-            open={reachingOut}
-            companyId={c.id}
-            companyName={c.name}
-            onClose={() => setReachingOut(false)}
           />
         </>
       )}

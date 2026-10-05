@@ -2,6 +2,8 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { Spin } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import AppLayout from './components/AppLayout';
+import { ComposerProvider } from './compose/store';
+import ComposerHost from './compose/ComposerHost';
 import Dashboard from './pages/Dashboard';
 import VesselsPage from './pages/vessels/VesselsPage';
 import CargoesPage from './pages/cargoes/CargoesPage';
@@ -62,34 +64,39 @@ function AuthenticatedApp() {
   if (session.isError) return <LoginPage />;
 
   return (
-    <AppLayout username={session.data?.username}>
-      <Routes>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/cargoes" element={<CargoesPage />} />
-        <Route path="/open-fleet" element={<OpenFleetPage />} />
-        {/* Match moved into the records it answers for: tonnage on a cargo's drawer, cargoes
-            on a vessel's. Old bookmarks land on the cargoes, which is where it starts. */}
-        <Route path="/match" element={<Navigate to="/cargoes" replace />} />
-        <Route path="/vessels" element={<VesselsPage />} />
-        <Route path="/companies" element={<CompaniesPage />} />
-        <Route path="/people" element={<PeoplePage />} />
-        {/* Contacts merged into People; keep old links working. */}
-        <Route path="/contacts" element={<Navigate to="/people" replace />} />
-        <Route path="/circulation-lists" element={<CirculationListsPage />} />
-        {/* The single client-side email list became named, DB-backed lists. */}
-        <Route path="/email-list" element={<Navigate to="/circulation-lists" replace />} />
-        <Route path="/circulars" element={<CircularsPage />} />
-        <Route path="/mailbox" element={<MailboxPage />} />
-        {/* Registered whether or not ANALYSIS_ENABLED is on. The nav entry is hidden
-            when it is off, but a bookmarked URL still has to land somewhere that
-            explains itself rather than bouncing to the dashboard. */}
-        <Route path="/analysis" element={<AnalysisPage />} />
-        <Route path="/intake" element={<IntakePage />} />
-        <Route path="/feed" element={<FeedPage />} />
-        <Route path="/history" element={<HistoryPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </AppLayout>
+    // Drafts sit above the layout, not inside a page: a reply half written stays half written
+    // while the rest of the app is used, until it is sent or discarded.
+    <ComposerProvider>
+      <AppLayout username={session.data?.username}>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/cargoes" element={<CargoesPage />} />
+          <Route path="/open-fleet" element={<OpenFleetPage />} />
+          {/* Match moved into the records it answers for: tonnage on a cargo's drawer, cargoes
+              on a vessel's. Old bookmarks land on the cargoes, which is where it starts. */}
+          <Route path="/match" element={<Navigate to="/cargoes" replace />} />
+          <Route path="/vessels" element={<VesselsPage />} />
+          <Route path="/companies" element={<CompaniesPage />} />
+          <Route path="/people" element={<PeoplePage />} />
+          {/* Contacts merged into People; keep old links working. */}
+          <Route path="/contacts" element={<Navigate to="/people" replace />} />
+          <Route path="/circulation-lists" element={<CirculationListsPage />} />
+          {/* The single client-side email list became named, DB-backed lists. */}
+          <Route path="/email-list" element={<Navigate to="/circulation-lists" replace />} />
+          <Route path="/circulars" element={<CircularsPage />} />
+          <Route path="/mailbox" element={<MailboxPage />} />
+          {/* Registered whether or not ANALYSIS_ENABLED is on. The nav entry is hidden
+              when it is off, but a bookmarked URL still has to land somewhere that
+              explains itself rather than bouncing to the dashboard. */}
+          <Route path="/analysis" element={<AnalysisPage />} />
+          <Route path="/intake" element={<IntakePage />} />
+          <Route path="/feed" element={<FeedPage />} />
+          <Route path="/history" element={<HistoryPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </AppLayout>
+      <ComposerHost />
+    </ComposerProvider>
   );
 }

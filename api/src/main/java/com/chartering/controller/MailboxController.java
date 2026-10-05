@@ -6,6 +6,7 @@ import com.chartering.dto.MailLinkRequest;
 import com.chartering.dto.MailMessageDetailResponse;
 import com.chartering.dto.MailMessageResponse;
 import com.chartering.dto.MailComposeRequest;
+import com.chartering.dto.MailPreviewResponse;
 import com.chartering.dto.MailReplyRequest;
 import com.chartering.dto.MailReplyResponse;
 import com.chartering.dto.MailServerFolderResponse;
@@ -119,6 +120,26 @@ public class MailboxController {
             @PathVariable Long id,
             @Valid @RequestBody MailReplyRequest body) {
         return ResponseEntity.status(HttpStatus.CREATED).body(mailReplies.reply(id, body));
+    }
+
+    @PostMapping("/messages/{id}/reply/preview")
+    @Operation(summary = "Show a reply as it would go out, without sending it",
+            description = "The same body the send would take: footer appended, original quoted "
+                    + "unless includeOriginal=false, placeholders merged, HTML sanitised. Works "
+                    + "with sending switched off. Nothing is sent or stored.")
+    public ResponseEntity<MailPreviewResponse> previewReply(
+            @PathVariable Long id,
+            @Valid @RequestBody MailReplyRequest body) {
+        return ResponseEntity.ok(mailReplies.previewReply(id, body));
+    }
+
+    @PostMapping("/compose/preview")
+    @Operation(summary = "Show a new message as it would go out, without sending it",
+            description = "Footer appended, placeholders merged against contactId, copies as the "
+                    + "send would take them. Works with sending switched off. Nothing is sent or "
+                    + "stored.")
+    public ResponseEntity<MailPreviewResponse> previewCompose(@Valid @RequestBody MailComposeRequest body) {
+        return ResponseEntity.ok(mailReplies.previewCompose(body));
     }
 
     @PostMapping("/compose")

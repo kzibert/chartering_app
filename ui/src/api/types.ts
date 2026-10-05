@@ -1364,6 +1364,17 @@ export interface MailComposeRequest {
   contactId?: number;
 }
 
+/** A one-to-one message as the server would send it — footer, quote and merge applied. */
+export interface MailPreviewResponse {
+  fromName?: string;
+  fromAddress?: string;
+  to: string;
+  cc?: string[];
+  subject: string;
+  html: string;
+  footerName?: string;
+}
+
 export interface MailReplyResponse {
   id: number;
   mailMessageId?: number;

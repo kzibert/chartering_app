@@ -33,7 +33,7 @@ import LinkCompanyModal from './LinkCompanyModal';
 import UnconfirmedCompanyMark from './UnconfirmedCompanyMark';
 import MailReference from './MailReference';
 import MessageBody from './MessageBody';
-import ReplyModal from './ReplyModal';
+import { useComposer } from '../../compose/store';
 
 interface Props {
   messageId?: number;
@@ -55,7 +55,7 @@ export default function MessageDrawer({ messageId, onClose, onOpenCompany }: Pro
   const folders = useMailFolders();
   const { setRead, move, unlink } = useMailMessageMutations();
   const [linkOpen, setLinkOpen] = useState(false);
-  const [replyOpen, setReplyOpen] = useState(false);
+  const { openReply } = useComposer();
   // Which of the two records is being written out of this message, if either.
   const [recording, setRecording] = useState<'position' | 'cargo' | null>(null);
   // The menu's open state is held here rather than left to antd, because picking from it
@@ -184,7 +184,7 @@ export default function MessageDrawer({ messageId, onClose, onOpenCompany }: Pro
                 size="small"
                 type="primary"
                 icon={<SendOutlined />}
-                onClick={() => setReplyOpen(true)}
+                onClick={() => data && openReply(data.message)}
               >
                 Reply
               </Button>
@@ -351,7 +351,6 @@ export default function MessageDrawer({ messageId, onClose, onOpenCompany }: Pro
       {/* Fed the message the drawer has already loaded rather than the id: the composer
           quotes nothing itself, but it needs the sender, the subject and the links, and
           fetching them a second time would be a second chance to disagree. */}
-      <ReplyModal open={replyOpen} detail={data} onClose={() => setReplyOpen(false)} />
 
       {/* Both forms are mounted only once there is a message to reference — they are given
           the detail this drawer already holds, so the pane beside the fields is the same
