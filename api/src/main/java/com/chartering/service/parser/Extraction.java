@@ -67,6 +67,21 @@ public record Extraction(
     }
 
     /**
+     * The same, fitted to a column of {@code max} characters, ending in an ellipsis where it
+     * was cut.
+     *
+     * <p>The cargo's "as written" columns are sized for what brokers usually type, and one
+     * broker's terms line ran to 231 characters against a 200 column: the update failed, the
+     * transaction with it, and the merge could not be answered at all. Cutting is the lesser
+     * loss - the full wording is still in the email the cargo links to, one click away - and
+     * the ellipsis says the field was cut rather than letting it pass for the whole of it.
+     */
+    public static String text(String value, int max) {
+        String t = text(value);
+        return t == null || t.length() <= max ? t : t.substring(0, max - 1).stripTrailing() + "\u2026";
+    }
+
+    /**
      * A charterer's requirement as it arrived. Maps onto {@code Cargo} column for column,
      * except {@code charterer}, which is a company name the email used and this application
      * may or may not have a row for.

@@ -1628,26 +1628,28 @@ public class IntakeService {
     private Cargo createCargo(ResolvedCargo r, Arrival arrival) {
         Extraction.ExtractedCargo p = r.parsed();
         Cargo c = new Cargo();
-        c.setCommodity(p.commodity().trim());
+        // Every free-text column fitted to its length, for the reason Extraction.text(s, max)
+        // gives: one long line from a broker must not cost the whole reading.
+        c.setCommodity(Extraction.text(p.commodity(), 120));
         c.setStatus(CargoStatus.OPEN);
         c.setStowageFactor(p.stowageFactor());
 
         c.setQuantity(p.quantity());
         String unit = Extraction.text(p.quantityUnit());
         if (unit != null) c.setQuantityUnit(unit);
-        c.setQuantityTolerance(Extraction.text(p.quantityTolerance()));
+        c.setQuantityTolerance(Extraction.text(p.quantityTolerance(), 30));
         applyQuantityRange(c, p);
 
         c.setLoadPort(r.loadPort());
-        c.setLoadPortText(Extraction.text(p.loadPort()));
+        c.setLoadPortText(Extraction.text(p.loadPort(), 160));
         c.setLoadArea(r.loadArea());
         c.setDischargePort(r.dischargePort());
-        c.setDischargePortText(Extraction.text(p.dischargePort()));
+        c.setDischargePortText(Extraction.text(p.dischargePort(), 160));
         c.setDischargeArea(r.dischargeArea());
 
         c.setLaycanFrom(r.laycanFrom());
         c.setLaycanTo(r.laycanTo());
-        c.setLaycanText(Extraction.text(p.laycanText()));
+        c.setLaycanText(Extraction.text(p.laycanText(), 80));
 
         c.setMaxDraft(p.maxDraft());
         c.setMinDwt(p.minDwt());
@@ -1657,11 +1659,11 @@ public class IntakeService {
         c.setRequiresGrainFitted(p.requiresGrainFitted());
         c.setRequiresImoFitted(p.requiresImoFitted());
 
-        c.setFreightIdea(Extraction.text(p.freightIdea()));
-        c.setCommission(Extraction.text(p.commission()));
-        c.setTerms(Extraction.text(p.terms()));
-        c.setLoadRate(Extraction.text(p.loadRate()));
-        c.setDischargeRate(Extraction.text(p.dischargeRate()));
+        c.setFreightIdea(Extraction.text(p.freightIdea(), 120));
+        c.setCommission(Extraction.text(p.commission(), 60));
+        c.setTerms(Extraction.text(p.terms(), 200));
+        c.setLoadRate(Extraction.text(p.loadRate(), 60));
+        c.setDischargeRate(Extraction.text(p.dischargeRate(), 60));
 
         c.setChartererCompany(r.charterer());
         // The sender is the broker this cargo reached us through. Out of the mail that is the
