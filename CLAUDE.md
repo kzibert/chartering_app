@@ -305,6 +305,13 @@ Sent folder.
   From line, the not-configured warning and the footer picker are `pages/mailbox/SendRoute`,
   shared by both composers so the two cannot drift. Bounced and banned addresses are listed
   but cannot be picked.
+- **A draft outlives the drawer it was started from.** Both composers are views of a draft
+  held in `compose/store` (a context above `AppLayout`), rendered by `compose/ComposerHost`:
+  the draft being written as its window, the rest as chips docked at the foot of the screen.
+  Minimise keeps everything — text, picks, footer — while the rest of the app is used; close
+  discards, asking first when anything was written. Opening the same message's reply or the
+  same firm's Reach out again brings the waiting draft back rather than starting another.
+  Drafts are memory only: nothing on the server, nothing in browser storage.
 - **`mail_replies` is not `mail_messages`.** That table is a mirror of the server, written
   only by the sync; a row this app invented would be a message no folder holds. The reply
   table exists anyway because it is written the moment the send returns (so the day's count

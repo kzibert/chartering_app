@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   App,
   Button,
@@ -7,7 +7,6 @@ import {
   Empty,
   Input,
   List,
-  Modal,
   Select,
   Space,
   Spin,
@@ -15,14 +14,18 @@ import {
   Tooltip,
   Typography,
 } from 'antd';
-import { ArrowLeftOutlined, SendOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, EyeOutlined, SendOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { campaignsApi } from '../../api/campaigns';
 import { useCompanyContacts } from '../../api/hooks';
 import { useMailMessageMutations } from '../../mailbox/store';
 import RichTextEditor from '../../components/RichTextEditor';
 import { FooterPicker, FromLine, SendBlockedAlert, useSendRoute } from '../mailbox/SendRoute';
-import type { ContactResponse } from '../../api/types';
+import ComposerWindow from '../../compose/ComposerWindow';
+import PreviewModal from '../../compose/PreviewModal';
+import { mailboxApi } from '../../api/mailbox';
+import type { ReachOutDraft } from '../../compose/store';
+import type { ContactResponse, MailComposeRequest, MailPreviewResponse } from '../../api/types';
 
 /**
  * Writing to a firm from its own record: pick who, then write.
@@ -40,43 +43,29 @@ import type { ContactResponse } from '../../api/types';
  * same footer library starting on the reply default, and the same row in the day's count. An
  * address that has bounced or been banned is shown, so the list is the whole record, but cannot
  * be picked — nobody writes to a dead address on purpose.
+ *
+ * <p>The picks and the text live in the draft (see {@code compose/store}), so the window can be
+ * minimised while the rest of the app is used — to check the vessel the email is about — and
+ * come back exactly as it was left.
  */
 export default function ReachOutModal({
-  open,
-  companyId,
-  companyName,
-  onClose,
+  draft,
+  onChange,
+  onMinimize,
+  onDone,
 }: {
-  open: boolean;
-  companyId: number;
-  companyName: string;
-  onClose: () => void;
+  draft: ReachOutDraft;
+  onChange: (patch: Partial<ReachOutDraft>) => void;
+  onMinimize: () => void;
+  /** Sent or thrown away: either way the draft is done with. */
+  onDone: () => void;
 }) {
   const { message: toast } = App.useApp();
-  const { data: contacts, isLoading } = useCompanyContacts(open ? companyId : undefined);
+  const { companyId, companyName, step, picked, to, cc, subject, body, footerId } = draft;
+  const { data: contacts, isLoading } = useCompanyContacts(companyId);
   const { compose } = useMailMessageMutations();
   const route = useSendRoute();
   const placeholdersQ = useQuery({ queryKey: ['campaign', 'placeholders'], queryFn: campaignsApi.placeholders });
-
-  const [step, setStep] = useState<'pick' | 'write'>('pick');
-  /** Contact ids in the order they were picked: the first is To, the rest are copied. */
-  const [picked, setPicked] = useState<number[]>([]);
-  const [to, setTo] = useState('');
-  const [cc, setCc] = useState<string[]>([]);
-  const [subject, setSubject] = useState('');
-  const [body, setBody] = useState('');
-  const [footerId, setFooterId] = useState<number | null>(null);
-
-  // Every opening starts clean: the drawer is reused for the next firm, and half a message to
-  // somebody else is the one thing that must never be waiting in this box.
-  useEffect(() => {
-    if (!open) return;
-    setStep('pick');
-    setPicked([]);
-    setSubject('');
-    setBody('');
-    setFooterId(null);
-  }, [open, companyId]);
 
   const emails = useMemo(() => {
     const list = (contacts ?? []).filter((c) => c.contactKind === 'email');
@@ -95,14 +84,11 @@ export default function ReachOutModal({
     c.banned ? 'Banned — not written to from here' : !c.working ? 'Not working — mail to it has bounced' : null;
 
   const toggle = (id: number) =>
-    setPicked((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    onChange({ picked: picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id] });
 
   const write = (ids: number[]) => {
     const addresses = ids.map((id) => byId.get(id)!.contactValue);
-    setPicked(ids);
-    setTo(addresses[0] ?? '');
-    setCc(addresses.slice(1));
-    setStep('write');
+    onChange({ picked: ids, to: addresses[0] ?? '', cc: addresses.slice(1), step: 'write' });
   };
 
   // The merge runs against the contact only while the To is still the address picked for it:
@@ -113,20 +99,24 @@ export default function ReachOutModal({
       ? toContact.id
       : undefined;
 
+  const [preview, setPreview] = useState<(() => Promise<MailPreviewResponse>) | null>(null);
+  const request = (): MailComposeRequest => ({
+    to: to.trim(),
+    cc: cc.map((a) => a.trim()).filter(Boolean),
+    subject: subject.trim(),
+    bodyHtml: body,
+    footerId: footerId ?? null,
+    contactId,
+  });
+  const ready = !!to.trim() && !!subject.trim() && !!body.trim();
+
   const send = () =>
     compose.mutate(
-      {
-        to: to.trim(),
-        cc: cc.map((a) => a.trim()).filter(Boolean),
-        subject: subject.trim(),
-        bodyHtml: body,
-        footerId,
-        contactId,
-      },
+      request(),
       {
         onSuccess: (sent) => {
           toast.success(`Sent to ${sent.toAddress}${cc.length ? ` and ${cc.length} on copy` : ''}`);
-          onClose();
+          onDone();
         },
         onError: (e: unknown) => {
           const detail = (e as { response?: { data?: { message?: string } } })?.response?.data?.message;
@@ -207,14 +197,14 @@ export default function ReachOutModal({
           <FromLine route={route} />
         </Descriptions.Item>
         <Descriptions.Item label="To">
-          <Input value={to} onChange={(e) => setTo(e.target.value)} maxLength={320} />
+          <Input value={to} onChange={(e) => onChange({ to: e.target.value })} maxLength={320} />
         </Descriptions.Item>
         <Descriptions.Item label="CC">
           <Select
             mode="tags"
             style={{ width: '100%' }}
             value={cc}
-            onChange={setCc}
+            onChange={(v) => onChange({ cc: v })}
             tokenSeparators={[',', ';', ' ']}
             placeholder="Nobody on copy"
             options={emails
@@ -228,8 +218,7 @@ export default function ReachOutModal({
                 // Swap the first copy into To — the "make this one the To" of the pick list,
                 // without going back to it.
                 const [first, ...rest] = cc;
-                setCc(to.trim() ? [to.trim(), ...rest] : rest);
-                setTo(first);
+                onChange({ cc: to.trim() ? [to.trim(), ...rest] : rest, to: first });
               }}
             >
               Swap To with the first copy
@@ -241,14 +230,19 @@ export default function ReachOutModal({
       <Input
         size="large"
         value={subject}
-        onChange={(e) => setSubject(e.target.value)}
+        onChange={(e) => onChange({ subject: e.target.value, label: e.target.value || `To ${companyName}` })}
         maxLength={300}
         placeholder="Subject"
       />
 
-      <RichTextEditor value={body} onChange={setBody} placeholders={placeholdersQ.data} minHeight={220} />
+      <RichTextEditor
+        value={body}
+        onChange={(v) => onChange({ body: v })}
+        placeholders={placeholdersQ.data}
+        minHeight={220}
+      />
 
-      <FooterPicker open={open} resetKey={`${open}-${companyId}`} value={footerId} onChange={setFooterId} />
+      <FooterPicker value={footerId} onChange={(id) => onChange({ footerId: id })} />
 
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         The footer is added when it is sent, so it is not in the box above. Placeholders such as{' '}
@@ -258,32 +252,38 @@ export default function ReachOutModal({
   );
 
   return (
-    <Modal
-      open={open}
-      onCancel={onClose}
-      width={860}
-      destroyOnClose
+    <ComposerWindow
       title={step === 'pick' ? `Reach out to ${companyName}` : `Write to ${companyName}`}
+      dirty={picked.length > 0 || body.trim().length > 0 || subject.trim().length > 0}
+      onMinimize={onMinimize}
+      onDiscard={onDone}
       footer={
         step === 'pick' ? (
-          <Space>
-            <Button onClick={onClose}>Cancel</Button>
-            <Button type="primary" disabled={picked.length === 0} onClick={() => write(picked)}>
-              {picked.length === 0
-                ? 'Write'
-                : `Write to ${picked.length} ${picked.length === 1 ? 'address' : 'addresses'}`}
-            </Button>
-          </Space>
+          <Button type="primary" disabled={picked.length === 0} onClick={() => write(picked)}>
+            {picked.length === 0
+              ? 'Write'
+              : `Write to ${picked.length} ${picked.length === 1 ? 'address' : 'addresses'}`}
+          </Button>
         ) : (
           <Space>
-            <Button icon={<ArrowLeftOutlined />} onClick={() => setStep('pick')}>
+            <Button icon={<ArrowLeftOutlined />} onClick={() => onChange({ step: 'pick' })}>
               Addresses
+            </Button>
+            <Button
+              icon={<EyeOutlined />}
+              disabled={!ready}
+              onClick={() => {
+                const body = request();
+                setPreview(() => () => mailboxApi.previewCompose(body));
+              }}
+            >
+              Preview
             </Button>
             <Button
               type="primary"
               icon={<SendOutlined />}
               loading={compose.isPending}
-              disabled={route.blocked || !to.trim() || !subject.trim() || !body.trim()}
+              disabled={route.blocked || !ready}
               onClick={send}
             >
               Send
@@ -293,6 +293,7 @@ export default function ReachOutModal({
       }
     >
       {step === 'pick' ? pickList : composer}
-    </Modal>
+      <PreviewModal load={preview} onClose={() => setPreview(null)} />
+    </ComposerWindow>
   );
 }

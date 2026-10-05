@@ -1,25 +1,23 @@
-import { useEffect, useState } from 'react';
-import { App, Checkbox, Descriptions, Input, Modal, Space, Typography } from 'antd';
-import { SendOutlined } from '@ant-design/icons';
+import { useState } from 'react';
+import { App, Button, Checkbox, Descriptions, Input, Space, Typography } from 'antd';
+import { EyeOutlined, SendOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { campaignsApi } from '../../api/campaigns';
 import RichTextEditor from '../../components/RichTextEditor';
 import { useMailMessageMutations } from '../../mailbox/store';
+import ComposerWindow from '../../compose/ComposerWindow';
+import PreviewModal from '../../compose/PreviewModal';
+import { mailboxApi } from '../../api/mailbox';
+import type { MailPreviewResponse, MailReplyRequest } from '../../api/types';
+import type { ReplyDraft } from '../../compose/store';
 import { FooterPicker, FromLine, SendBlockedAlert, useSendRoute } from './SendRoute';
-import type { MailMessageDetail } from '../../api/types';
 
 interface Props {
-  open: boolean;
-  /** The message being answered, already loaded by the drawer — never fetched again here. */
-  detail?: MailMessageDetail;
-  onClose: () => void;
-}
-
-/** "Re: x" once, however many times a thread has been round. */
-function replySubject(subject?: string): string {
-  const s = (subject ?? '').trim();
-  if (!s) return 'Re:';
-  return /^re\s*:/i.test(s) ? s : `Re: ${s}`;
+  draft: ReplyDraft;
+  onChange: (patch: Partial<ReplyDraft>) => void;
+  onMinimize: () => void;
+  /** Sent or thrown away: either way the draft is done with. */
+  onDone: () => void;
 }
 
 /**
@@ -34,50 +32,38 @@ function replySubject(subject?: string): string {
  * <p>Sending goes through the mailbox over SMTP whatever the Circulars tab is set to. There
  * is no provider choice here and there should not be one: a reply has to come from the
  * address the correspondent wrote to.
+ *
+ * <p>Everything typed lives in the draft (see {@code compose/store}), not here, so the window
+ * can be minimised while the rest of the app is used and come back exactly as it was left.
  */
-export default function ReplyModal({ open, detail, onClose }: Props) {
+export default function ReplyModal({ draft, onChange, onMinimize, onDone }: Props) {
   const { message: toast } = App.useApp();
   const { reply } = useMailMessageMutations();
-
-  const [to, setTo] = useState('');
-  const [subject, setSubject] = useState('');
-  const [body, setBody] = useState('');
-  const [footerId, setFooterId] = useState<number | null>(null);
-  const [includeOriginal, setIncludeOriginal] = useState(true);
-
   const route = useSendRoute();
   const placeholdersQ = useQuery({
     queryKey: ['campaign', 'placeholders'],
     queryFn: campaignsApi.placeholders,
   });
 
-  const m = detail?.message;
+  const { to, subject, body, footerId, includeOriginal } = draft;
+  const [preview, setPreview] = useState<(() => Promise<MailPreviewResponse>) | null>(null);
 
-  // Every open starts from the message, not from whatever the last reply left behind: the
-  // drawer stays mounted between messages, and a half-written answer to somebody else is
-  // the one thing that must never appear in this box.
-  useEffect(() => {
-    if (!open || !m) return;
-    setTo(m.fromAddress);
-    setSubject(replySubject(m.subject));
-    setBody('');
-    setIncludeOriginal(true);
-    setFooterId(null);
-  }, [open, m?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const request = (): MailReplyRequest => ({
+    to: to.trim(),
+    subject: subject.trim(),
+    bodyHtml: body,
+    footerId: footerId ?? null,
+    includeOriginal,
+  });
+  const ready = !!to.trim() && !!subject.trim() && !!body.trim();
 
-  const { blocked } = route;
-
-  const send = () => {
-    if (!m) return;
+  const send = () =>
     reply.mutate(
-      {
-        id: m.id,
-        body: { to: to.trim(), subject: subject.trim(), bodyHtml: body, footerId, includeOriginal },
-      },
+      { id: draft.messageId, body: request() },
       {
         onSuccess: (sent) => {
           toast.success(`Reply sent to ${sent.toAddress}`);
-          onClose();
+          onDone();
         },
         // The error body carries the server's own words — the provider's refusal, or the
         // list of settings still missing — and they are more use than "sending failed".
@@ -88,22 +74,36 @@ export default function ReplyModal({ open, detail, onClose }: Props) {
         },
       },
     );
-  };
 
   return (
-    <Modal
-      open={open}
-      onCancel={onClose}
-      width={860}
-      destroyOnClose
+    <ComposerWindow
       title="Reply"
-      okText="Send reply"
-      okButtonProps={{
-        icon: <SendOutlined />,
-        disabled: blocked || !to.trim() || !subject.trim() || !body.trim(),
-      }}
-      confirmLoading={reply.isPending}
-      onOk={send}
+      dirty={body.trim().length > 0}
+      onMinimize={onMinimize}
+      onDiscard={onDone}
+      footer={
+        <Space>
+          <Button
+            icon={<EyeOutlined />}
+            disabled={!ready}
+            onClick={() => {
+              const body = request();
+              setPreview(() => () => mailboxApi.previewReply(draft.messageId, body));
+            }}
+          >
+            Preview
+          </Button>
+          <Button
+            type="primary"
+            icon={<SendOutlined />}
+            loading={reply.isPending}
+            disabled={route.blocked || !ready}
+            onClick={send}
+          >
+            Send reply
+          </Button>
+        </Space>
+      }
     >
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         <SendBlockedAlert route={route} what="reply" />
@@ -115,30 +115,30 @@ export default function ReplyModal({ open, detail, onClose }: Props) {
           <Descriptions.Item label="To">
             {/* Editable: a broker who writes from a personal address often wants the
                 answer at the desk one, and only the person reading the thread knows. */}
-            <Input value={to} onChange={(e) => setTo(e.target.value)} maxLength={320} />
+            <Input value={to} onChange={(e) => onChange({ to: e.target.value })} maxLength={320} />
           </Descriptions.Item>
         </Descriptions>
 
         <Input
           size="large"
           value={subject}
-          onChange={(e) => setSubject(e.target.value)}
+          onChange={(e) => onChange({ subject: e.target.value, label: e.target.value || 'Reply' })}
           maxLength={300}
           placeholder="Subject"
         />
 
         <RichTextEditor
           value={body}
-          onChange={setBody}
+          onChange={(v) => onChange({ body: v })}
           placeholders={placeholdersQ.data}
           minHeight={220}
         />
 
         <Space wrap>
-          <FooterPicker open={open} resetKey={`${open}-${m?.id}`} value={footerId} onChange={setFooterId} />
+          <FooterPicker value={footerId} onChange={(id) => onChange({ footerId: id })} />
           <Checkbox
             checked={includeOriginal}
-            onChange={(e) => setIncludeOriginal(e.target.checked)}
+            onChange={(e) => onChange({ includeOriginal: e.target.checked })}
           >
             Quote the message below
           </Checkbox>
@@ -150,6 +150,7 @@ export default function ReplyModal({ open, detail, onClose }: Props) {
           this message is linked to.
         </Typography.Text>
       </Space>
-    </Modal>
+      <PreviewModal load={preview} onClose={() => setPreview(null)} />
+    </ComposerWindow>
   );
 }

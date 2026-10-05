@@ -100,32 +100,25 @@ export function FromLine({ route }: { route: Route }) {
 /**
  * The footer, starting on the one flagged as the reply default, with the library a click away.
  *
- * The default is applied when the list arrives and only while nothing is chosen, so it cannot
- * overwrite a footer picked a second earlier; `resetKey` changing (a new message being written)
- * clears the choice and lets it apply again.
+ * <p>Undefined is "not chosen yet" and null is "no footer, chosen" - two different answers, and
+ * the difference is what lets a minimised draft come back as it was left: the default is filled
+ * in only while the value is still undefined, so a footer somebody removed stays removed however
+ * many times the window is hidden and shown again.
  */
 export function FooterPicker({
-  open,
-  resetKey,
   value,
   onChange,
 }: {
-  open: boolean;
-  resetKey: unknown;
-  value: number | null;
+  value: number | null | undefined;
   onChange: (id: number | null) => void;
 }) {
   const [managing, setManaging] = useState(false);
-  const [applied, setApplied] = useState(false);
-  const footersQ = useQuery({ queryKey: ['email-footers'], queryFn: emailFootersApi.list, enabled: open });
+  const footersQ = useQuery({ queryKey: ['email-footers'], queryFn: emailFootersApi.list });
 
-  useEffect(() => setApplied(false), [resetKey]);
   useEffect(() => {
-    if (!open || applied || !footersQ.data) return;
-    const def = footersQ.data.find((f) => f.replyDefault);
-    if (def && value == null) onChange(def.id);
-    setApplied(true);
-  }, [open, applied, footersQ.data]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (value !== undefined || !footersQ.data) return;
+    onChange(footersQ.data.find((f) => f.replyDefault)?.id ?? null);
+  }, [value, footersQ.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
@@ -133,7 +126,7 @@ export function FooterPicker({
         <Select<number | null>
           style={{ minWidth: 220 }}
           placeholder="Footer…"
-          value={value}
+          value={value ?? null}
           loading={footersQ.isLoading}
           onChange={(v) => onChange(v ?? null)}
           options={[

@@ -238,6 +238,24 @@ class MailReplyRoutingTest {
         verify(replies, never()).save(any());
     }
 
+    /**
+     * A preview is for reading the message, so it answers where sending is switched off - which
+     * is exactly where somebody writes one to see what it will look like - and sends nothing.
+     */
+    @Test
+    void aPreviewRendersWithSendingOffAndSendsNothing() {
+        props.setEnabled(false);
+
+        var preview = service.previewCompose(composeRequest());
+
+        assertThat(preview.html()).contains("Please see below.");
+        assertThat(preview.to()).isEqualTo("ops@firm.example");
+        assertThat(preview.cc()).containsExactly("desk@firm.example");
+        assertThat(preview.fromAddress()).isEqualTo(MAILBOX);
+        verify(brevo, never()).send(any(), any(), any(), any(List.class), any(), any(), any(), any());
+        verify(replies, never()).save(any());
+    }
+
     private static MailComposeRequest composeRequest() {
         MailComposeRequest req = new MailComposeRequest();
         req.setTo(" ops@firm.example ");

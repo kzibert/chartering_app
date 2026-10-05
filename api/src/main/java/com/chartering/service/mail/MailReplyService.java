@@ -4,6 +4,7 @@ import com.chartering.config.MailCampaignProperties;
 import com.chartering.dto.CampaignRecipientRequest;
 import com.chartering.dto.EmailFooterResponse;
 import com.chartering.dto.MailComposeRequest;
+import com.chartering.dto.MailPreviewResponse;
 import com.chartering.dto.MailReplyRequest;
 import com.chartering.dto.MailReplyResponse;
 import com.chartering.exception.MailNotConfiguredException;
@@ -135,12 +136,8 @@ public class MailReplyService {
         CircularProvider route = replyProvider();
         JavaMailSenderImpl sender = requireRoute(cfg, route, "reply");
 
-        EmailFooterResponse footer = req.getFooterId() == null ? null : footers.get(req.getFooterId());
-        String composed = compose(req, original, footer);
-        // The same merge circulars get, against the person this message is already linked to.
-        // A footer from the library may well hold {{greeting}} or {{company}}, and it has to
-        // mean here what it means there, or the two would be one library in name only.
-        String html = templates.renderHtml(composed, recipientFor(original, req.getTo()));
+        EmailFooterResponse footer = footerOf(req.getFooterId());
+        String html = renderReply(original, req, footer);
 
         String from = replyFromAddress(cfg);
         // Under SMTP the Message-ID is ours to choose and worth choosing — it is what lets the
@@ -195,14 +192,8 @@ public class MailReplyService {
         List<String> cc = copies(to, req.getCc());
         String subject = req.getSubject().trim();
 
-        EmailFooterResponse footer = req.getFooterId() == null ? null : footers.get(req.getFooterId());
-        StringBuilder composed = new StringBuilder(sanitizer.clean(req.getBodyHtml()));
-        if (footer != null) {
-            composed.append(sanitizer.clean(footer.html()));
-        }
-        Contact picked = req.getContactId() == null ? null
-                : contacts.findById(req.getContactId()).orElse(null);
-        String html = templates.renderHtml(composed.toString(), recipientFor(picked, to));
+        EmailFooterResponse footer = footerOf(req.getFooterId());
+        String html = renderCompose(req, to, footer);
 
         String from = replyFromAddress(cfg);
         String sentMessageId;
@@ -230,6 +221,63 @@ public class MailReplyService {
                 cc.isEmpty() ? "" : " cc " + String.join(", ", cc));
         return new MailReplyResponse(record.getId(), null, record.getToAddress(),
                 record.getSubject(), record.getFooterName(), record.getSentAt());
+    }
+
+    // ---------------------------------------------------------------- previewing
+
+    /**
+     * A reply as it would go out, not sent. Not behind MAIL_ENABLED or the route checks: the
+     * point of a preview is to read the message, and a server that cannot send yet is exactly
+     * where somebody writes one to see what it will look like.
+     */
+    @Transactional(readOnly = true)
+    public MailPreviewResponse previewReply(Long messageId, MailReplyRequest req) {
+        MailMessage original = messages.findById(messageId)
+                .orElseThrow(() -> new ResourceNotFoundException("Message", messageId));
+        EmailFooterResponse footer = footerOf(req.getFooterId());
+        CirculationSettings cfg = settings.circulation();
+        return new MailPreviewResponse(cfg.fromName(), replyFromAddress(cfg), req.getTo().trim(),
+                null, req.getSubject().trim(), renderReply(original, req, footer),
+                footer == null ? null : footer.name());
+    }
+
+    /** A new message as it would go out, not sent — copies deduplicated as the send does it. */
+    @Transactional(readOnly = true)
+    public MailPreviewResponse previewCompose(MailComposeRequest req) {
+        String to = req.getTo().trim();
+        EmailFooterResponse footer = footerOf(req.getFooterId());
+        CirculationSettings cfg = settings.circulation();
+        List<String> cc = copies(to, req.getCc());
+        return new MailPreviewResponse(cfg.fromName(), replyFromAddress(cfg), to,
+                cc.isEmpty() ? null : cc, req.getSubject().trim(), renderCompose(req, to, footer),
+                footer == null ? null : footer.name());
+    }
+
+    // ---------------------------------------------------------------- rendering
+
+    private EmailFooterResponse footerOf(Long footerId) {
+        return footerId == null ? null : footers.get(footerId);
+    }
+
+    /**
+     * Body, footer and quote, merged. The same merge circulars get, against the person this
+     * message is already linked to: a footer from the library may well hold {{greeting}} or
+     * {{company}}, and it has to mean here what it means there, or the two would be one
+     * library in name only. One method for sending and previewing, so the two cannot differ.
+     */
+    private String renderReply(MailMessage original, MailReplyRequest req, EmailFooterResponse footer) {
+        return templates.renderHtml(compose(req, original, footer), recipientFor(original, req.getTo()));
+    }
+
+    /** Body and footer, merged against the To contact. Shared by send and preview. */
+    private String renderCompose(MailComposeRequest req, String to, EmailFooterResponse footer) {
+        StringBuilder composed = new StringBuilder(sanitizer.clean(req.getBodyHtml()));
+        if (footer != null) {
+            composed.append(sanitizer.clean(footer.html()));
+        }
+        Contact picked = req.getContactId() == null ? null
+                : contacts.findById(req.getContactId()).orElse(null);
+        return templates.renderHtml(composed.toString(), recipientFor(picked, to));
     }
 
     /**

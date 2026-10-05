@@ -6,6 +6,7 @@ import type {
   MailMessage,
   MailMessageDetail,
   MailComposeRequest,
+  MailPreviewResponse,
   MailReplyRequest,
   MailReplyResponse,
   MailServerFolder,
@@ -39,6 +40,16 @@ export const mailboxApi = {
     client
       .post<MailReplyResponse>(`/mailbox/messages/${id}/reply`, body)
       .then((r) => r.data),
+
+  /** A reply as it would go out. Sends nothing. */
+  previewReply: (id: number, body: MailReplyRequest) =>
+    client
+      .post<MailPreviewResponse>(`/mailbox/messages/${id}/reply/preview`, body)
+      .then((r) => r.data),
+
+  /** A new message as it would go out. Sends nothing. */
+  previewCompose: (body: MailComposeRequest) =>
+    client.post<MailPreviewResponse>('/mailbox/compose/preview', body).then((r) => r.data),
 
   /** A new message — Reach out on a company's record. Same route and recording as a reply. */
   compose: (body: MailComposeRequest) =>
