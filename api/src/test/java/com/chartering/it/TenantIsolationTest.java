@@ -3,6 +3,8 @@ package com.chartering.it;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -22,6 +24,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * cannot even learn that it does.
  */
 class TenantIsolationTest extends IntegrationTest {
+
+    @Autowired
+    private JdbcTemplate jdbc;
 
     private String north;
     private String south;
@@ -158,6 +163,27 @@ class TenantIsolationTest extends IntegrationTest {
         southView.forEach(s -> {
             if (s.get("id").asLong() == board) assertThat(s.get("intoIntake").asBoolean()).isFalse();
         });
+    }
+
+    @Test
+    void aDesksOwnAliasesAreItsOwn() throws Exception {
+        // Ports are the market's vocabulary and only migrations write them; an empty test
+        // database has none, so one is written the way a migration would.
+        long port = jdbc.queryForObject("insert into ports (name) values (?) returning id", Long.class,
+                "Testport " + UUID.randomUUID().toString().substring(0, 6));
+        String spelling = "NORTHSPELL" + UUID.randomUUID().toString().substring(0, 6);
+
+        long alias = create(north, "/api/v1/vocabulary/aliases",
+                Map.of("kind", "PORT", "targetId", port, "alias", spelling));
+        postAs(north, "/api/v1/vocabulary/aliases", Map.of("kind", "PORT", "targetId", port, "alias", spelling))
+                .andExpect(status().isConflict());
+
+        assertThat(getAs(north, "/api/v1/vocabulary/aliases").andReturn().getResponse().getContentAsString())
+                .contains(spelling);
+        assertThat(getAs(south, "/api/v1/vocabulary/aliases").andReturn().getResponse().getContentAsString())
+                .doesNotContain(spelling);
+        deleteAs(south, "/api/v1/vocabulary/aliases/PORT/" + alias).andExpect(status().isNotFound());
+        deleteAs(north, "/api/v1/vocabulary/aliases/PORT/" + alias).andExpect(status().isNoContent());
     }
 
     private List<String> names(org.springframework.test.web.servlet.ResultActions result) throws Exception {

@@ -6,9 +6,10 @@ import com.chartering.model.TradeAreaDistance;
 import com.chartering.repository.TradeAreaAliasRepository;
 import com.chartering.repository.TradeAreaDistanceRepository;
 import com.chartering.repository.TradeAreaRepository;
+import com.chartering.tenancy.TenantContext;
+import java.util.concurrent.ConcurrentHashMap;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -47,7 +48,13 @@ public class TradeAreaGraph {
     private final TradeAreaAliasRepository aliasRepository;
     private final TradeAreaDistanceRepository distanceRepository;
 
-    private volatile Snapshot snapshot;
+    /**
+     * One snapshot per desk, each the market's vocabulary with that desk's own aliases laid
+     * over it (V35); key 0 is the market's alone, for work bound to no desk. Built on first use
+     * and dropped by {@link #refresh(Long)} when a desk changes its aliases - the market's own
+     * rows change only with a migration, which is a restart.
+     */
+    private final Map<Long, Snapshot> snapshots = new ConcurrentHashMap<>();
 
     /** One area, flattened: no associations, nothing lazy, safe to hand anywhere. */
     public record Area(Long id, String code, String name, Long parentId, String parentCode,
@@ -61,8 +68,17 @@ public class TradeAreaGraph {
                             Map<String, Double> days) {
     }
 
-    @Transactional(readOnly = true)
+    /** Every desk's snapshot, rebuilt on next use. */
     public void refresh() {
+        snapshots.clear();
+    }
+
+    /** One desk's snapshot, after its aliases changed. */
+    public void refresh(Long tenantId) {
+        snapshots.remove(tenantId);
+    }
+
+    private Snapshot load(Long tenantId) {
         List<TradeArea> loaded = areaRepository.findAllByOrderBySortOrderAscNameAsc();
 
         // Parent ids first, off the proxies: getId() on an uninitialised proxy is answered
@@ -87,7 +103,11 @@ public class TradeAreaGraph {
 
         Map<String, Long> byKey = new HashMap<>();
         Map<Long, List<String>> aliasesByArea = new HashMap<>();
-        for (TradeAreaAlias alias : aliasRepository.findAllWithArea()) {
+        // The market's first and the desk's after, with put: where both spell one key the
+        // desk's reading is the one left standing.
+        List<TradeAreaAlias> aliases = new ArrayList<>(aliasRepository.findGlobalWithArea());
+        if (tenantId != 0L) aliases.addAll(aliasRepository.findForTenantWithArea(tenantId));
+        for (TradeAreaAlias alias : aliases) {
             Long areaId = alias.getTradeArea().getId();
             String key = TradeAreaAlias.key(alias.getAlias());
             if (key != null) byKey.put(key, areaId);
@@ -100,16 +120,11 @@ public class TradeAreaGraph {
             days.put(pair(d.getFromAreaId(), d.getToAreaId()), d.getBallastDays().doubleValue());
         }
 
-        snapshot = new Snapshot(areas, List.copyOf(ordered), byKey, aliasesByArea, days);
+        return new Snapshot(areas, List.copyOf(ordered), byKey, aliasesByArea, days);
     }
 
     private Snapshot snap() {
-        Snapshot s = snapshot;
-        if (s == null) {
-            refresh();
-            s = snapshot;
-        }
-        return s;
+        return snapshots.computeIfAbsent(TenantContext.current().orElse(0L), this::load);
     }
 
     private static String pair(Long from, Long to) {

@@ -27,6 +27,7 @@ import FeedSettingsCard from './FeedSettingsCard';
 import MatchSettingsCard from './MatchSettingsCard';
 import OwnAddressesCard from './OwnAddressesCard';
 import MyMailboxCard from './MyMailboxCard';
+import DeskVocabularyCard from './DeskVocabularyCard';
 import { useSession } from '../../auth/session';
 
 /**
@@ -423,6 +424,7 @@ export default function SettingsPage() {
       <FeedSettingsCard />
 
       <MatchSettingsCard />
+      <DeskVocabularyCard />
 
       <WhatsappSettingsCard />
 

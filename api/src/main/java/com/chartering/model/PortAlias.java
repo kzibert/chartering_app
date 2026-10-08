@@ -33,6 +33,14 @@ public class PortAlias {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    /**
+     * Null for the market's own spelling, read by every desk and written only by migrations;
+     * a desk's id for one that desk added, read by that desk alone (V35). Not {@code @TenantId}:
+     * that would hide the global rows from every desk.
+     */
+    @Column(name = "tenant_id")
+    private Long tenantId;
+
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "port_id", nullable = false)
     private Port port;

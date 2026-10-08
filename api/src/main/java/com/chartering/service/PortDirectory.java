@@ -5,9 +5,10 @@ import com.chartering.model.PortAlias;
 import com.chartering.model.TradeArea;
 import com.chartering.repository.PortAliasRepository;
 import com.chartering.repository.PortRepository;
+import com.chartering.tenancy.TenantContext;
+import java.util.concurrent.ConcurrentHashMap;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -62,7 +63,13 @@ public class PortDirectory {
     /** How many consecutive words a scan will join looking for a name. "Bandar Imam Khomeini". */
     private static final int MAX_PHRASE_WORDS = 4;
 
-    private volatile Snapshot snapshot;
+    /**
+     * One snapshot per desk, each the market's vocabulary with that desk's own aliases laid
+     * over it (V35); key 0 is the market's alone, for work bound to no desk. Built on first use
+     * and dropped by {@link #refresh(Long)} when a desk changes its aliases - the market's own
+     * rows change only with a migration, which is a restart.
+     */
+    private final Map<Long, Snapshot> snapshots = new ConcurrentHashMap<>();
 
     /** One berth, flattened: no associations, nothing lazy, safe to hand anywhere. */
     public record Berth(Long id, String name, String country,
@@ -74,8 +81,17 @@ public class PortDirectory {
                             Map<Long, List<String>> aliasesByPort) {
     }
 
-    @Transactional(readOnly = true)
+    /** Every desk's snapshot, rebuilt on next use. */
     public void refresh() {
+        snapshots.clear();
+    }
+
+    /** One desk's snapshot, after its aliases changed. */
+    public void refresh(Long tenantId) {
+        snapshots.remove(tenantId);
+    }
+
+    private Snapshot load(Long tenantId) {
         Map<Long, Berth> berths = new LinkedHashMap<>();
         Map<String, Long> byName = new HashMap<>();
         Set<String> ambiguous = new HashSet<>();
@@ -95,10 +111,15 @@ public class PortDirectory {
         ambiguous.forEach(byName::remove);
 
         // Names first, then aliases layered under them: putIfAbsent is the rule "a port's own
-        // name always beats an alias", written once.
+        // name always beats an alias", written once. The desk's aliases go before the market's,
+        // so where both spell the same key the desk's reading wins - that is what a desk adds
+        // one for.
         Map<String, Long> byKey = new HashMap<>(byName);
         Map<Long, List<String>> aliasesByPort = new HashMap<>();
-        for (PortAlias alias : aliasRepository.findAllWithPort()) {
+        List<PortAlias> aliases = new ArrayList<>();
+        if (tenantId != 0L) aliases.addAll(aliasRepository.findForTenantWithPort(tenantId));
+        aliases.addAll(aliasRepository.findGlobalWithPort());
+        for (PortAlias alias : aliases) {
             Long portId = alias.getPort().getId();
             String key = PortAlias.key(alias.getAlias());
             if (key != null) byKey.putIfAbsent(key, portId);
@@ -106,16 +127,11 @@ public class PortDirectory {
         }
         aliasesByPort.values().forEach(list -> list.sort(String.CASE_INSENSITIVE_ORDER));
 
-        snapshot = new Snapshot(berths, byKey, aliasesByPort);
+        return new Snapshot(berths, byKey, aliasesByPort);
     }
 
     private Snapshot snap() {
-        Snapshot s = snapshot;
-        if (s == null) {
-            refresh();
-            s = snapshot;
-        }
-        return s;
+        return snapshots.computeIfAbsent(TenantContext.current().orElse(0L), this::load);
     }
 
     // --------------------------------------------------------------- reading
