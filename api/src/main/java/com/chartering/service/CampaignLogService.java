@@ -1,6 +1,7 @@
 package com.chartering.service;
 
 import com.chartering.config.MailCampaignProperties;
+import com.chartering.tenancy.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -41,8 +42,22 @@ public class CampaignLogService {
 
     private final MailCampaignProperties props;
 
+    /**
+     * The caller's own log: {@code MAIL_LOG_FILE} with the account's id before the extension.
+     * One file per person because several people's circulars now run side by side, and two
+     * runs appending to one file - and each one rotating it at its start - would leave neither
+     * readable. Work with nobody on the thread writes the configured name itself.
+     */
     private Path path() {
-        return Paths.get(props.getLogFile()).toAbsolutePath();
+        Path base = Paths.get(props.getLogFile()).toAbsolutePath();
+        Long user = TenantContext.currentUser().orElse(null);
+        if (user == null) return base;
+        String name = base.getFileName().toString();
+        int dot = name.lastIndexOf('.');
+        String personal = dot > 0
+                ? name.substring(0, dot) + "-user" + user + name.substring(dot)
+                : name + "-user" + user;
+        return base.resolveSibling(personal);
     }
 
     /**

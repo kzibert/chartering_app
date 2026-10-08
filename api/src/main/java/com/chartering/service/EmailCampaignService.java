@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
@@ -114,37 +115,58 @@ public class EmailCampaignService {
      */
     private final MailReplyService mailReplies;
 
-    private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "email-campaign");
-        t.setDaemon(true);
-        return t;
+    /**
+     * One thread per circular being sent, at most one per person. A pool rather than the single
+     * thread a one-mailbox installation had: two people sending from their own mailboxes are
+     * two independent paced runs, and the second one waiting hours for the first is exactly
+     * the sharing a mailbox per person exists to remove.
+     */
+    private final ExecutorService worker = Executors.newCachedThreadPool(new java.util.concurrent.ThreadFactory() {
+        private final java.util.concurrent.atomic.AtomicInteger n = new java.util.concurrent.atomic.AtomicInteger();
+
+        @Override
+        public Thread newThread(Runnable r) {
+            Thread t = new Thread(r, "email-campaign-" + n.incrementAndGet());
+            t.setDaemon(true);
+            return t;
+        }
     });
-
-    private final AtomicBoolean running = new AtomicBoolean(false);
-
-    /**
-     * How the run in flight has been asked to stop. Pause and cancel are the same
-     * mechanism — stop after the message in hand — and differ only in what is written
-     * afterwards, so they share one flag rather than racing two.
-     */
-    private volatile Stop stopRequested = Stop.NONE;
-    private volatile RunState state = RunState.idle();
-
-    /**
-     * The desk {@link #state} describes. One campaign at a time for the installation - it goes
-     * out through the one mailbox - but its recipients, subject and progress are that desk's
-     * business, so every other desk is shown an idle sender.
-     */
-    private volatile Long stateFor;
 
     /** Nothing asked for; stop and keep the run resumable; stop and close the run. */
     private enum Stop {NONE, PAUSE, CANCEL}
 
     /**
-     * The settings the running campaign started with. Kept so the progress endpoint's ETA
-     * uses the pacing the run is actually honouring rather than whatever Settings says now.
+     * One person's sender: whether their circular is running, how it has been asked to stop,
+     * where it has got to, and the settings it started with.
+     *
+     * <p>Per person because the run goes out through that person's mailbox and nobody else's;
+     * one at a time per person because two runs through one mailbox would share its daily
+     * allowance without either knowing. Found by the person on the thread ({@link #slot()}),
+     * which the worker has too - {@code TenantContext.carry} brings the login along - so the
+     * code that reads and writes these fields did not have to learn whose they are.
      */
-    private volatile SettingsService.CirculationSettings activeSettings;
+    private static final class Slot {
+        final AtomicBoolean running = new AtomicBoolean(false);
+        /**
+         * How the run in flight has been asked to stop. Pause and cancel are the same
+         * mechanism - stop after the message in hand - and differ only in what is written
+         * afterwards, so they share one flag rather than racing two.
+         */
+        volatile Stop stopRequested = Stop.NONE;
+        volatile RunState state = RunState.idle();
+        /**
+         * The settings the running campaign started with. Kept so the progress endpoint's ETA
+         * uses the pacing the run is actually honouring rather than whatever Settings says now.
+         */
+        volatile SettingsService.CirculationSettings activeSettings;
+    }
+
+    private final Map<Long, Slot> slots = new ConcurrentHashMap<>();
+
+    /** The sender of the person on this thread. */
+    private Slot slot() {
+        return slots.computeIfAbsent(TenantContext.requireUser(), id -> new Slot());
+    }
 
     public EmailCampaignService(List<CircularSender> availableSenders,
                                 SmtpCircularSender smtp,
@@ -195,7 +217,7 @@ public class EmailCampaignService {
      */
     @PreDestroy
     void shutdown() {
-        stopRequested = Stop.PAUSE;
+        slots.values().forEach(slot -> slot.stopRequested = Stop.PAUSE);
         worker.shutdown();
         try {
             if (!worker.awaitTermination(SHUTDOWN_GRACE_MS, TimeUnit.MILLISECONDS)) {
@@ -434,17 +456,17 @@ public class EmailCampaignService {
 
     /** Flip the in-memory state over to the new job and hand it to the worker. */
     private CampaignStatusResponse submit(Job job) {
-        activeSettings = job.cfg();
-        stopRequested = Stop.NONE;
-        running.set(true);
-        state = RunState.starting(job);
-        stateFor = TenantContext.require();
+        Slot slot = slot();
+        slot.activeSettings = job.cfg();
+        slot.stopRequested = Stop.NONE;
+        slot.running.set(true);
+        slot.state = RunState.starting(job);
         worker.submit(TenantContext.carry(() -> execute(job)));
         return status();
     }
 
     private void requireNotRunning() {
-        if (running.get()) {
+        if (slot().running.get()) {
             throw new IllegalStateException(
                     "A campaign is already running. Wait for it to finish, or pause or cancel it first.");
         }
@@ -462,10 +484,11 @@ public class EmailCampaignService {
         }
     }
 
+    /** The caller's own sender. Another person's circular is not on this screen. */
     public CampaignStatusResponse status() {
-        boolean mine = isThisDesks();
-        RunState s = mine ? state : RunState.idle();
-        boolean running = mine && this.running.get();
+        Slot slot = slot();
+        RunState s = slot.state;
+        boolean running = slot.running.get();
         return new CampaignStatusResponse(
                 s.state(), running, s.runId(), s.subject(), s.total(), s.sent(), s.failed(), s.skipped(),
                 s.currentEmail(), s.startedAt(), s.finishedAt(), etaSeconds(s), s.lastError(), s.message(),
@@ -475,18 +498,14 @@ public class EmailCampaignService {
                 !running && s.runId() != null && s.sent() + s.failed() < s.total());
     }
 
-    private boolean isThisDesks() {
-        return stateFor != null && stateFor.equals(TenantContext.current().orElse(null));
-    }
-
     /** Every circulation with somebody still to reach, newest first. */
     public List<CirculationRunResponse> resumable() {
         return history.resumable();
     }
 
-    /** The send log is one file for the installation; only the desk whose run it records reads it. */
+    /** The caller's own send log (one file per person, see CampaignLogService). */
     public String logContents() {
-        return isThisDesks() ? campaignLog.read() : "";
+        return campaignLog.read();
     }
 
     /**
@@ -512,13 +531,13 @@ public class EmailCampaignService {
     }
 
     private synchronized CampaignStatusResponse stop(Stop mode, String logLine) {
-        if (!running.get() || !isThisDesks()) {
+        if (!slot().running.get()) {
             throw new IllegalStateException("No campaign is running.");
         }
         // A cancel after a pause still cancels; a pause after a cancel does not un-cancel,
         // because the user has already been told the run was being closed.
-        if (stopRequested != Stop.CANCEL) {
-            stopRequested = mode;
+        if (slot().stopRequested != Stop.CANCEL) {
+            slot().stopRequested = mode;
             campaignLog.append(logLine);
         }
         return status();
@@ -607,7 +626,7 @@ public class EmailCampaignService {
 
         try {
             for (int i = 0; i < recipients.size(); i++) {
-                Stop stop = stopRequested;
+                Stop stop = slot().stopRequested;
                 if (stop != Stop.NONE) {
                     finalState = stoppedState(stop);
                     finalMessage = stoppedMessage(stop, sent, job.total());
@@ -624,7 +643,7 @@ public class EmailCampaignService {
                     int size = Math.min(batchSize, recipients.size() - i);
                     campaignLog.append("PAUSE  run %d of %d done - next %d recipient(s) in %s"
                             .formatted(next - 1, batchCount, size, formatDelay(cfg.batchPauseMs())));
-                    state = state.pausing(next, LocalDateTime.now()
+                    slot().state = slot().state.pausing(next, LocalDateTime.now()
                             .plusNanos(TimeUnit.MILLISECONDS.toNanos(cfg.batchPauseMs())));
                     stop = sleepInterruptible(cfg.batchPauseMs());
                     if (stop != Stop.NONE) {
@@ -633,7 +652,7 @@ public class EmailCampaignService {
                         campaignLog.append(stoppedLogLine(stop));
                         break;
                     }
-                    state = state.resumed();
+                    slot().state = slot().state.resumed();
                     campaignLog.append("RUN    %d of %d - %d recipient(s)".formatted(next, batchCount, size));
                 } else if (i > 0 && (stop = sleepRandomDelay(cfg)) != Stop.NONE) {
                     // Pace before every message except the first, so the run starts immediately
@@ -645,7 +664,7 @@ public class EmailCampaignService {
                 }
 
                 CampaignRecipientRequest r = recipients.get(i);
-                state = state.progress(r.getEmail(), sent, failed, skipped);
+                slot().state = slot().state.progress(r.getEmail(), sent, failed, skipped);
 
                 Attempted outcome = new Attempted();
                 try {
@@ -656,7 +675,7 @@ public class EmailCampaignService {
                     recordSent(record, i, outcome.attempts, cfg.provider());
                 } catch (Exception e) {
                     failed++;
-                    state = state.withError(rootMessage(e));
+                    slot().state = slot().state.withError(rootMessage(e));
                     recordFailed(record, i, outcome.attempts, rootMessage(e), cfg.provider());
 
                     // Credentials rejected mid-run: every remaining message would fail the same
@@ -682,7 +701,7 @@ public class EmailCampaignService {
                     }
                 }
                 done++;
-                state = state.progress(r.getEmail(), sent, failed, skipped);
+                slot().state = slot().state.progress(r.getEmail(), sent, failed, skipped);
             }
 
             if ("COMPLETED".equals(finalState) && failed > 0) {
@@ -700,7 +719,7 @@ public class EmailCampaignService {
             log.error("Campaign failed unexpectedly", t);
         } finally {
             campaignLog.endRun(finalState, sent, failed, skipped);
-            state = state.finished(finalState, sent, failed, skipped, finalMessage);
+            slot().state = slot().state.finished(finalState, sent, failed, skipped, finalMessage);
             // Closed inside the finally so an unexpected throw still leaves the run with an
             // outcome instead of a history entry stuck on RUNNING for ever. A pause is the one
             // outcome that leaves the run open: it is exactly what makes it resumable later.
@@ -710,14 +729,14 @@ public class EmailCampaignService {
                         history.pause(record.runId(), sent, failed, skipped, finalMessage);
                     } else {
                         history.finish(record.runId(), finalState, sent, failed, skipped,
-                                finalMessage, state.lastError());
+                                finalMessage, slot().state.lastError());
                     }
                 } catch (RuntimeException e) {
                     log.warn("Could not close circulation run {}", record.runId(), e);
                 }
             }
-            running.set(false);
-            stopRequested = Stop.NONE;
+            slot().running.set(false);
+            slot().stopRequested = Stop.NONE;
             log.info("Campaign finished: {} - {} message(s) attempted this sitting, sent={} failed={} skipped={}",
                     finalState, done, sent, failed, skipped);
         }
@@ -924,19 +943,19 @@ public class EmailCampaignService {
     private Stop sleepInterruptible(long totalMs) {
         long remaining = totalMs;
         while (remaining > 0) {
-            if (stopRequested != Stop.NONE) {
-                return stopRequested;
+            if (slot().stopRequested != Stop.NONE) {
+                return slot().stopRequested;
             }
             long slice = Math.min(CANCEL_POLL_MS, remaining);
             try {
                 TimeUnit.MILLISECONDS.sleep(slice);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                return stopRequested != Stop.NONE ? stopRequested : Stop.PAUSE;
+                return slot().stopRequested != Stop.NONE ? slot().stopRequested : Stop.PAUSE;
             }
             remaining -= slice;
         }
-        return stopRequested;
+        return slot().stopRequested;
     }
 
     private void requireConfigured() {
@@ -1002,12 +1021,12 @@ public class EmailCampaignService {
      * and an estimate that ignored them would be wrong by hours.
      */
     private Long etaSeconds(RunState s) {
-        if (!running.get() || s.total() <= 0) {
+        if (!slot().running.get() || s.total() <= 0) {
             return null;
         }
         int done = s.sent() + s.failed();
         int remaining = Math.max(0, s.total() - done);
-        SettingsService.CirculationSettings cfg = activeSettings != null ? activeSettings : settings.circulation();
+        SettingsService.CirculationSettings cfg = slot().activeSettings != null ? slot().activeSettings : settings.circulation();
         long ms = remaining * cfg.averageDelayMs();
         ms += (long) Math.max(0, s.batchCount() - s.batch()) * cfg.batchPauseMs();
         if (s.paused() && s.nextBatchAt() != null) {

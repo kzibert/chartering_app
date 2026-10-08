@@ -35,6 +35,14 @@ public class CirculationRun {
     @Column(name = "tenant_id", nullable = false, updatable = false)
     private Long tenantId;
 
+    /**
+     * Who sent it. The desk reads every run; only this person resumes one, since the rest of it
+     * would go out through their mailbox. Null only on runs from before accounts, until
+     * MailOwnership assigns them.
+     */
+    @Column(name = "sent_by_user_id")
+    private Long sentByUserId;
+
     /** The subject before the merge — still carrying its {{placeholders}}. */
     @Column(name = "subject_template", nullable = false)
     private String subjectTemplate;

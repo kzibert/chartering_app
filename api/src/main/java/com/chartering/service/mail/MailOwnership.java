@@ -17,7 +17,8 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Hands the mailbox that existed before accounts did to the account it belongs to.
+ * Hands the mailbox - and the circulars sent from it - that existed before accounts did to
+ * the account they belong to.
  *
  * <p>Every message, folder, rule, cursor and reply synced or written before V32 has no owner:
  * there was one mailbox and nobody to own it. They are the server mailbox's, so they go to its
@@ -61,6 +62,16 @@ public class MailOwnership implements ApplicationRunner {
                         .setParameter("owner", owner.get())
                         .executeUpdate();
             }
+            claimed += entityManager
+                    .createQuery("update CirculationRun r set r.sentByUserId = :owner where r.sentByUserId is null")
+                    .setParameter("owner", owner.get())
+                    .executeUpdate();
+            // The current list only: saved lists are the desk's and stay without an owner.
+            claimed += entityManager
+                    .createQuery("update CirculationList l set l.ownerUserId = :owner "
+                            + "where l.draft = true and l.ownerUserId is null")
+                    .setParameter("owner", owner.get())
+                    .executeUpdate();
             if (claimed > 0) {
                 log.info("Mail ownership: {} row(s) from before accounts now belong to user {}", claimed, owner.get());
             }

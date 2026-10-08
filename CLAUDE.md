@@ -102,8 +102,8 @@ Three things bite here:
   `V25__add_intake_decisions.sql` and `V26__add_web_intake.sql` and
   `V27__capture_web_into_analysis.sql` and `V28__add_intake_review_history.sql` and
   `V29__add_mail_reply_cc.sql` and `V30__add_tenants_and_users.sql` and
-  `V31__scope_data_to_tenants.sql` and `V32__add_personal_mailboxes.sql` exist; the next
-  one is V33.
+  `V31__scope_data_to_tenants.sql` and `V32__add_personal_mailboxes.sql` and
+  `V33__add_personal_circulation.sql` exist; the next one is V34.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
@@ -179,6 +179,18 @@ but the owner. The Mailbox code names the owner explicitly instead (`MailMessage
 the owner-parameterised counts), and a colleague may open a message only read-only and only
 where `MailMessageRepository.isSharedSource` says the desk shares it — the "original email"
 buttons on cargoes, positions and Intake.
+
+**Circulars are sent per person** (V33). `EmailCampaignService` keeps one `Slot` per account —
+running flag, stop request, progress, the settings the run started with — found by the person
+on the thread, which the worker has too because `TenantContext.carry` brings the login. The
+worker is a pool, so two people's paced runs proceed side by side; one person still has one
+run at a time, because two runs through one mailbox would share its allowance unawares. The
+send log is one file per account (`MAIL_LOG_FILE` with `-user<id>` before the extension). A
+run records `sent_by_user_id`: the desk reads all of History, only the sender resumes a run
+(the rest would go out through their mailbox), and anybody may send it again as a new run of
+their own. **The current list is per person** (`circulation_lists.owner_user_id`, set on the
+draft only); saved lists are the desk's prepared documents and have no owner. Somebody else's
+current list answers 404.
 
 ### The domain: companies, people, contacts
 

@@ -12,6 +12,7 @@ import com.chartering.model.CirculationListEntry;
 import com.chartering.model.Contact;
 import com.chartering.repository.CirculationListRepository;
 import com.chartering.repository.ContactRepository;
+import com.chartering.tenancy.TenantContext;
 import jakarta.validation.Validator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -277,16 +278,24 @@ public class CirculationListService {
 
     // ---------------------------------------------------------------- internals
 
+    /** The caller's own current list, made on first use. */
     private CirculationList draft() {
-        return lists.findByDraftTrue().orElseGet(() -> {
+        Long me = TenantContext.requireUser();
+        return lists.findByDraftTrueAndOwnerUserId(me).orElseGet(() -> {
             CirculationList l = new CirculationList();
             l.setDraft(true);
+            l.setOwnerUserId(me);
             return lists.save(l);
         });
     }
 
+    /**
+     * A saved list, or the caller's own current one. Somebody else's current list is their
+     * scratch pad and answers 404, as any id the caller has no business with does.
+     */
     private CirculationList find(Long id) {
         return lists.findById(id)
+                .filter(l -> !l.isDraft() || TenantContext.requireUser().equals(l.getOwnerUserId()))
                 .orElseThrow(() -> new ResourceNotFoundException("Circulation list", id));
     }
 
