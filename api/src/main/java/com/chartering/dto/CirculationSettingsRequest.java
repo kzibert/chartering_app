@@ -1,9 +1,6 @@
 package com.chartering.dto;
 
-import jakarta.validation.constraints.Email;
-import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotBlank;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -20,19 +17,19 @@ public class CirculationSettingsRequest {
     /**
      * Envelope From. Providers reject a From that is not the authenticated mailbox or one
      * of its verified aliases, so this is editable but not free.
+     *
+     * <p>This and the SMTP fields are the server mailbox's, and only its owner sets them; for
+     * anybody else they are ignored. So they are checked by {@code SettingsService} for that
+     * one caller rather than by bean validation for everyone, which would refuse a colleague's
+     * pacing change for lacking a From that is not theirs to send.
      */
-    @NotBlank(message = "a From address is required")
-    @Email(message = "not a valid email address")
     private String fromAddress;
 
     /** Display name recipients see. Optional — blank sends the bare address. */
     private String fromName;
 
-    @NotBlank(message = "SMTP host is required")
     private String smtpHost;
 
-    @Min(value = 1, message = "SMTP port must be between 1 and 65535")
-    @Max(value = 65535, message = "SMTP port must be between 1 and 65535")
     private int smtpPort;
 
     /** Shortest gap between two messages; the actual gap is random in [min, max]. */

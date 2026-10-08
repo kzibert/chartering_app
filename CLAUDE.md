@@ -104,8 +104,8 @@ Three things bite here:
   `V29__add_mail_reply_cc.sql` and `V30__add_tenants_and_users.sql` and
   `V31__scope_data_to_tenants.sql` and `V32__add_personal_mailboxes.sql` and
   `V33__add_personal_circulation.sql` and `V34__add_feed_intake_subscriptions.sql` and
-  `V35__add_desk_aliases.sql` and `V36__enable_row_level_security.sql` exist; the next one
-  is V37.
+  `V35__add_desk_aliases.sql` and `V36__enable_row_level_security.sql` and
+  `V37__add_personal_brevo_keys.sql` exist; the next one is V38.
 - **Since V36, a migration that reads or writes a desk's rows starts with
   `SET LOCAL app.rls_bypass = 'on';`.** Row-level security is forced on every desk table and
   migrations run as the role it binds; without the line such a migration sees no rows and
@@ -188,8 +188,18 @@ the IMAP sync and the circulation settings' From and SMTP host all ask it, so th
 compose and circular paths did not change shape. The poller reads every mailbox in turn,
 each inside `TenantContext.runAs(tenant, user, …)`, so what it stores is the owner's. Rows
 written before accounts are handed to the server mailbox's owner at startup
-(`MailOwnership`). **The Brevo key is desk 1's** (`EnvironmentBrevo`); other desks see it as
-missing. **Feed sources are installation-wide** — fetched once for everybody, added, edited and
+(`MailOwnership`). **A Brevo key is a person's too** (V37, `brevo_accounts`):
+`service/mail/BrevoAccounts` answers it the way `MailAccounts` answers the mailbox — a key saved
+on Settings › My Brevo account (encrypted, with an optional verified sender), else
+`BREVO_API_KEY` for the server mailbox's owner alone. Circulars, Brevo-routed replies and the
+"sent today" Brevo figures all ask it. **The circulation From and SMTP endpoint are the
+sender's, not the desk's**: their mailbox's, or their Brevo sender under Brevo; the stored
+`mail.fromAddress`/`mail.smtp.*` keys and `MAIL_FROM`/`MAIL_HOST` are read and written only for
+the server mailbox's owner (`SettingsService.identitySource`). Somebody with neither has no From
+— never the server's. **Browser storage is per person too**: every `chartering.*` localStorage key
+goes through `auth/store.userStorageKey` (the circular draft, the recently-opened trail, saved
+filters), and the query cache is cleared whenever the logged-in person changes, so the next login
+on a shared browser never renders the last one's state. **Feed sources are installation-wide** — fetched once for everybody, added, edited and
 removed by a platform administrator — but **which boards a desk reads into Intake is the
 desk's** (`feed_intake_subscriptions`, V34, replacing `feed_sources.into_intake`), switched by
 its administrators on the Feed tab. Every query asking "boards read into Intake" does so

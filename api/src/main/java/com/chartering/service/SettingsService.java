@@ -4,6 +4,7 @@ import com.chartering.config.BrevoProperties;
 import com.chartering.config.MailCampaignProperties;
 import com.chartering.dto.CirculationSettingsRequest;
 import com.chartering.model.AppSetting;
+import com.chartering.service.mail.BrevoAccounts;
 import com.chartering.service.mail.CircularProvider;
 import com.chartering.service.mail.MailAccounts;
 import jakarta.annotation.PostConstruct;
@@ -35,8 +36,9 @@ import java.util.stream.Collectors;
  * nothing has to be seeded for the app to work.
  *
  * <p><b>Credentials are not settings.</b> MAIL_USERNAME / MAIL_PASSWORD and BREVO_API_KEY
- * stay in the environment: this table is served to the browser, which is the wrong place
- * for a mailbox password or an API key with full send rights. The From identity is
+ * stay in the environment, and a person's own mailbox password and Brevo key are encrypted
+ * rows of their own ({@link MailAccounts}, {@link BrevoAccounts}): this table is served to the
+ * browser, which is the wrong place for a mailbox password or an API key with full send rights. The From identity is
  * adjustable because it is not a secret — though a provider will still reject a From that
  * is not the authenticated mailbox or a verified sender.
  *
@@ -50,6 +52,15 @@ import java.util.stream.Collectors;
  *
  * <p>The mailbox flow keeps the original unprefixed keys, so an installation that was
  * already tuned before Brevo existed carries its settings forward untouched.
+ *
+ * <h2>The From and the SMTP endpoint are a person's, not the desk's</h2>
+ * <p>Pacing is how a desk circulates. Who a circular is <em>from</em> is whoever sends it: their
+ * own mailbox's address and server ({@link MailAccounts}), or under Brevo the sender they saved
+ * beside their key ({@link BrevoAccounts}). The stored From/SMTP keys and the {@code MAIL_FROM}
+ * / {@code MAIL_HOST} baseline describe the server's mailbox, so they are read and written for
+ * the account that owns it and nobody else - before, everybody without a mailbox of their own
+ * was shown the server mailbox's identity as theirs, on every desk. Somebody with neither a
+ * mailbox nor a Brevo sender has no From, which is what the missing-settings lists then say.
  */
 @Service
 @RequiredArgsConstructor
@@ -97,6 +108,7 @@ public class SettingsService {
 
     private final SettingsStore repository;
     private final MailAccounts mailAccounts;
+    private final BrevoAccounts brevoAccounts;
     private final MailCampaignProperties props;
     private final BrevoProperties brevo;
     private final JavaMailSender mailSender;
@@ -156,20 +168,10 @@ public class SettingsService {
         Map<String, String> stored = repository.findByKeyIn(keysFor(provider)).stream()
                 .collect(Collectors.toMap(AppSetting::getKey, AppSetting::getValue));
         CirculationSettings defaults = circulationDefaults(provider);
-        // A personal mailbox sends as itself: its own address and its own server. The desk's
-        // From and SMTP endpoint are the server mailbox's, and a provider refuses a From its
-        // login does not own. Pacing stays the desk's either way.
-        Optional<MailAccounts.Mailbox> own = mailAccounts.current().filter(m -> !m.environment());
+        Identity id = identity(provider, stored);
         return new CirculationSettings(
                 provider,
-                own.map(MailAccounts.Mailbox::address)
-                        .orElseGet(() -> stored.getOrDefault(FROM_ADDRESS, defaults.fromAddress())),
-                own.map(MailAccounts.Mailbox::displayName).filter(n -> !n.isBlank())
-                        .orElseGet(() -> stored.getOrDefault(FROM_NAME, defaults.fromName())),
-                own.map(MailAccounts.Mailbox::smtpHost)
-                        .orElseGet(() -> stored.getOrDefault(SMTP_HOST, defaults.smtpHost())),
-                own.map(MailAccounts.Mailbox::smtpPort)
-                        .orElseGet(() -> parse(stored, SMTP_PORT, defaults.smtpPort(), Integer::parseInt)),
+                id.fromAddress(), id.fromName(), id.smtpHost(), id.smtpPort(),
                 parse(stored, pacingKey(provider, MIN_DELAY_MS), defaults.minDelayMs(), Long::parseLong),
                 parse(stored, pacingKey(provider, MAX_DELAY_MS), defaults.maxDelayMs(), Long::parseLong),
                 parse(stored, pacingKey(provider, MAX_RECIPIENTS), defaults.maxRecipientsPerCampaign(), Integer::parseInt),
@@ -182,18 +184,69 @@ public class SettingsService {
     }
 
     /**
-     * The configured baseline for one provider. The From identity and SMTP endpoint come
-     * from the mail environment either way; only the pacing differs, and it differs because
-     * the two providers are protecting different things — see {@link BrevoProperties}.
+     * The configured baseline for one provider. The identity is the caller's with nothing
+     * stored over it - for the server mailbox's owner, the mail environment. Only the pacing
+     * differs between providers, because the two are protecting different things - see
+     * {@link BrevoProperties}.
      */
     public CirculationSettings circulationDefaults(CircularProvider provider) {
         boolean viaBrevo = provider == CircularProvider.BREVO;
+        Identity id = identity(provider, Map.of());
         return new CirculationSettings(provider,
-                props.getFromAddress(), props.getFromName(), defaultHost, defaultPort,
+                id.fromAddress(), id.fromName(), id.smtpHost(), id.smtpPort(),
                 viaBrevo ? brevo.getMinDelayMs() : props.getMinDelayMs(),
                 viaBrevo ? brevo.getMaxDelayMs() : props.getMaxDelayMs(),
                 viaBrevo ? brevo.getMaxRecipientsPerCampaign() : props.getMaxRecipientsPerCampaign(),
                 viaBrevo ? brevo.getBatchPauseMs() : props.getBatchPauseMs());
+    }
+
+    /** Where the caller's From comes from. The settings screen edits it only for {@code SERVER}. */
+    @Transactional(readOnly = true)
+    public IdentitySource identitySource() {
+        return identity(provider(), Map.of()).source();
+    }
+
+    /**
+     * Who the caller sends as, and through which server.
+     *
+     * <p>Under Brevo a saved sender wins, because Brevo refuses any From that is not verified
+     * on that account, whatever the mailbox is. Otherwise it is the mailbox: a personal one
+     * sends as itself (a provider refuses a From its login does not own), and the server's
+     * reads the stored keys over {@code MAIL_FROM}/{@code MAIL_HOST} as it always did.
+     */
+    private Identity identity(CircularProvider provider, Map<String, String> stored) {
+        Optional<MailAccounts.Mailbox> mailbox = mailAccounts.current();
+        Identity base;
+        if (mailbox.isPresent() && mailbox.get().environment()) {
+            base = new Identity(IdentitySource.SERVER,
+                    stored.getOrDefault(FROM_ADDRESS, props.getFromAddress()),
+                    stored.getOrDefault(FROM_NAME, props.getFromName()),
+                    stored.getOrDefault(SMTP_HOST, defaultHost),
+                    parse(stored, SMTP_PORT, defaultPort, Integer::parseInt));
+        } else if (mailbox.isPresent()) {
+            MailAccounts.Mailbox m = mailbox.get();
+            base = new Identity(IdentitySource.MAILBOX, m.address(),
+                    m.displayName() == null ? "" : m.displayName(),
+                    m.smtpHost(), m.smtpPort() == null ? 0 : m.smtpPort());
+        } else {
+            base = new Identity(IdentitySource.NONE, null, "", null, 0);
+        }
+        if (provider != CircularProvider.BREVO) {
+            return base;
+        }
+        return brevoAccounts.current()
+                .filter(b -> b.senderAddress() != null && !b.senderAddress().isBlank())
+                .map(b -> new Identity(IdentitySource.BREVO, b.senderAddress(),
+                        b.senderName() != null ? b.senderName() : base.fromName(),
+                        base.smtpHost(), base.smtpPort()))
+                .orElse(base);
+    }
+
+    /** Where a From comes from: the server's mailbox, a personal one, a Brevo sender, or nowhere. */
+    public enum IdentitySource { SERVER, MAILBOX, BREVO, NONE }
+
+    private record Identity(IdentitySource source, String fromAddress, String fromName,
+                            String smtpHost, int smtpPort) {
     }
 
     /**
@@ -308,14 +361,23 @@ public class SettingsService {
         return circulation();
     }
 
+    /**
+     * Save the pacing, and the From/SMTP fields too where they are the caller's to set - the
+     * server mailbox's owner. Anybody else's identity comes from their own mailbox or Brevo
+     * sender, so what the form sends for it is ignored rather than filed against the desk,
+     * where it would have become the next colleague's From.
+     */
     @Transactional
     public CirculationSettings updateCirculation(CirculationSettingsRequest req) {
-        validate(req);
+        boolean server = identitySource() == IdentitySource.SERVER;
+        validate(req, server);
         CircularProvider provider = provider();
-        put(FROM_ADDRESS, req.getFromAddress().trim());
-        put(FROM_NAME, req.getFromName() == null ? "" : req.getFromName().trim());
-        put(SMTP_HOST, req.getSmtpHost().trim());
-        put(SMTP_PORT, String.valueOf(req.getSmtpPort()));
+        if (server) {
+            put(FROM_ADDRESS, req.getFromAddress().trim());
+            put(FROM_NAME, req.getFromName() == null ? "" : req.getFromName().trim());
+            put(SMTP_HOST, req.getSmtpHost().trim());
+            put(SMTP_PORT, String.valueOf(req.getSmtpPort()));
+        }
         put(pacingKey(provider, MIN_DELAY_MS), String.valueOf(req.getMinDelayMs()));
         put(pacingKey(provider, MAX_DELAY_MS), String.valueOf(req.getMaxDelayMs()));
         put(pacingKey(provider, MAX_RECIPIENTS), String.valueOf(req.getMaxRecipientsPerCampaign()));
@@ -337,7 +399,10 @@ public class SettingsService {
     @Transactional
     public CirculationSettings resetCirculation() {
         CircularProvider provider = provider();
-        repository.deleteByKeyIn(keysFor(provider));
+        // The stored From/SMTP keys are the server mailbox's; anybody else resetting their
+        // pacing must not take its owner's identity with it.
+        repository.deleteByKeyIn(identitySource() == IdentitySource.SERVER
+                ? keysFor(provider) : pacingKeys(provider));
         log.info("Circulation settings reset to the configured defaults for {}", provider.label());
         return circulation();
     }
@@ -359,19 +424,9 @@ public class SettingsService {
      * the relationship between two fields: a max below the min would make the random gap
      * meaningless, and the sender would silently clamp it instead of telling anyone.
      */
-    private void validate(CirculationSettingsRequest req) {
-        if (req.getFromAddress() == null || req.getFromAddress().isBlank()) {
-            throw new IllegalArgumentException("A From address is required.");
-        }
-        if (!EMAIL.matcher(req.getFromAddress().trim()).matches()) {
-            throw new IllegalArgumentException(
-                    "\"" + req.getFromAddress().trim() + "\" is not a valid email address.");
-        }
-        if (req.getSmtpHost() == null || req.getSmtpHost().isBlank()) {
-            throw new IllegalArgumentException("SMTP host is required.");
-        }
-        if (req.getSmtpPort() < 1 || req.getSmtpPort() > 65535) {
-            throw new IllegalArgumentException("SMTP port must be between 1 and 65535.");
+    private void validate(CirculationSettingsRequest req, boolean identity) {
+        if (identity) {
+            validateIdentity(req);
         }
         if (req.getMinDelayMs() < 0 || req.getMaxDelayMs() < 0) {
             throw new IllegalArgumentException("Delays cannot be negative.");
@@ -392,6 +447,22 @@ public class SettingsService {
         }
         if (req.getBatchPauseMs() > MAX_DELAY_ALLOWED_MS) {
             throw new IllegalArgumentException("A pause of over 24 hours between runs is not sensible.");
+        }
+    }
+
+    private static void validateIdentity(CirculationSettingsRequest req) {
+        if (req.getFromAddress() == null || req.getFromAddress().isBlank()) {
+            throw new IllegalArgumentException("A From address is required.");
+        }
+        if (!EMAIL.matcher(req.getFromAddress().trim()).matches()) {
+            throw new IllegalArgumentException(
+                    "\"" + req.getFromAddress().trim() + "\" is not a valid email address.");
+        }
+        if (req.getSmtpHost() == null || req.getSmtpHost().isBlank()) {
+            throw new IllegalArgumentException("SMTP host is required.");
+        }
+        if (req.getSmtpPort() < 1 || req.getSmtpPort() > 65535) {
+            throw new IllegalArgumentException("SMTP port must be between 1 and 65535.");
         }
     }
 

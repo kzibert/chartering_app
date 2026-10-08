@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { onOwnerChange, userStorageKey } from '../auth/store';
 
 /**
  * "Recently opened" trail for the dashboard. Client-side only, mirrored to
@@ -27,7 +28,7 @@ export interface RecentEntry {
 
 function load(): RecentEntry[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(userStorageKey(STORAGE_KEY));
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? (parsed as RecentEntry[]) : [];
   } catch {
@@ -38,10 +39,17 @@ function load(): RecentEntry[] {
 let entries: RecentEntry[] = load();
 const listeners = new Set<() => void>();
 
+// The trail is the logged-in person's (see userStorageKey): a new login reads its own, rather
+// than opening on the dashboard with the last person's companies and people on it.
+onOwnerChange(() => {
+  entries = load();
+  listeners.forEach((l) => l());
+});
+
 function commit(next: RecentEntry[]) {
   entries = next;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    localStorage.setItem(userStorageKey(STORAGE_KEY), JSON.stringify(entries));
   } catch {
     /* storage full or disabled — the trail still works for this visit */
   }
