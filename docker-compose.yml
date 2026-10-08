@@ -62,10 +62,12 @@ services:
       # around the clock, and the database never gets to sleep.
       DB_HEALTH_CHECK: ${DB_HEALTH_CHECK:-true}
       # ---- the login ----
-      # One account, and until AUTH_PASSWORD (or AUTH_PASSWORD_HASH) is set the api starts
-      # normally and refuses every login, saying so in its log. There is deliberately no
-      # working default: a default password on something reachable from a network is the
-      # same as no password.
+      # Accounts live in the database. AUTH_USERNAME / AUTH_PASSWORD (or AUTH_PASSWORD_HASH)
+      # create the first one - a platform administrator - when there are none, and until
+      # they are set an empty installation starts normally and refuses every login, saying
+      # so in its log. There is deliberately no working default: a default password on
+      # something reachable from a network is the same as no password. AUTH_RESET_PASSWORD
+      # re-applies them to that account for one restart.
       #
       # JWT_SECRET signs the tokens. Left unset the api generates a key at boot, which
       # works but logs you out on every `up -d --force-recreate` - fine locally, wrong
@@ -77,6 +79,7 @@ services:
       AUTH_TOKEN_TTL_MINUTES: ${AUTH_TOKEN_TTL_MINUTES:-720}
       AUTH_MAX_FAILED_ATTEMPTS: ${AUTH_MAX_FAILED_ATTEMPTS:-5}
       AUTH_LOCKOUT_SECONDS: ${AUTH_LOCKOUT_SECONDS:-300}
+      AUTH_RESET_PASSWORD: ${AUTH_RESET_PASSWORD:-false}
       # Only matters when the browser reaches the api on a different origin than it loaded
       # from. Behind the ui's nginx proxy it never does.
       CORS_ORIGINS: ${CORS_ORIGINS:-*}

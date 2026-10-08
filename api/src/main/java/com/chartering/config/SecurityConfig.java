@@ -1,5 +1,6 @@
 package com.chartering.config;
 
+import com.chartering.security.AuthenticatedUser;
 import com.chartering.security.JwtAuthFilter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletResponse;
@@ -83,7 +84,19 @@ public class SecurityConfig {
                         // Spring's own error dispatch. Without this a 404 inside a protected
                         // path comes back as 401, which is a confusing thing to debug.
                         .requestMatchers("/error").permitAll()
-                        .anyRequest().authenticated())
+                        // Answered for a session that must change its password first, and
+                        // the only two that are: such a session holds a password somebody
+                        // else chose, and gets nothing until it has chosen its own.
+                        .requestMatchers("/api/v1/auth/me", "/api/v1/auth/change-password")
+                        .authenticated()
+                        // Accounts and desks. Which desk an administrator may act on is the
+                        // service's question (UserAdminService); this only says who may ask.
+                        .requestMatchers("/api/v1/admin/tenants", "/api/v1/admin/tenants/**")
+                        .hasRole("PLATFORM_ADMIN")
+                        .requestMatchers("/api/v1/admin/**").hasRole("TENANT_ADMIN")
+                        // Everything else needs an ordinary role, which a session still
+                        // holding an administrator-chosen password does not have.
+                        .anyRequest().hasRole("USER"))
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
@@ -99,10 +112,19 @@ public class SecurityConfig {
                 write(response, HttpStatus.UNAUTHORIZED, "Not authenticated — please log in.");
     }
 
-    /** Authenticated but not allowed. With one role and one user this should never fire. */
+    /**
+     * Authenticated but not allowed: an ordinary account on an admin screen, or a session
+     * that has not yet replaced an administrator-chosen password - which is told so, since
+     * "Not allowed." on every screen would be a mystery.
+     */
     private AccessDeniedHandler accessDeniedHandler() {
-        return (request, response, ex) ->
-                write(response, HttpStatus.FORBIDDEN, "Not allowed.");
+        return (request, response, ex) -> {
+            boolean mustChange = AuthenticatedUser.current()
+                    .map(AuthenticatedUser::mustChangePassword)
+                    .orElse(false);
+            write(response, HttpStatus.FORBIDDEN,
+                    mustChange ? "Choose a new password before continuing." : "Not allowed.");
+        };
     }
 
     private void write(HttpServletResponse response, HttpStatus status, String message)

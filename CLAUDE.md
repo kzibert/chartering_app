@@ -101,7 +101,7 @@ Three things bite here:
   `V23__add_cargo_max_ballast_days.sql` and `V24__add_feed.sql` and
   `V25__add_intake_decisions.sql` and `V26__add_web_intake.sql` and
   `V27__capture_web_into_analysis.sql` and `V28__add_intake_review_history.sql` and
-  `V29__add_mail_reply_cc.sql` exist; the next one is V30.
+  `V29__add_mail_reply_cc.sql` and `V30__add_tenants_and_users.sql` exist; the next one is V31.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
@@ -1170,10 +1170,33 @@ Nothing `feed_*` is audited — machine copies of other people's pages, and docu
 
 ### Auth
 
-One account. `AUTH_PASSWORD` (or `AUTH_PASSWORD_HASH`) plus a JWT signed with `JWT_SECRET`;
-`security/JwtAuthFilter` + `JwtService`. There is deliberately no working default password —
-until one is set the api starts normally and refuses every login. Leaving `JWT_SECRET` unset
-generates a key per boot, which logs everyone out on each restart.
+Accounts live in `users` (V30), each on one desk (`tenants`); a login name is unique across
+the installation so the login screen stays two fields. There is **no self-registration** —
+an administrator makes every account on the Admin › Users screen (`UserAdminService`), with
+a password typed there or generated and shown once, and `must_change_password` forces the
+person to choose their own before the server answers anything but `/auth/me` and
+`/auth/change-password`. Roles nest: `USER` < `TENANT_ADMIN` (accounts on their own desk) <
+`PLATFORM_ADMIN` (desks, and accounts on any desk). No role reads another desk's data.
+
+`AUTH_USERNAME` / `AUTH_PASSWORD` (or `AUTH_PASSWORD_HASH`) only **seed the first account**
+— a platform administrator on desk 1 — when `users` is empty (`UserBootstrap`), so an
+installation that used the single environment credential keeps working. After that they are
+not read, except that `AUTH_RESET_PASSWORD=true` re-applies them for one restart: the way
+back in when the only administrator is locked out. Until an account exists the api starts
+normally and refuses every login.
+
+The JWT (`JwtService`, HS256 over `JWT_SECRET`) carries the user id, the desk and the
+account's `token_version`, and nothing else. `JwtAuthFilter` reads the row on **every
+request** and refuses a disabled account, a suspended desk or a version mismatch — a
+password change or reset, a disable and a role change all bump the version, which is what
+makes a stateless token revocable. The principal is `security/AuthenticatedUser`, an
+`AuthenticatedPrincipal`, so `Authentication.getName()` is still the username the change log
+and reply records were written with. Lockout counters are on the row, per account. Leaving
+`JWT_SECRET` unset generates a key per boot, which logs everyone out on each restart.
+
+Cross-desk access to an account answers **404, never 403** — "not allowed" would confirm the
+id exists on somebody else's desk. A desk always keeps one enabled administrator, and nobody
+disables themselves or changes their own role.
 
 ### One UI, two layouts
 

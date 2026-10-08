@@ -157,6 +157,28 @@
 			<artifactId>spring-boot-starter-test</artifactId>
 			<scope>test</scope>
 		</dependency>
+		<!--
+			The tenancy tests need the real thing: a Postgres built from empty by every migration
+			in this build, the security filter chain in front of the controllers, and two desks
+			whose data must not meet. A mocked repository cannot say whether a query leaks
+			across desks, and H2 cannot run these migrations at all. Needs Docker, which the
+			compose setup already needs. Versions come from the Spring Boot parent.
+		-->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-testcontainers</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>postgresql</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>junit-jupiter</artifactId>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
 
 	<build>
@@ -207,6 +229,21 @@
 							<artifactId>lombok</artifactId>
 						</exclude>
 					</excludes>
+				</configuration>
+			</plugin>
+			<!--
+				The Testcontainers this Spring Boot manages asks Docker for API 1.32 unless told
+				otherwise, and Docker Engine 29 refuses anything below 1.40 - with a 400 that
+				Testcontainers reports as "Could not find a valid Docker environment", which sends
+				you looking at the wrong thing. 1.44 is what Docker Desktop has spoken since 2023.
+			-->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<systemPropertyVariables>
+						<api.version>1.44</api.version>
+					</systemPropertyVariables>
 				</configuration>
 			</plugin>
 		</plugins>

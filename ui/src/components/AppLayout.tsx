@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Badge, Button, Drawer, Dropdown, Layout, Menu, Space, Typography } from 'antd';
+import { Badge, Button, Drawer, Dropdown, Layout, Menu, Modal, Space, Typography } from 'antd';
 import {
   DashboardOutlined,
   ContainerOutlined,
@@ -19,6 +19,8 @@ import {
   ExperimentOutlined,
   RobotOutlined,
   ReadOutlined,
+  KeyOutlined,
+  SafetyOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -27,6 +29,9 @@ import { useMailboxStatus } from '../mailbox/store';
 import { useAnalysisStatus } from '../analysis/store';
 import { useIntakeStatus } from '../intake/store';
 import { clearToken } from '../auth/store';
+import { useSession } from '../auth/session';
+import { roleAtLeast } from '../api/auth';
+import ChangePasswordForm from '../auth/ChangePasswordForm';
 import { useIsMobile } from '../responsive/useIsMobile';
 
 const { Sider, Header, Content } = Layout;
@@ -35,7 +40,7 @@ const { Sider, Header, Content } = Layout;
 const KEYS = [
   '/', '/cargoes', '/open-fleet', '/vessels', '/companies', '/people',
   '/circulation-lists', '/circulars', '/mailbox', '/feed', '/intake', '/analysis', '/history',
-  '/settings',
+  '/settings', '/admin/users',
 ];
 
 /**
@@ -48,13 +53,14 @@ const KEYS = [
  */
 const TAB_KEYS = ['/', '/vessels', '/companies', '/people'];
 
-export default function AppLayout({
-  children,
-  username,
-}: {
-  children: ReactNode;
-  username?: string;
-}) {
+export default function AppLayout({ children }: { children: ReactNode }) {
+  const session = useSession();
+  // The name a colleague would recognise, and which desk this is: two desks on one
+  // installation look identical otherwise, and "whose data am I looking at" has to be
+  // answerable at a glance.
+  const username = session.displayName ?? session.username;
+  const tenantName = session.tenantName;
+  const [changingPassword, setChangingPassword] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -160,6 +166,11 @@ export default function AppLayout({
   // have an item that floats away from its siblings.
   const settingsItems = [
     { key: '/settings', icon: <SettingOutlined />, label: 'Settings' },
+    // Accounts, for whoever may make them. Beside Settings for the same reason Settings is
+    // down here: it is about the application rather than the work.
+    ...(roleAtLeast(session.role, 'TENANT_ADMIN')
+      ? [{ key: '/admin/users', icon: <SafetyOutlined />, label: 'Users' }]
+      : []),
   ];
 
   /**
@@ -173,8 +184,22 @@ export default function AppLayout({
     queryClient.clear();
   };
 
+  const passwordModal = (
+    <Modal
+      open={changingPassword}
+      title="Change password"
+      footer={null}
+      destroyOnClose
+      onCancel={() => setChangingPassword(false)}
+    >
+      <ChangePasswordForm onDone={() => setChangingPassword(false)} />
+    </Modal>
+  );
+
   if (isMobile) {
     return (
+      <>
+      {passwordModal}
       <MobileLayout
         selected={selected}
         items={items}
@@ -183,13 +208,16 @@ export default function AppLayout({
         setNavOpen={setNavOpen}
         navigate={navigate}
         username={username}
+        tenantName={tenantName}
         logout={logout}
+        changePassword={() => setChangingPassword(true)}
         // Everything the More drawer hides that somebody may be waiting on. Without this,
         // unread mail is invisible on a phone until you go looking for it.
         moreDot={unread > 0 || entries.length > 0}
       >
         {children}
       </MobileLayout>
+      </>
     );
   }
 
@@ -245,11 +273,23 @@ export default function AppLayout({
             Maritella chartering application
           </Typography.Title>
           <Space size="middle">
-            {username && (
-              <Typography.Text type="secondary">
+            <Dropdown
+              trigger={['click']}
+              menu={{
+                items: [
+                  { key: 'desk', label: tenantName, disabled: true },
+                  { key: 'password', icon: <KeyOutlined />, label: 'Change password' },
+                ],
+                onClick: ({ key }) => key === 'password' && setChangingPassword(true),
+              }}
+            >
+              <Button type="text">
                 <UserOutlined /> {username}
-              </Typography.Text>
-            )}
+                <Typography.Text type="secondary" style={{ marginInlineStart: 6 }}>
+                  · {tenantName}
+                </Typography.Text>
+              </Button>
+            </Dropdown>
             <Button icon={<LogoutOutlined />} onClick={logout}>
               Log out
             </Button>
@@ -257,6 +297,7 @@ export default function AppLayout({
         </Header>
         <Content style={{ margin: 24 }}>{children}</Content>
       </Layout>
+      {passwordModal}
     </Layout>
   );
 }
@@ -281,7 +322,9 @@ function MobileLayout({
   setNavOpen,
   navigate,
   username,
+  tenantName,
   logout,
+  changePassword,
   moreDot,
 }: {
   children: ReactNode;
@@ -292,7 +335,9 @@ function MobileLayout({
   setNavOpen: (open: boolean) => void;
   navigate: (to: string) => void;
   username?: string;
+  tenantName?: string;
   logout: () => void;
+  changePassword: () => void;
   moreDot: boolean;
 }) {
   const tabs = TAB_KEYS.map((k) => items.find((i) => i.key === k)!).filter(Boolean);
@@ -333,9 +378,14 @@ function MobileLayout({
               ...(username
                 ? [{ key: 'who', icon: <UserOutlined />, label: username, disabled: true }]
                 : []),
+              ...(tenantName ? [{ key: 'desk', label: tenantName, disabled: true }] : []),
+              { key: 'password', icon: <KeyOutlined />, label: 'Change password' },
               { key: 'logout', icon: <LogoutOutlined />, label: 'Log out' },
             ],
-            onClick: ({ key }) => key === 'logout' && logout(),
+            onClick: ({ key }) => {
+              if (key === 'logout') logout();
+              if (key === 'password') changePassword();
+            },
           }}
         >
           <Button type="text" icon={<UserOutlined />} aria-label="Account" />
