@@ -27,6 +27,7 @@ import FeedSettingsCard from './FeedSettingsCard';
 import MatchSettingsCard from './MatchSettingsCard';
 import OwnAddressesCard from './OwnAddressesCard';
 import MyMailboxCard from './MyMailboxCard';
+import MyBrevoCard from './MyBrevoCard';
 import DeskVocabularyCard from './DeskVocabularyCard';
 import { useSession } from '../../auth/session';
 
@@ -53,9 +54,9 @@ interface FormValues {
 }
 
 const toForm = (s: CirculationSettingsRequest): FormValues => ({
-  fromAddress: s.fromAddress,
+  fromAddress: s.fromAddress ?? '',
   fromName: s.fromName ?? '',
-  smtpHost: s.smtpHost,
+  smtpHost: s.smtpHost ?? '',
   smtpPort: s.smtpPort,
   minDelaySeconds: toSeconds(s.minDelayMs),
   maxDelaySeconds: toSeconds(s.maxDelayMs),
@@ -134,6 +135,9 @@ export default function SettingsPage() {
   });
 
   const usingBrevo = settings?.provider === 'BREVO';
+  // The From and SMTP fields are edited here only by the server mailbox's owner; anybody
+  // else's are their own mailbox's or Brevo sender's, shown read-only with where they come from.
+  const identityHere = settings?.identitySource === 'SERVER';
   const d = settings?.defaults;
   const defaultHint = (label: string, value: string | number) => (
     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -206,10 +210,9 @@ export default function SettingsPage() {
             message="No Brevo API key"
             description={
               <>
-                Brevo is selected but <Typography.Text code>BREVO_API_KEY</Typography.Text> is
-                not set, so sending will fail on the first message. Put the key in{' '}
-                <Typography.Text code>.env</Typography.Text> and restart the api container, or
-                untick the box to go back to sending from your mailbox.
+                Brevo is selected but you have no Brevo key, so your circulars would fail on the
+                first message. Save yours under <b>My Brevo account</b> below, or untick the box
+                to go back to sending from your mailbox.
               </>
             }
           />
@@ -261,35 +264,58 @@ export default function SettingsPage() {
           </Space>
         }
       >
+        {settings && !identityHere && (
+          <Alert
+            type={settings.identitySource === 'NONE' ? 'warning' : 'info'}
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={
+              settings.identitySource === 'BREVO'
+                ? 'Your circulars go out as your Brevo sender'
+                : settings.identitySource === 'MAILBOX'
+                  ? 'Your circulars go out as your own mailbox'
+                  : 'You have nothing to send from yet'
+            }
+            description={
+              settings.identitySource === 'NONE'
+                ? 'The From address and the mail server are your own, not the desk’s. Save your mailbox under My mailbox below — or, to send through Brevo, a Brevo key with a verified sender under My Brevo account.'
+                : 'The From and the mail server below are read from there, and are changed there. The pacing is the desk’s.'
+            }
+          />
+        )}
         <Form<FormValues> form={form} layout="vertical" onFinish={(v) => save.mutate(v)}>
           <Row gutter={16}>
             <Col xs={24} md={12}>
               <Form.Item
                 name="fromName"
                 label="From name"
-                extra={d && defaultHint('Default', d.fromName || '(none)')}
+                extra={identityHere && d && defaultHint('Default', d.fromName || '(none)')}
               >
-                <Input placeholder="Maritella Chartering Desk" />
+                <Input placeholder="Chartering Desk" disabled={!identityHere} />
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
               <Form.Item
                 name="fromAddress"
                 label="From address"
-                rules={[
-                  { required: true, message: 'A From address is required' },
-                  { type: 'email', message: 'Not a valid email address' },
-                ]}
+                rules={
+                  identityHere
+                    ? [
+                        { required: true, message: 'A From address is required' },
+                        { type: 'email', message: 'Not a valid email address' },
+                      ]
+                    : []
+                }
                 extra={
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                     {usingBrevo
                       ? 'Must be verified as a sender in Brevo, or Brevo will refuse the message.'
                       : 'Must be the authenticated mailbox or one of its verified aliases, or the provider will refuse the message.'}
-                    {d?.fromAddress ? ` Default: ${d.fromAddress}` : ''}
+                    {identityHere && d?.fromAddress ? ` Default: ${d.fromAddress}` : ''}
                   </Typography.Text>
                 }
               >
-                <Input placeholder="desk@example.com" />
+                <Input placeholder={identityHere ? 'desk@example.com' : undefined} disabled={!identityHere} />
               </Form.Item>
             </Col>
           </Row>
@@ -302,31 +328,36 @@ export default function SettingsPage() {
               <Form.Item
                 name="smtpHost"
                 label="SMTP host"
-                rules={[{ required: true, message: 'A host is required' }]}
+                rules={identityHere ? [{ required: true, message: 'A host is required' }] : []}
                 extra={
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                     {usingBrevo ? 'Unused while Brevo is selected. ' : ''}
-                    {d ? `Default: ${d.smtpHost}` : ''}
+                    {identityHere && d ? `Default: ${d.smtpHost}` : ''}
                   </Typography.Text>
                 }
               >
-                <Input placeholder="smtp.zoho.eu" />
+                <Input placeholder={identityHere ? 'smtp.zoho.eu' : undefined} disabled={!identityHere} />
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
               <Form.Item
                 name="smtpPort"
                 label="SMTP port"
-                rules={[{ required: true, message: 'A port is required' }]}
+                rules={identityHere ? [{ required: true, message: 'A port is required' }] : []}
                 extra={
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                     465 uses implicit SSL, anything else uses STARTTLS.
                     {usingBrevo ? ' Unused while Brevo is selected.' : ''}
-                    {d ? ` Default: ${d.smtpPort}` : ''}
+                    {identityHere && d ? ` Default: ${d.smtpPort}` : ''}
                   </Typography.Text>
                 }
               >
-                <InputNumber style={{ width: '100%' }} min={1} max={65535} />
+                <InputNumber
+                  style={{ width: '100%' }}
+                  min={identityHere ? 1 : 0}
+                  max={65535}
+                  disabled={!identityHere}
+                />
               </Form.Item>
             </Col>
           </Row>
@@ -417,6 +448,7 @@ export default function SettingsPage() {
       </Card>
 
       <MyMailboxCard />
+      <MyBrevoCard />
       <OwnAddressesCard />
 
       <ParserSettingsCard />
@@ -430,16 +462,16 @@ export default function SettingsPage() {
 
       <Card title="Mail credentials">
         <Typography.Paragraph type="secondary">
-          The mailbox login — <Typography.Text code>MAIL_USERNAME</Typography.Text> and{' '}
-          <Typography.Text code>MAIL_PASSWORD</Typography.Text> — the Brevo key,{' '}
+          Your own mailbox password and Brevo key are saved on the two cards above, encrypted,
+          and never shown again. The server's own mailbox login —{' '}
+          <Typography.Text code>MAIL_USERNAME</Typography.Text> and{' '}
+          <Typography.Text code>MAIL_PASSWORD</Typography.Text> — its Brevo key,{' '}
           <Typography.Text code>BREVO_API_KEY</Typography.Text>, and{' '}
-          <Typography.Text code>MAIL_REPLY_TO</Typography.Text> all stay in{' '}
-          <Typography.Text code>.env</Typography.Text> and are deliberately not editable here:
-          these settings are stored in the database and served to the browser, which is the
-          wrong place for a mailbox password or an API key with full send rights. Change them
-          there and restart the api container. The From identity above is editable because it
-          is not a secret — but the provider still checks it, against the authenticated
-          mailbox under SMTP and against your verified senders under Brevo.
+          <Typography.Text code>MAIL_REPLY_TO</Typography.Text> stay in the server's{' '}
+          <Typography.Text code>.env</Typography.Text> and belong to the account that owns that
+          mailbox alone; they are changed there, with a restart of the api container. The From
+          identity is not a secret — but the provider still checks it, against the
+          authenticated mailbox under SMTP and against your verified senders under Brevo.
         </Typography.Paragraph>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
           <Typography.Text code>MAIL_ENABLED</Typography.Text> is the master switch and covers

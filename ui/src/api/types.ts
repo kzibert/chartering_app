@@ -1203,11 +1203,15 @@ export interface CirculationMessage {
 /* ---------------- settings ---------------- */
 
 export interface CirculationSettingsRequest {
-  /** Envelope From — must be the authenticated mailbox or a verified alias. */
-  fromAddress: string;
+  /**
+   * Envelope From — must be the authenticated mailbox or a verified alias. This and the SMTP
+   * fields are only stored for the server mailbox's owner (identitySource SERVER); anybody
+   * else's come from their own mailbox or Brevo sender and are absent when they have neither.
+   */
+  fromAddress?: string;
   /** Display name recipients see; blank sends the bare address. */
   fromName?: string;
-  smtpHost: string;
+  smtpHost?: string;
   smtpPort: number;
   /** The gap between two messages is random in [min, max] — never fixed. */
   minDelayMs: number;
@@ -1223,11 +1227,18 @@ export interface CirculationSettings extends CirculationSettingsRequest {
   provider: CircularProvider;
   providerLabel: string;
   /**
-   * Whether BREVO_API_KEY is present in the environment. The switch is still offered
-   * without it — the settings screen is where you would go to find out why it is missing —
-   * but the screen says plainly that a send would fail.
+   * Whether you have a Brevo key — your own (Settings › My Brevo account), or the server's as
+   * its mailbox owner. The switch is still offered without it — the settings screen is where
+   * you would go to find out why it is missing — but the screen says plainly that a send
+   * would fail.
    */
   brevoConfigured: boolean;
+  /**
+   * Where the From and SMTP fields come from. Only SERVER (the server's mailbox, which is
+   * yours) edits them here; MAILBOX and BREVO are your own mailbox and Brevo sender, NONE is
+   * neither. Absent on the nested defaults block.
+   */
+  identitySource?: 'SERVER' | 'MAILBOX' | 'BREVO' | 'NONE';
   /** true when any value differs from the configured default *for this provider* */
   customised: boolean;
   /**

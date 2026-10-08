@@ -16,8 +16,14 @@ public record CirculationSettingsResponse(
         String provider,
         /** The same choice, worded for display. */
         String providerLabel,
-        /** True when the Brevo API key is present in the environment, so the UI can warn before the switch is used. */
+        /** True when the caller has a Brevo key - their own, or the server's as its mailbox owner - so the UI can warn before the switch is used. */
         boolean brevoConfigured,
+        /**
+         * Where the From and SMTP fields come from: {@code SERVER} (the server's mailbox, and
+         * editable here), {@code MAILBOX} (the caller's own), {@code BREVO} (their Brevo
+         * sender), {@code NONE}. Absent on the nested defaults block.
+         */
+        String identitySource,
         String fromAddress,
         String fromName,
         String smtpHost,
@@ -36,7 +42,7 @@ public record CirculationSettingsResponse(
                                                            String host, int port, long minDelay,
                                                            long maxDelay, int maxRecipients,
                                                            long batchPause) {
-        return new CirculationSettingsResponse(provider, providerLabel, false, fromAddress, fromName,
+        return new CirculationSettingsResponse(provider, providerLabel, false, null, fromAddress, fromName,
                 host, port, minDelay, maxDelay, maxRecipients, batchPause, false, null);
     }
 }

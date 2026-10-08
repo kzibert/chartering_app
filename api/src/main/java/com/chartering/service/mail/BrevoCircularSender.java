@@ -54,6 +54,7 @@ import java.util.Map;
 public class BrevoCircularSender implements CircularSender {
 
     private final BrevoProperties brevo;
+    private final BrevoAccounts accounts;
     private final MailCampaignProperties props;
     private final MailTemplateService templates;
 
@@ -65,18 +66,22 @@ public class BrevoCircularSender implements CircularSender {
     @Override
     public List<String> missingSettings(CirculationSettings cfg) {
         List<String> missing = new ArrayList<>();
-        if (!isSet(brevo.getApiKey())) {
-            missing.add("BREVO_API_KEY");
+        if (accounts.current().isEmpty()) {
+            missing.add(BrevoAccounts.NO_KEY);
         }
         if (!isSet(cfg.fromAddress())) {
-            missing.add("From address (Settings, or MAIL_FROM)");
+            missing.add("a From address: a Brevo sender or your own mailbox (Settings > My mailbox)");
         }
         return missing;
     }
 
     @Override
     public Bound bind(CirculationSettings cfg) {
-        return new BoundBrevo(newClient(), cfg);
+        // The key is resolved here, on the thread that starts the run, and kept: the worker
+        // carries the same login, but a key replaced mid-send must not split one circular
+        // across two Brevo accounts any more than a provider switch may.
+        String key = accounts.current().map(BrevoAccounts.Brevo::apiKey).orElse(null);
+        return new BoundBrevo(newClient(key), key, cfg);
     }
 
     /**
@@ -84,14 +89,14 @@ public class BrevoCircularSender implements CircularSender {
      * timeouts and base URL a run starts with are the ones it keeps, matching how every
      * other setting behaves once a campaign is under way.
      */
-    private RestClient newClient() {
+    private RestClient newClient(String apiKey) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(Duration.ofMillis(brevo.getConnectTimeoutMs()));
         factory.setReadTimeout(Duration.ofMillis(brevo.getReadTimeoutMs()));
         return RestClient.builder()
                 .requestFactory(factory)
                 .baseUrl(brevo.getBaseUrl())
-                .defaultHeader("api-key", brevo.getApiKey() == null ? "" : brevo.getApiKey().trim())
+                .defaultHeader("api-key", apiKey == null ? "" : apiKey.trim())
                 .defaultHeader("accept", MediaType.APPLICATION_JSON_VALUE)
                 .build();
     }
@@ -104,10 +109,12 @@ public class BrevoCircularSender implements CircularSender {
     private final class BoundBrevo implements Bound {
 
         private final RestClient client;
+        private final String apiKey;
         private final CirculationSettings cfg;
 
-        private BoundBrevo(RestClient client, CirculationSettings cfg) {
+        private BoundBrevo(RestClient client, String apiKey, CirculationSettings cfg) {
             this.client = client;
+            this.apiKey = apiKey;
             this.cfg = cfg;
         }
 
@@ -125,9 +132,9 @@ public class BrevoCircularSender implements CircularSender {
          */
         @Override
         public void verify() {
-            if (!isSet(brevo.getApiKey())) {
+            if (!isSet(apiKey)) {
                 throw new MailNotConfiguredException(
-                        "No Brevo API key. Set BREVO_API_KEY in .env and restart the api container.");
+                        "No Brevo API key. Save yours on Settings > My mailbox.");
             }
             try {
                 Account account = client.get()

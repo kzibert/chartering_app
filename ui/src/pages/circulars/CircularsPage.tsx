@@ -49,7 +49,9 @@ import type {
   CirculationListEntry,
   CirculationRun,
 } from '../../api/types';
+import { userStorageKey } from '../../auth/store';
 
+/** The logged-in person's own draft (userStorageKey), never the last person's on this browser. */
 const DRAFT_KEY = 'chartering.circularDraft.v1';
 /**
  * Runs the user has waved away. A run stays resumable for as long as it has anybody left
@@ -79,7 +81,7 @@ const STATE_COLOUR: Record<CampaignState, string> = {
 
 function readDismissed(): number[] {
   try {
-    const raw = JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? '[]');
+    const raw = JSON.parse(localStorage.getItem(userStorageKey(DISMISSED_KEY)) ?? '[]');
     return Array.isArray(raw) ? raw.filter((v): v is number => typeof v === 'number') : [];
   } catch {
     return [];
@@ -198,7 +200,7 @@ export default function CircularsPage() {
   // Restore the draft so a reload mid-compose doesn't lose the circular.
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(DRAFT_KEY);
+      const raw = localStorage.getItem(userStorageKey(DRAFT_KEY));
       if (raw) {
         const d = JSON.parse(raw);
         if (typeof d?.subject === 'string') setSubject(d.subject);
@@ -213,7 +215,7 @@ export default function CircularsPage() {
   useEffect(() => {
     if (!draftLoaded) return;
     try {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({ subject, body }));
+      localStorage.setItem(userStorageKey(DRAFT_KEY), JSON.stringify({ subject, body }));
     } catch {
       /* storage full — the draft just won't survive a reload */
     }
@@ -280,7 +282,7 @@ export default function CircularsPage() {
     const next = [...dismissed.filter((d) => live.includes(d)), id];
     setDismissed(next);
     try {
-      localStorage.setItem(DISMISSED_KEY, JSON.stringify(next));
+      localStorage.setItem(userStorageKey(DISMISSED_KEY), JSON.stringify(next));
     } catch {
       /* storage full — the banner just comes back on the next reload */
     }
