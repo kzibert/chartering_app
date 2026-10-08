@@ -1,6 +1,7 @@
 package com.chartering.it;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.chartering.tenancy.TenantContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -46,11 +47,19 @@ class PersonalMailboxTest extends IntegrationTest {
 
     /** What a sync would have stored in Anna's mailbox: written directly, there is no IMAP here. */
     private long annasMessage(String subject) {
-        long tenant = jdbc.queryForObject("select tenant_id from users where id = ?", Long.class, annaId);
-        return jdbc.queryForObject("""
+        return asAnnasDesk(() -> jdbc.queryForObject("""
                 insert into mail_messages (tenant_id, owner_user_id, message_id, subject, from_address)
                 values (?, ?, ?, ?, 'broker@example.test') returning id
-                """, Long.class, tenant, annaId, "<" + UUID.randomUUID() + "@example.test>", subject);
+                """, Long.class, annasDesk(), annaId, "<" + UUID.randomUUID() + "@example.test>", subject));
+    }
+
+    private Long annasDesk() {
+        return jdbc.queryForObject("select tenant_id from users where id = ?", Long.class, annaId);
+    }
+
+    /** Direct SQL is subject to row-level security like the application's own, so it names the desk. */
+    private <T> T asAnnasDesk(java.util.function.Supplier<T> work) {
+        return TenantContext.callAs(annasDesk(), work);
     }
 
     @Test
@@ -71,7 +80,7 @@ class PersonalMailboxTest extends IntegrationTest {
         long message = annasMessage("25,000 mt wheat Chornomorsk / Spain Med");
         long cargo = read(postAs(anna, "/api/v1/cargoes", Map.of("commodity", "Wheat"))
                 .andExpect(status().is2xxSuccessful())).get("id").asLong();
-        jdbc.update("update cargoes set source_mail_message_id = ? where id = ?", message, cargo);
+        asAnnasDesk(() -> jdbc.update("update cargoes set source_mail_message_id = ? where id = ?", message, cargo));
 
         getAs(boris, "/api/v1/mailbox/messages/" + message + "?markRead=false")
                 .andExpect(status().isOk())
@@ -105,8 +114,8 @@ class PersonalMailboxTest extends IntegrationTest {
                 .andExpect(jsonPath("$.source").value("PERSONAL"))
                 .andExpect(jsonPath("$.passwordSet").value(true));
 
-        String stored = jdbc.queryForObject(
-                "select password_enc from mail_accounts where email_address = 'boris@example.test'", String.class);
+        String stored = asAnnasDesk(() -> jdbc.queryForObject(
+                "select password_enc from mail_accounts where email_address = 'boris@example.test'", String.class));
         assertThat(stored).startsWith("v1:").doesNotContain("boris-mail-secret");
         assertThat(getAs(boris, "/api/v1/me/mail-account").andReturn().getResponse().getContentAsString())
                 .doesNotContain("boris-mail-secret");

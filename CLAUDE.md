@@ -104,7 +104,13 @@ Three things bite here:
   `V29__add_mail_reply_cc.sql` and `V30__add_tenants_and_users.sql` and
   `V31__scope_data_to_tenants.sql` and `V32__add_personal_mailboxes.sql` and
   `V33__add_personal_circulation.sql` and `V34__add_feed_intake_subscriptions.sql` and
-  `V35__add_desk_aliases.sql` exist; the next one is V36.
+  `V35__add_desk_aliases.sql` and `V36__enable_row_level_security.sql` exist; the next one
+  is V37.
+- **Since V36, a migration that reads or writes a desk's rows starts with
+  `SET LOCAL app.rls_bypass = 'on';`.** Row-level security is forced on every desk table and
+  migrations run as the role it binds; without the line such a migration sees no rows and
+  inserts fail the policy. `LOCAL` ends with the migration's transaction, so it never leaks
+  into the pool.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
@@ -153,6 +159,16 @@ spelling (migrations only), a desk id is one that desk added on Settings › Des
 alone) built on first use; the desk's aliases win over the market's for the same key, and a
 port's own name still beats both. `DeskAliasService` drops a desk's snapshot after its
 commit. Ports, areas, distances and sea routes themselves stay global.
+
+**Postgres enforces the same line underneath** (V36). Every desk table has a forced
+row-level security policy reading `app.tenant_id`, which `tenancy/TenantAwareDataSource`
+sets on every connection checkout from `TenantContext` (empty: no rows). It catches what
+Hibernate's filter cannot see — plain JDBC, a hand-written native query, a bulk update
+missing its predicate. A superuser or a `BYPASSRLS` role is exempt: the local compose
+database's default user is one, and `RowLevelSecurityCheck` logs at startup whether the
+connected role is enforced. The integration suite connects as an ordinary role
+(`IntegrationTest`) so the policies are really exercised; `RowLevelSecurityTest` drives plain
+SQL against them.
 
 `TenantScopeTest` fails on any entity that has no `@TenantId` and is not listed as global
 with its reason. Global on purpose: `tenants`/`users` (the login needs them first), the

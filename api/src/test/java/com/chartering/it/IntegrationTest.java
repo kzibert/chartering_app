@@ -5,14 +5,19 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.testcontainers.containers.PostgreSQLContainer;
 
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.Map;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -29,6 +34,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * classes with the same configuration, and a context outliving its database would be a
  * context pointed at nothing.
  *
+ * <p><b>The application connects as an ordinary role, not as the container's superuser</b>, and
+ * owns the schema it migrates - the shape of a hosted database, where the owner role is not a
+ * superuser. A superuser bypasses row-level security outright, so connecting as one would let
+ * V36's policies pass every test without ever being consulted.
+ *
  * <p>Requests go through MockMvc with the real security filter chain, holding real tokens
  * issued by the real login - so what is under test is what a caller can actually reach, not
  * what a service method returns when called directly.
@@ -38,11 +48,30 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 public abstract class IntegrationTest {
 
-    @ServiceConnection
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+
+    static final String APP_ROLE = "chartering_app";
+    static final String APP_PASSWORD = "chartering-app-password";
 
     static {
         POSTGRES.start();
+        try (Connection c = DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+             Statement st = c.createStatement()) {
+            // Extensions need a superuser; a hosted database ships with the ones V1 asks for,
+            // as the provider installs them, and this does the same.
+            st.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm");
+            st.execute("CREATE ROLE " + APP_ROLE + " LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '" + APP_PASSWORD + "'");
+            st.execute("ALTER SCHEMA public OWNER TO " + APP_ROLE);
+        } catch (SQLException e) {
+            throw new IllegalStateException("Could not prepare the application role", e);
+        }
+    }
+
+    @DynamicPropertySource
+    static void database(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
+        registry.add("spring.datasource.username", () -> APP_ROLE);
+        registry.add("spring.datasource.password", () -> APP_PASSWORD);
     }
 
     protected static final String ROOT = "root";
