@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.TenantId;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
@@ -63,6 +64,11 @@ public class AnalysisSample {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    /** The desk this row belongs to. Written and filtered by Hibernate - see TenantIdentifierResolver. */
+    @TenantId
+    @Column(name = "tenant_id", nullable = false, updatable = false)
+    private Long tenantId;
 
     /** Where it came from, if that message is still on file. Provenance, not storage. */
     @ManyToOne(fetch = FetchType.LAZY)

@@ -2,8 +2,11 @@ package com.chartering.service.parser;
 
 import com.chartering.config.ParserProperties;
 import com.chartering.exception.FeatureDisabledException;
+import com.chartering.model.Tenant;
 import com.chartering.repository.ParsedEmailRepository;
 import com.chartering.service.ParserSettings;
+import com.chartering.tenancy.TenantContext;
+import com.chartering.tenancy.TenantDirectory;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -14,6 +17,8 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -71,7 +76,13 @@ public class ParserSweepService {
     private final com.chartering.repository.FeedItemRepository feedItems;
     private final EmailParseRunner runner;
     private final com.chartering.service.lookup.VesselLookupService lookups;
+    private final TenantDirectory tenants;
 
+    /**
+     * One sweep at a time for the whole installation, not one per desk: there is one model
+     * server and one GPU behind it, and two desks' sweeps side by side would only make each
+     * wait on the other's requests.
+     */
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     /**
@@ -83,7 +94,8 @@ public class ParserSweepService {
      */
     private volatile OffsetDateTime lastSweep = OffsetDateTime.now();
 
-    private volatile SweepReport lastReport;
+    /** Each desk's last sweep, so one desk's screen never reports another's counts. */
+    private final Map<Long, SweepReport> lastReports = new ConcurrentHashMap<>();
 
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "email-parser-sweep");
@@ -112,7 +124,7 @@ public class ParserSweepService {
         int minutes = settings.sweepIntervalMinutes();
         if (minutes <= 0) return;
         if (Duration.between(lastSweep, OffsetDateTime.now()).toMinutes() < minutes) return;
-        submit();
+        submit(null);
     }
 
     /**
@@ -120,14 +132,16 @@ public class ParserSweepService {
      *
      * <p>Works whatever the interval is set to, including 0 — "off" means the timer does not
      * run it, not that it cannot be run. Refused only when the feature itself is off, which
-     * is a 404 rather than a 400: the endpoint is not part of that deployment.
+     * is a 404 rather than a 400: the endpoint is not part of that deployment. Sweeps the
+     * caller's desk only; the timer sweeps them all.
      */
     public void requestSweep() {
         requireEnabled();
-        submit();
+        submit(TenantContext.require());
     }
 
-    private void submit() {
+    /** @param onlyTenant one desk, or null for every active desk */
+    private void submit(Long onlyTenant) {
         // Checked before submitting as well as inside, so a click during a running sweep is
         // not queued behind it - the queue is the unparsed rows, and by the time this one
         // finished the second run would have nothing to do anyway.
@@ -135,7 +149,7 @@ public class ParserSweepService {
             log.debug("A parser sweep is already running; this request is skipped");
             return;
         }
-        worker.submit(this::sweepIfIdle);
+        worker.submit(() -> sweepIfIdle(onlyTenant));
     }
 
     public boolean isRunning() {
@@ -146,8 +160,9 @@ public class ParserSweepService {
         return lastSweep;
     }
 
+    /** The caller's desk's last sweep. */
     public SweepReport lastReport() {
-        return lastReport;
+        return lastReports.get(TenantContext.require());
     }
 
     /** When the timer will next look, or null when nothing is scheduled. */
@@ -159,16 +174,19 @@ public class ParserSweepService {
 
     // ---------------------------------------------------------------- the sweep
 
-    private void sweepIfIdle() {
+    private void sweepIfIdle(Long onlyTenant) {
         if (!running.compareAndSet(false, true)) return;
+        boolean raised = false;
         try {
-            lastReport = sweep();
-        } catch (Exception e) {
-            // Nothing above this catches. The worker thread dying would stop the mailbox
-            // being read for the life of the process, silently.
-            log.error("Parser sweep failed", e);
-            lastReport = new SweepReport(0, 0, 0, 0, 0, 0, 0, false,
-                    "The sweep failed: " + e.getMessage(), OffsetDateTime.now());
+            List<Long> desks = onlyTenant != null ? List.of(onlyTenant) : tenants.activeIds();
+            for (Long desk : desks) {
+                SweepReport report = TenantContext.callAs(desk, this::sweepOneDesk);
+                lastReports.put(desk, report);
+                raised |= report.items() > 0;
+                // The model server being down is down for every desk; asking it again for
+                // the next one would only spend another round of timeouts proving it.
+                if (report.unreachable()) break;
+            }
         } finally {
             lastSweep = OffsetDateTime.now();
             running.set(false);
@@ -178,8 +196,21 @@ public class ParserSweepService {
         // for the lookup's own tick: the point of doing it at all is that the answer is
         // already on the screen when somebody opens the item. Returns immediately - it runs
         // on its own worker - and does nothing when the feature is off or the queue is empty.
-        if (lastReport != null && lastReport.items() > 0) {
+        if (raised) {
             lookups.enrichPending();
+        }
+    }
+
+    /** One desk's sweep, inside that desk's binding. Never throws. */
+    private SweepReport sweepOneDesk() {
+        try {
+            return sweep();
+        } catch (Exception e) {
+            // Nothing above this catches. The worker thread dying would stop the mailbox
+            // being read for the life of the process, silently.
+            log.error("Parser sweep failed for tenant {}", TenantContext.current().orElse(null), e);
+            return new SweepReport(0, 0, 0, 0, 0, 0, 0, false,
+                    "The sweep failed: " + e.getMessage(), OffsetDateTime.now());
         }
     }
 
@@ -226,8 +257,15 @@ public class ParserSweepService {
         // backlog lasted - and a position list is worth least on the day after it stops being
         // true. Bounded by the same batch, so the whole sweep is still one number of model
         // calls however the two queues divide it.
-        feedItems.unparsedForIntake(values.receivedSince(), PageRequest.of(0, batch))
-                .forEach(i -> queue.add(Job.post(i.getId())));
+        //
+        // Only the default desk reads the boards for now: which boards feed Intake is still
+        // one switch on the source, not a choice each desk makes, and every desk parsing every
+        // post would multiply the GPU time by the number of desks for a choice only one of
+        // them made.
+        if (Tenant.DEFAULT_ID == TenantContext.require()) {
+            feedItems.unparsedForIntake(values.receivedSince(), PageRequest.of(0, batch))
+                    .forEach(i -> queue.add(Job.post(i.getId())));
+        }
 
         if (queue.size() < batch) {
             parsedEmails.unparsed(values.receivedSince(), PageRequest.of(0, batch - queue.size()))

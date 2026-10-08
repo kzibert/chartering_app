@@ -101,7 +101,8 @@ Three things bite here:
   `V23__add_cargo_max_ballast_days.sql` and `V24__add_feed.sql` and
   `V25__add_intake_decisions.sql` and `V26__add_web_intake.sql` and
   `V27__capture_web_into_analysis.sql` and `V28__add_intake_review_history.sql` and
-  `V29__add_mail_reply_cc.sql` and `V30__add_tenants_and_users.sql` exist; the next one is V31.
+  `V29__add_mail_reply_cc.sql` and `V30__add_tenants_and_users.sql` and
+  `V31__scope_data_to_tenants.sql` exist; the next one is V32.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
@@ -116,6 +117,48 @@ Three things bite here:
   LF; migrations must round-trip byte-for-byte.
 - **Never edit a migration that has run.** Corrections are the next migration. Flyway
   Community has no undo, so backing one out is a manual `ALTER TABLE`.
+
+### Tenancy: every desk's data is its own
+
+One database, one schema, a `tenant_id` on every table holding a desk's work (V31), filled
+with 1 for the data that predates desks and **left without a default**, so a write that
+forgot whose it is fails instead of landing on desk 1. Hibernate does the work: every
+tenant-scoped entity carries `@TenantId Long tenantId`, and `tenancy/TenantIdentifierResolver`
+answers which desk a session belongs to — Hibernate stamps it on inserts and adds
+`tenant_id = ?` to JPQL, criteria, Specifications, loads by id and bulk updates alike. That
+is why the repositories did not change. A cross-desk id answers **404**, the same as an id
+that does not exist.
+
+`tenancy/TenantContext` is where the desk comes from: an explicit `runAs(tenantId, …)`, else
+the logged-in account's. **Nothing bound means no desk** — the resolver answers id 0, reads
+find nothing and inserts fail on the foreign key — never "all desks". Three rules follow:
+
+- **Work without a request names its desk.** Timers loop over `TenantDirectory.forEachActive`
+  (suspended desks are skipped); a request handing work to a worker thread wraps it in
+  `TenantContext.carry(…)`, which brings the login along so the change log still names who
+  pressed the button. One-at-a-time guards stay installation-wide where there is one of the
+  thing (the GPU, the outgoing mailbox), but the progress and reports are kept **per desk** —
+  another desk's run is shown as idle, never with its subject or counts.
+- **Bind before the transaction.** Hibernate asks for the desk when a session opens; a
+  `runAs` inside a transaction already open changes nothing.
+- **SQL Hibernate does not write names the desk itself.** `DataChangeWriter` inserts
+  `tenant_id`; `Cargo.lastSentAt` reads `mail.ownAddresses` with `o.tenant_id = tenant_id`.
+
+`TenantScopeTest` fails on any entity that has no `@TenantId` and is not listed as global
+with its reason. Global on purpose: `tenants`/`users` (the login needs them first), the
+reference vocabulary (ports, trade areas, sea routes, regions, tonnage categories),
+`feed_sources`/`feed_items` (public pages fetched once), and `app_settings`, which holds two
+scopes: `SettingsStore` routes each key to the desk's row or the installation's (NULL
+`tenant_id`) — the model servers, the sweep and fetch timers and the served context window
+are the installation's and only a platform administrator changes them; a desk's settings
+need a desk administrator. The settings classes ask by key and never see the split.
+
+**The environment's mailbox is desk 1's** (`service/mail/EnvironmentMailbox`). IMAP, SMTP and
+the Brevo key are configured once per deployment, so every other desk sees them as missing,
+through the same missing-settings lists the screens already explain; the sync always runs as
+desk 1. Boards are likewise read into Intake for desk 1 only, until which boards feed a
+desk's Intake is that desk's choice. Feed sources are installation-wide and only a platform
+administrator edits them.
 
 ### The domain: companies, people, contacts
 

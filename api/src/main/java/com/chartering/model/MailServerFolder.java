@@ -3,6 +3,7 @@ package com.chartering.model;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.TenantId;
 
 import java.time.LocalDateTime;
 
@@ -43,6 +44,11 @@ public class MailServerFolder {
     @Id
     @Column(name = "full_name", nullable = false, length = 255)
     private String fullName;
+
+    /** The desk this row belongs to. Written and filtered by Hibernate - see TenantIdentifierResolver. */
+    @TenantId
+    @Column(name = "tenant_id", nullable = false, updatable = false)
+    private Long tenantId;
 
     @Column(name = "display_name", nullable = false, length = 255)
     private String displayName;

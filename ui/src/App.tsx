@@ -21,6 +21,7 @@ import SettingsPage from './pages/settings/SettingsPage';
 import LoginPage from './pages/login/LoginPage';
 import ChangePasswordPage from './pages/login/ChangePasswordPage';
 import UsersPage from './pages/admin/UsersPage';
+import TenantsPage from './pages/admin/TenantsPage';
 import { useToken } from './auth/store';
 import { authApi, roleAtLeast } from './api/auth';
 import { SessionProvider } from './auth/session';
@@ -73,6 +74,7 @@ function AuthenticatedApp() {
   }
 
   const isAdmin = roleAtLeast(session.data.role, 'TENANT_ADMIN');
+  const isPlatformAdmin = session.data.role === 'PLATFORM_ADMIN';
 
   return (
     <SessionProvider session={session.data}>
@@ -108,6 +110,7 @@ function AuthenticatedApp() {
             {/* Only routed for an administrator; anybody else lands on the dashboard, and the
                 server would refuse them anyway. */}
             {isAdmin && <Route path="/admin/users" element={<UsersPage />} />}
+            {isPlatformAdmin && <Route path="/admin/tenants" element={<TenantsPage />} />}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </AppLayout>

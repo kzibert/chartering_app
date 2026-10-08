@@ -3,6 +3,7 @@ package com.chartering.model;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.TenantId;
 
 import java.time.LocalDateTime;
 
@@ -27,6 +28,11 @@ public class MailSyncState {
     @Id
     @Column(name = "imap_folder", nullable = false, length = 255)
     private String imapFolder;
+
+    /** The desk this row belongs to. Written and filtered by Hibernate - see TenantIdentifierResolver. */
+    @TenantId
+    @Column(name = "tenant_id", nullable = false, updatable = false)
+    private Long tenantId;
 
     /**
      * The server's UIDVALIDITY at the last read. When it changes, every UID stored against

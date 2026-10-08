@@ -94,6 +94,12 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/admin/tenants", "/api/v1/admin/tenants/**")
                         .hasRole("PLATFORM_ADMIN")
                         .requestMatchers("/api/v1/admin/**").hasRole("TENANT_ADMIN")
+                        // The boards every desk reads are the installation's: one desk
+                        // deleting or repointing one would change every other desk's feed.
+                        // Reading them, and asking for a fetch, stays open to everyone.
+                        .requestMatchers(HttpMethod.POST, "/api/v1/feed/sources").hasRole("PLATFORM_ADMIN")
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/feed/sources/*").hasRole("PLATFORM_ADMIN")
+                        .requestMatchers(HttpMethod.DELETE, "/api/v1/feed/sources/*").hasRole("PLATFORM_ADMIN")
                         // Everything else needs an ordinary role, which a session still
                         // holding an administrator-chosen password does not have.
                         .anyRequest().hasRole("USER"))

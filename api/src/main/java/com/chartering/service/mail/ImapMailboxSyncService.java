@@ -5,7 +5,9 @@ import com.chartering.config.MailboxProperties;
 import com.chartering.exception.MailNotConfiguredException;
 import com.chartering.model.MailServerFolder;
 import com.chartering.model.MailSyncState;
+import com.chartering.model.Tenant;
 import com.chartering.repository.MailSyncStateRepository;
+import com.chartering.tenancy.TenantContext;
 import jakarta.annotation.PreDestroy;
 import jakarta.mail.FetchProfile;
 import jakarta.mail.Flags;
@@ -152,6 +154,9 @@ public class ImapMailboxSyncService {
     /** What is missing, named as the environment variable that supplies it. */
     public List<String> missingSettings() {
         List<String> missing = new ArrayList<>();
+        if (!EnvironmentMailbox.belongsToCurrentDesk()) {
+            return List.of(EnvironmentMailbox.NOT_THIS_DESK);
+        }
         if (!props.isEnabled()) missing.add("IMAP_ENABLED=true");
         if (isBlank(props.getHost())) missing.add("IMAP_HOST");
         // Through the resolver, so a blank IMAP_USERNAME reports as missing only when the
@@ -163,7 +168,12 @@ public class ImapMailboxSyncService {
 
     // ---------------------------------------------------------------- the sync itself
 
+    /** Always as the default desk: the mailbox being read is that desk's (EnvironmentMailbox). */
     private void syncIfIdle() {
+        TenantContext.runAs(Tenant.DEFAULT_ID, this::syncAsDefaultDesk);
+    }
+
+    private void syncAsDefaultDesk() {
         if (!syncing.compareAndSet(false, true)) {
             log.debug("Mailbox sync already running; this one is skipped");
             return;

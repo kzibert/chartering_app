@@ -12,8 +12,10 @@ import com.chartering.repository.ContactRepository;
 import com.chartering.service.mail.CircularProvider;
 import com.chartering.service.mail.CircularSendException;
 import com.chartering.service.mail.CircularSender;
+import com.chartering.service.mail.EnvironmentMailbox;
 import com.chartering.service.mail.MailReplyService;
 import com.chartering.service.mail.SmtpCircularSender;
+import com.chartering.tenancy.TenantContext;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -127,6 +129,13 @@ public class EmailCampaignService {
      */
     private volatile Stop stopRequested = Stop.NONE;
     private volatile RunState state = RunState.idle();
+
+    /**
+     * The desk {@link #state} describes. One campaign at a time for the installation - it goes
+     * out through the one mailbox - but its recipients, subject and progress are that desk's
+     * business, so every other desk is shown an idle sender.
+     */
+    private volatile Long stateFor;
 
     /** Nothing asked for; stop and keep the run resumable; stop and close the run. */
     private enum Stop {NONE, PAUSE, CANCEL}
@@ -429,7 +438,8 @@ public class EmailCampaignService {
         stopRequested = Stop.NONE;
         running.set(true);
         state = RunState.starting(job);
-        worker.submit(() -> execute(job));
+        stateFor = TenantContext.require();
+        worker.submit(TenantContext.carry(() -> execute(job)));
         return status();
     }
 
@@ -453,14 +463,20 @@ public class EmailCampaignService {
     }
 
     public CampaignStatusResponse status() {
-        RunState s = state;
+        boolean mine = isThisDesks();
+        RunState s = mine ? state : RunState.idle();
+        boolean running = mine && this.running.get();
         return new CampaignStatusResponse(
-                s.state(), running.get(), s.runId(), s.subject(), s.total(), s.sent(), s.failed(), s.skipped(),
+                s.state(), running, s.runId(), s.subject(), s.total(), s.sent(), s.failed(), s.skipped(),
                 s.currentEmail(), s.startedAt(), s.finishedAt(), etaSeconds(s), s.lastError(), s.message(),
                 s.batch(), s.batchCount(), s.paused(), s.nextBatchAt(),
                 // Resumable only once the worker has actually stopped: while it is still
                 // winding down, its recipient rows are not settled and a resume would race it.
-                !running.get() && s.runId() != null && s.sent() + s.failed() < s.total());
+                !running && s.runId() != null && s.sent() + s.failed() < s.total());
+    }
+
+    private boolean isThisDesks() {
+        return stateFor != null && stateFor.equals(TenantContext.current().orElse(null));
     }
 
     /** Every circulation with somebody still to reach, newest first. */
@@ -468,8 +484,9 @@ public class EmailCampaignService {
         return history.resumable();
     }
 
+    /** The send log is one file for the installation; only the desk whose run it records reads it. */
     public String logContents() {
-        return campaignLog.read();
+        return isThisDesks() ? campaignLog.read() : "";
     }
 
     /**
@@ -495,7 +512,7 @@ public class EmailCampaignService {
     }
 
     private synchronized CampaignStatusResponse stop(Stop mode, String logLine) {
-        if (!running.get()) {
+        if (!running.get() || !isThisDesks()) {
             throw new IllegalStateException("No campaign is running.");
         }
         // A cancel after a pause still cancels; a pause after a cancel does not un-cancel,
@@ -936,6 +953,9 @@ public class EmailCampaignService {
 
     /** What the provider in force still needs before a send would even be attempted. */
     private List<String> missingSettings(SettingsService.CirculationSettings cfg) {
+        if (!EnvironmentMailbox.belongsToCurrentDesk()) {
+            return List.of(EnvironmentMailbox.NOT_THIS_DESK);
+        }
         return senderFor(cfg.provider()).missingSettings(cfg);
     }
 

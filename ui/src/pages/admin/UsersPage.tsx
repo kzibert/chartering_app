@@ -21,6 +21,7 @@ import { usersApi, type UserPasswordResponse, type UserResponse } from '../../ap
 import { ROLE_LABELS, type UserRole } from '../../api/auth';
 import { useSession } from '../../auth/session';
 import { MIN_PASSWORD_LENGTH } from '../../auth/ChangePasswordForm';
+import { tenantsApi } from '../../api/tenants';
 
 const roleColor: Record<UserRole, string> = {
   USER: 'default',
@@ -180,7 +181,14 @@ function CreateUserModal({
   onCreated: (res: UserPasswordResponse) => void;
 }) {
   const [form] = Form.useForm();
+  const session = useSession();
   const create = useMutation({ mutationFn: usersApi.create, onSuccess: onCreated });
+  // Only a platform administrator chooses the desk; everybody else creates on their own.
+  const desks = useQuery({
+    queryKey: ['admin', 'tenants'],
+    queryFn: tenantsApi.list,
+    enabled: isPlatform && open,
+  });
 
   useEffect(() => {
     if (open) form.resetFields();
@@ -199,7 +207,7 @@ function CreateUserModal({
       <Form
         form={form}
         layout="vertical"
-        initialValues={{ role: 'USER' }}
+        initialValues={{ role: 'USER', tenantId: session.tenantId }}
         onFinish={(v) => create.mutate({ ...v, password: v.password || undefined })}
       >
         <Form.Item
@@ -220,6 +228,14 @@ function CreateUserModal({
         <Form.Item name="role" label="Role" rules={[{ required: true }]}>
           <Select options={roleOptions(isPlatform)} />
         </Form.Item>
+        {isPlatform && (
+          <Form.Item name="tenantId" label="Desk" rules={[{ required: true }]}>
+            <Select
+              loading={desks.isLoading}
+              options={(desks.data ?? []).map((d) => ({ value: d.id, label: d.name }))}
+            />
+          </Form.Item>
+        )}
         <Form.Item
           name="password"
           label="Password"
@@ -361,7 +377,7 @@ function EditUserModal({
  * The one time a password is shown. Said plainly, because closing this without copying it
  * means resetting it again.
  */
-function IssuedPasswordModal({
+export function IssuedPasswordModal({
   issued,
   onClose,
 }: {

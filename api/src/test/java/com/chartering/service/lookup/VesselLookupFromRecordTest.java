@@ -51,7 +51,8 @@ class VesselLookupFromRecordTest {
         props.setMaxCandidates(5);
 
         service = new VesselLookupService(props, provider, lookups,
-                mock(IntakeItemRepository.class), vessels, new ObjectMapper());
+                mock(IntakeItemRepository.class), vessels, new ObjectMapper(),
+                mock(com.chartering.tenancy.TenantDirectory.class));
 
         when(provider.name()).thenReturn("test");
         when(lookups.save(any(VesselLookup.class))).thenAnswer(i -> i.getArgument(0));

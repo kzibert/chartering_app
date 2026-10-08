@@ -4,7 +4,6 @@ import com.chartering.config.BrevoProperties;
 import com.chartering.config.MailCampaignProperties;
 import com.chartering.dto.CirculationSettingsRequest;
 import com.chartering.model.AppSetting;
-import com.chartering.repository.AppSettingRepository;
 import com.chartering.service.mail.CircularProvider;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -94,7 +93,7 @@ public class SettingsService {
     /** A day between two messages is already absurd; beyond that it is a typo. */
     private static final long MAX_DELAY_ALLOWED_MS = 86_400_000L;
 
-    private final AppSettingRepository repository;
+    private final SettingsStore repository;
     private final MailCampaignProperties props;
     private final BrevoProperties brevo;
     private final JavaMailSender mailSender;

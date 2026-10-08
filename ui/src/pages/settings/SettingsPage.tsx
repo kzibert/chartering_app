@@ -26,6 +26,7 @@ import ParserSettingsCard from './ParserSettingsCard';
 import FeedSettingsCard from './FeedSettingsCard';
 import MatchSettingsCard from './MatchSettingsCard';
 import OwnAddressesCard from './OwnAddressesCard';
+import { useSession } from '../../auth/session';
 
 /**
  * Delays are stored in milliseconds but shown in seconds — nobody reasons about a send
@@ -62,6 +63,7 @@ const toForm = (s: CirculationSettingsRequest): FormValues => ({
 
 export default function SettingsPage() {
   const { message } = App.useApp();
+  const session = useSession();
   const qc = useQueryClient();
   const [form] = Form.useForm<FormValues>();
 
@@ -139,6 +141,20 @@ export default function SettingsPage() {
 
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
+      {/* Said once, here, rather than as a refusal on every Save: the server decides it either
+          way (SettingsStore), and a card that looks editable and then refuses is the worse
+          way to find out. */}
+      {session.role !== 'PLATFORM_ADMIN' && (
+        <Alert
+          type="info"
+          showIcon
+          message={
+            session.role === 'USER'
+              ? `These are ${session.tenantName}'s settings. A desk administrator changes them; you can read them here.`
+              : `These are ${session.tenantName}'s settings. The parser's and the feed model's servers, the sweep and fetch timers and the context window are shared by every desk and changed by a platform administrator.`
+          }
+        />
+      )}
       <Card title="Sent today" loading={todayQ.isLoading}>
         <SendingTodayPanel today={todayQ.data} />
       </Card>

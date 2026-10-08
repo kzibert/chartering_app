@@ -21,6 +21,7 @@ import {
   ReadOutlined,
   KeyOutlined,
   SafetyOutlined,
+  ApartmentOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -40,7 +41,7 @@ const { Sider, Header, Content } = Layout;
 const KEYS = [
   '/', '/cargoes', '/open-fleet', '/vessels', '/companies', '/people',
   '/circulation-lists', '/circulars', '/mailbox', '/feed', '/intake', '/analysis', '/history',
-  '/settings', '/admin/users',
+  '/settings', '/admin/users', '/admin/tenants',
 ];
 
 /**
@@ -170,6 +171,9 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     // down here: it is about the application rather than the work.
     ...(roleAtLeast(session.role, 'TENANT_ADMIN')
       ? [{ key: '/admin/users', icon: <SafetyOutlined />, label: 'Users' }]
+      : []),
+    ...(session.role === 'PLATFORM_ADMIN'
+      ? [{ key: '/admin/tenants', icon: <ApartmentOutlined />, label: 'Desks' }]
       : []),
   ];
 

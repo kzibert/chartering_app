@@ -114,6 +114,9 @@ public class MailReplyService {
 
     /** What is stopping a reply going out by the route in force, in words the user can act on. */
     public List<String> missingSettings(CirculationSettings cfg) {
+        if (!EnvironmentMailbox.belongsToCurrentDesk()) {
+            return List.of(EnvironmentMailbox.NOT_THIS_DESK);
+        }
         return replyProvider() == CircularProvider.BREVO
                 ? brevo.missingSettings(replyFromAddress(cfg))
                 : smtp.missingSettings(cfg);
