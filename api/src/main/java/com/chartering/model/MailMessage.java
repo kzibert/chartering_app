@@ -1,5 +1,6 @@
 package com.chartering.model;
 
+import com.chartering.tenancy.Owned;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
@@ -25,7 +26,8 @@ import java.time.LocalDateTime;
 @Setter
 @Entity
 @Table(name = "mail_messages")
-public class MailMessage {
+@EntityListeners(Owned.Stamp.class)
+public class MailMessage implements Owned {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -35,6 +37,13 @@ public class MailMessage {
     @TenantId
     @Column(name = "tenant_id", nullable = false, updatable = false)
     private Long tenantId;
+
+    /**
+     * Whose mailbox this belongs to. Stamped on insert (Owned.Stamp); null only on rows that
+     * predate accounts, until MailOwnership assigns them at startup.
+     */
+    @Column(name = "owner_user_id")
+    private Long ownerUserId;
 
     // ---- identity on the server ----
 

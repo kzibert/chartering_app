@@ -12,7 +12,7 @@ import com.chartering.repository.ContactRepository;
 import com.chartering.service.mail.CircularProvider;
 import com.chartering.service.mail.CircularSendException;
 import com.chartering.service.mail.CircularSender;
-import com.chartering.service.mail.EnvironmentMailbox;
+import com.chartering.service.mail.EnvironmentBrevo;
 import com.chartering.service.mail.MailReplyService;
 import com.chartering.service.mail.SmtpCircularSender;
 import com.chartering.tenancy.TenantContext;
@@ -953,8 +953,10 @@ public class EmailCampaignService {
 
     /** What the provider in force still needs before a send would even be attempted. */
     private List<String> missingSettings(SettingsService.CirculationSettings cfg) {
-        if (!EnvironmentMailbox.belongsToCurrentDesk()) {
-            return List.of(EnvironmentMailbox.NOT_THIS_DESK);
+        // Through the mailbox the caller sends from is the SMTP sender's question; the Brevo
+        // account is the default desk's.
+        if (cfg.provider() == CircularProvider.BREVO && !EnvironmentBrevo.belongsToCurrentDesk()) {
+            return List.of(EnvironmentBrevo.NOT_THIS_DESK);
         }
         return senderFor(cfg.provider()).missingSettings(cfg);
     }

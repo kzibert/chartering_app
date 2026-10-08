@@ -1,11 +1,9 @@
 package com.chartering.service.mail;
 
-import com.chartering.config.MailboxCredentials;
 import com.chartering.config.MailboxProperties;
 import com.chartering.exception.MailNotConfiguredException;
 import com.chartering.model.MailServerFolder;
 import com.chartering.model.MailSyncState;
-import com.chartering.model.Tenant;
 import com.chartering.repository.MailSyncStateRepository;
 import com.chartering.tenancy.TenantContext;
 import jakarta.annotation.PreDestroy;
@@ -37,9 +35,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * The only thing in the application that talks to IMAP, and it only ever reads.
@@ -94,18 +93,19 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ImapMailboxSyncService {
 
     private final MailboxProperties props;
-    private final MailboxCredentials credentials;
+    private final MailAccounts accounts;
     private final MailSyncStateRepository syncState;
     private final MailIngestService ingest;
     private final MailServerFolderService serverFolders;
     private final MimeBodyExtractor bodies;
 
     /**
-     * One sync at a time, process-wide. The poller and the tab's Sync button share this: two
-     * readers would fetch the same UID range twice, and both would be writing the same cursor
-     * at the end of it.
+     * One sync at a time per mailbox. The poller and the tab's Sync button share this: two
+     * readers of one mailbox would fetch the same UID range twice, and both would be writing
+     * the same cursor at the end of it. Two people's mailboxes are two different servers'
+     * worth of work and do not wait for each other.
      */
-    private final AtomicBoolean syncing = new AtomicBoolean(false);
+    private final Set<Long> syncing = ConcurrentHashMap.newKeySet();
 
     /**
      * Manual syncs run here rather than on the request thread. A first sync against a busy
@@ -121,74 +121,90 @@ public class ImapMailboxSyncService {
     // ---------------------------------------------------------------- entry points
 
     /**
-     * The poller. Skips quietly when the mailbox is not configured — an app that was never
-     * given credentials should not spend a login attempt every five minutes proving it.
+     * The poller: every mailbox in turn, each read as its owner on its owner's desk, so what it
+     * stores is theirs. Skips quietly when there is none - an app that was never given
+     * credentials should not spend a login attempt every five minutes proving it.
      */
     @Scheduled(
             fixedDelayString = "${chartering.mailbox.poll-interval-ms:300000}",
             initialDelayString = "${chartering.mailbox.poll-interval-ms:300000}")
     public void poll() {
-        if (!isConfigured()) return;
-        syncIfIdle();
+        for (MailAccounts.Mailbox mailbox : accounts.forSync()) {
+            if (missingSettings(mailbox).isEmpty()) {
+                syncIfIdle(mailbox);
+            }
+        }
     }
 
-    /** The Sync button. Returns immediately; the tab watches {@link #isSyncing()}. */
+    /** The Sync button: the caller's own mailbox. Returns immediately; the tab watches {@link #isSyncing()}. */
     public void requestSync() {
-        if (!isConfigured()) {
+        List<String> missing = missingSettings();
+        if (!missing.isEmpty()) {
             // Not a bad request and not a conflict: the caller asked for something reasonable
             // and the server has not been given what it needs to do it.
             throw new MailNotConfiguredException(
-                    "The mailbox is not configured. Missing: " + String.join(", ", missingSettings()));
+                    "The mailbox is not configured. Missing: " + String.join(", ", missing));
         }
-        worker.submit(this::syncIfIdle);
+        MailAccounts.Mailbox mailbox = accounts.current().orElseThrow();
+        worker.submit(() -> syncIfIdle(mailbox));
     }
 
+    /** Whether the caller's own mailbox is being read right now. */
     public boolean isSyncing() {
-        return syncing.get();
+        return TenantContext.currentUser().map(syncing::contains).orElse(false);
     }
 
     public boolean isConfigured() {
-        return props.isEnabled() && missingSettings().isEmpty();
+        return missingSettings().isEmpty();
     }
 
-    /** What is missing, named as the environment variable that supplies it. */
+    /** What the caller's mailbox still needs, named as whatever supplies it. */
     public List<String> missingSettings() {
+        return accounts.current().map(this::missingSettings).orElse(List.of(MailAccounts.NO_MAILBOX));
+    }
+
+    /**
+     * The server's mailbox names environment variables, as it always did; a personal one is
+     * complete when saved, and can only lack a password the server can no longer read.
+     */
+    private List<String> missingSettings(MailAccounts.Mailbox mailbox) {
         List<String> missing = new ArrayList<>();
-        if (!EnvironmentMailbox.belongsToCurrentDesk()) {
-            return List.of(EnvironmentMailbox.NOT_THIS_DESK);
+        if (mailbox.environment()) {
+            if (!props.isEnabled()) missing.add("IMAP_ENABLED=true");
+            if (isBlank(props.getHost())) missing.add("IMAP_HOST");
+            // Through the resolver, so a blank IMAP_USERNAME reports as missing only when the
+            // SMTP one cannot stand in for it - which is the whole point of the fallback.
+            if (isBlank(mailbox.username())) missing.add("IMAP_USERNAME (or MAIL_USERNAME)");
+            if (isBlank(mailbox.password())) missing.add("IMAP_PASSWORD (or MAIL_PASSWORD)");
+        } else if (isBlank(mailbox.password())) {
+            missing.add("your mailbox password, saved again (Settings > My mailbox)");
         }
-        if (!props.isEnabled()) missing.add("IMAP_ENABLED=true");
-        if (isBlank(props.getHost())) missing.add("IMAP_HOST");
-        // Through the resolver, so a blank IMAP_USERNAME reports as missing only when the
-        // SMTP one cannot stand in for it — which is the whole point of the fallback.
-        if (isBlank(credentials.username())) missing.add("IMAP_USERNAME (or MAIL_USERNAME)");
-        if (isBlank(credentials.password())) missing.add("IMAP_PASSWORD (or MAIL_PASSWORD)");
         return missing;
     }
 
     // ---------------------------------------------------------------- the sync itself
 
-    /** Always as the default desk: the mailbox being read is that desk's (EnvironmentMailbox). */
-    private void syncIfIdle() {
-        TenantContext.runAs(Tenant.DEFAULT_ID, this::syncAsDefaultDesk);
+    /** As the mailbox's owner, on their desk: everything the sync stores is theirs. */
+    private void syncIfIdle(MailAccounts.Mailbox mailbox) {
+        TenantContext.runAs(mailbox.tenantId(), mailbox.userId(), () -> syncAsOwner(mailbox));
     }
 
-    private void syncAsDefaultDesk() {
-        if (!syncing.compareAndSet(false, true)) {
+    private void syncAsOwner(MailAccounts.Mailbox mailbox) {
+        if (!syncing.add(mailbox.userId())) {
             log.debug("Mailbox sync already running; this one is skipped");
             return;
         }
         try {
-            sync();
+            sync(mailbox);
         } catch (Exception e) {
             // Nothing above this catches: the poller thread dying would stop the mailbox
             // updating for the life of the process, silently. Recorded against the primary
-            // folder because a failure here — the login, the folder listing — belongs to the
+            // folder because a failure here - the login, the folder listing - belongs to the
             // mailbox rather than to any one folder in it.
-            log.warn("Mailbox sync failed: {}", e.toString());
-            recordFailure(props.getFolder(), e);
+            log.warn("Mailbox sync failed for user {}: {}", mailbox.userId(), e.toString());
+            recordFailure(mailbox.folder(), e);
         } finally {
-            syncing.set(false);
+            syncing.remove(mailbox.userId());
         }
     }
 
@@ -196,14 +212,14 @@ public class ImapMailboxSyncService {
      * One pass over the whole mailbox: list the folders, then read them until the poll's
      * budget is spent.
      */
-    private void sync() throws MessagingException {
+    private void sync(MailAccounts.Mailbox mailbox) throws MessagingException {
         Store store = null;
         try {
-            store = connect();
+            store = connect(mailbox);
             List<MailServerFolder> tree = serverFolders.reconcile(discover(store));
 
             int budget = props.getMaxMessagesPerPoll();
-            for (MailServerFolder f : inReadingOrder(tree)) {
+            for (MailServerFolder f : inReadingOrder(tree, mailbox.folder())) {
                 if (budget <= 0) {
                     log.info("Poll budget of {} messages is spent; the folders behind it are read "
                             + "on the next poll", props.getMaxMessagesPerPoll());
@@ -392,14 +408,13 @@ public class ImapMailboxSyncService {
      * already records makes each poll pick up where the last one left off, with no rotation
      * state to keep.
      */
-    private List<MailServerFolder> inReadingOrder(List<MailServerFolder> tree) {
+    private List<MailServerFolder> inReadingOrder(List<MailServerFolder> tree, String primary) {
         Map<String, LocalDateTime> lastSync = new HashMap<>();
         for (MailSyncState s : syncState.findAll()) {
             if (s.getLastSyncAt() != null) {
                 lastSync.put(s.getImapFolder(), s.getLastSyncAt());
             }
         }
-        String primary = props.getFolder();
         List<MailServerFolder> queue = new ArrayList<>(tree);
         queue.sort(Comparator
                 .comparingInt((MailServerFolder f) -> f.getFullName().equalsIgnoreCase(primary) ? 0 : 1)
@@ -409,14 +424,14 @@ public class ImapMailboxSyncService {
         return queue;
     }
 
-    private Store connect() throws MessagingException {
-        String protocol = props.isSsl() ? "imaps" : "imap";
+    private Store connect(MailAccounts.Mailbox mailbox) throws MessagingException {
+        String protocol = mailbox.imapSsl() ? "imaps" : "imap";
         Properties p = new Properties();
         p.put("mail.store.protocol", protocol);
-        p.put("mail." + protocol + ".host", props.getHost());
-        p.put("mail." + protocol + ".port", String.valueOf(props.getPort()));
-        p.put("mail." + protocol + ".ssl.enable", String.valueOf(props.isSsl()));
-        p.put("mail." + protocol + ".ssl.trust", props.getHost());
+        p.put("mail." + protocol + ".host", mailbox.imapHost());
+        p.put("mail." + protocol + ".port", String.valueOf(mailbox.imapPort()));
+        p.put("mail." + protocol + ".ssl.enable", String.valueOf(mailbox.imapSsl()));
+        p.put("mail." + protocol + ".ssl.trust", mailbox.imapHost());
         p.put("mail." + protocol + ".connectiontimeout", String.valueOf(props.getConnectTimeoutMs()));
         p.put("mail." + protocol + ".timeout", String.valueOf(props.getReadTimeoutMs()));
         // Zoho, among others, answers STARTTLS on the plain port; asking for it costs
@@ -424,7 +439,7 @@ public class ImapMailboxSyncService {
         p.put("mail." + protocol + ".starttls.enable", "true");
 
         Store store = Session.getInstance(p).getStore(protocol);
-        store.connect(props.getHost(), props.getPort(), credentials.username(), credentials.password());
+        store.connect(mailbox.imapHost(), mailbox.imapPort(), mailbox.username(), mailbox.password());
         return store;
     }
 
@@ -652,7 +667,7 @@ public class ImapMailboxSyncService {
     }
 
     private MailSyncState stateFor(String folderName) {
-        return syncState.findById(folderName).orElseGet(() -> {
+        return syncState.findByImapFolder(folderName).orElseGet(() -> {
             MailSyncState fresh = new MailSyncState();
             fresh.setImapFolder(folderName);
             return fresh;

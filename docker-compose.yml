@@ -114,6 +114,11 @@ services:
       # Reading the mailbox: the Mailbox tab's IMAP sync. Configured separately from the
       # sending block above because the two fail independently — an unreachable IMAP host
       # must not stop a circular going out. The mailbox is opened read-only.
+      # Every account has its own mailbox. This one, the server's, belongs to MAILBOX_OWNER
+      # (default: the first account); everybody else saves theirs on the Settings tab, and
+      # CREDENTIALS_KEY is what their passwords are encrypted under - unset, nobody can save one.
+      MAILBOX_OWNER: ${MAILBOX_OWNER:-}
+      CREDENTIALS_KEY: ${CREDENTIALS_KEY:-}
       IMAP_ENABLED: ${IMAP_ENABLED:-false}
       IMAP_HOST: ${IMAP_HOST:-imap.zoho.eu}
       IMAP_PORT: ${IMAP_PORT:-993}

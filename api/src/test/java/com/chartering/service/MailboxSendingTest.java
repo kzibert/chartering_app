@@ -7,6 +7,7 @@ import com.chartering.repository.MailMessageRepository;
 import com.chartering.repository.MailReplyRepository;
 import com.chartering.repository.MailServerFolderRepository;
 import com.chartering.repository.MailSyncStateRepository;
+import com.chartering.tenancy.TenantContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -34,6 +35,7 @@ class MailboxSendingTest {
 
     private static final LocalDateTime FROM = LocalDateTime.of(2026, 8, 24, 0, 0);
     private static final LocalDateTime UNTIL = FROM.plusDays(1);
+    private static final Long OWNER = 42L;
 
     @Mock
     private MailMessageRepository messages;
@@ -57,17 +59,18 @@ class MailboxSendingTest {
         sent.setSpecialUse(MailServerFolder.SENT);
         Mockito.when(serverFolderRows.findFirstBySpecialUseAndPresentTrue(MailServerFolder.SENT))
                 .thenReturn(Optional.of(sent));
-        Mockito.when(messages.countByImapFolderAndReceivedAtGreaterThanEqualAndReceivedAtLessThan(
-                        "Отправленные", FROM, UNTIL))
+        Mockito.when(messages.countByOwnerUserIdAndImapFolderAndReceivedAtGreaterThanEqualAndReceivedAtLessThan(
+                        OWNER, "Отправленные", FROM, UNTIL))
                 .thenReturn(9L);
         Mockito.when(replies.countBySentAtGreaterThanEqualAndSentAtLessThan(FROM, UNTIL))
                 .thenReturn(2);
 
         MailSyncState state = new MailSyncState();
         state.setLastSyncAt(LocalDateTime.of(2026, 8, 24, 15, 35));
-        Mockito.when(syncState.findById("Отправленные")).thenReturn(Optional.of(state));
+        Mockito.when(syncState.findByImapFolder("Отправленные")).thenReturn(Optional.of(state));
 
-        MailboxSendingResponse out = mailbox.sendingBetween(FROM, UNTIL);
+        // As one person: the Sent folder counted is their own mailbox's.
+        MailboxSendingResponse out = TenantContext.callAs(1L, OWNER, () -> mailbox.sendingBetween(FROM, UNTIL));
 
         assertThat(out.sent()).isEqualTo(9);
         assertThat(out.sentFolder()).isEqualTo("Отправленные");
@@ -84,7 +87,8 @@ class MailboxSendingTest {
         Mockito.when(replies.countBySentAtGreaterThanEqualAndSentAtLessThan(FROM, UNTIL))
                 .thenReturn(3);
 
-        MailboxSendingResponse out = mailbox.sendingBetween(FROM, UNTIL);
+        // As one person: the Sent folder counted is their own mailbox's.
+        MailboxSendingResponse out = TenantContext.callAs(1L, OWNER, () -> mailbox.sendingBetween(FROM, UNTIL));
 
         // Null, not 0. "Nothing was sent" and "nobody can tell you what was sent" are
         // different answers, and only one of them should reassure anybody.

@@ -1,8 +1,10 @@
 package com.chartering.model;
 
+import com.chartering.tenancy.Owned;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.TenantId;
 
 import java.time.LocalDateTime;
@@ -31,7 +33,9 @@ import java.time.LocalDateTime;
 @Setter
 @Entity
 @Table(name = "mail_server_folders")
-public class MailServerFolder {
+@EntityListeners(Owned.Stamp.class)
+@Filter(name = Owned.FILTER)
+public class MailServerFolder implements Owned {
 
     /** IMAP SPECIAL-USE, normalised. Absent for a folder the mailbox's owner made. */
     public static final String INBOX = "INBOX";
@@ -42,6 +46,9 @@ public class MailServerFolder {
     public static final String ARCHIVE = "ARCHIVE";
 
     @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
     @Column(name = "full_name", nullable = false, length = 255)
     private String fullName;
 
@@ -49,6 +56,13 @@ public class MailServerFolder {
     @TenantId
     @Column(name = "tenant_id", nullable = false, updatable = false)
     private Long tenantId;
+
+    /**
+     * Whose mailbox this belongs to. Stamped on insert (Owned.Stamp); null only on rows that
+     * predate accounts, until MailOwnership assigns them at startup.
+     */
+    @Column(name = "owner_user_id")
+    private Long ownerUserId;
 
     @Column(name = "display_name", nullable = false, length = 255)
     private String displayName;

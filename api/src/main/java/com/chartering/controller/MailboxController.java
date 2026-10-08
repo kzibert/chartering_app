@@ -1,11 +1,10 @@
 package com.chartering.controller;
 
-import com.chartering.config.MailboxCredentials;
 import com.chartering.config.MailboxProperties;
+import com.chartering.dto.MailComposeRequest;
 import com.chartering.dto.MailLinkRequest;
 import com.chartering.dto.MailMessageDetailResponse;
 import com.chartering.dto.MailMessageResponse;
-import com.chartering.dto.MailComposeRequest;
 import com.chartering.dto.MailPreviewResponse;
 import com.chartering.dto.MailReplyRequest;
 import com.chartering.dto.MailReplyResponse;
@@ -15,11 +14,13 @@ import com.chartering.dto.PageResponse;
 import com.chartering.model.MailSyncState;
 import com.chartering.repository.MailMessageRepository;
 import com.chartering.repository.MailSyncStateRepository;
-import com.chartering.service.MailboxService;
 import com.chartering.service.MailboxService.MailboxFilter;
+import com.chartering.service.MailboxService;
 import com.chartering.service.mail.ImapMailboxSyncService;
+import com.chartering.service.mail.MailAccounts;
 import com.chartering.service.mail.MailReplyService;
 import com.chartering.service.mail.MailServerFolderService;
+import com.chartering.tenancy.TenantContext;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -51,7 +52,7 @@ public class MailboxController {
     private final MailMessageRepository messages;
     private final MailServerFolderService serverFolders;
     private final MailboxProperties props;
-    private final MailboxCredentials credentials;
+    private final MailAccounts accounts;
 
     @GetMapping("/messages")
     @Operation(summary = "Search the synced mail",
@@ -288,17 +289,19 @@ public class MailboxController {
                 .map(s -> s.getImapFolder() + ": " + s.getLastError())
                 .orElse(null);
 
+        // The caller's own mailbox: the server's for its owner, a saved one for anybody else.
+        Optional<MailAccounts.Mailbox> mine = accounts.current();
         return new MailboxStatusResponse(
-                props.isEnabled(),
+                mine.map(MailAccounts.Mailbox::imapEnabled).orElse(false),
                 sync.isConfigured(),
                 sync.missingSettings(),
-                props.getHost(),
-                props.getFolder(),
+                mine.map(MailAccounts.Mailbox::imapHost).orElse(null),
+                mine.map(MailAccounts.Mailbox::folder).orElse(null),
                 serverFolders.listWithCounts().size(),
-                // The account it will actually connect as, which is the SMTP one whenever
-                // no separate IMAP username was given. Showing the raw property here would
-                // display a blank while the sync ran perfectly well.
-                credentials.username(),
+                // The account it will actually connect as, which for the server's mailbox is the
+                // SMTP one whenever no separate IMAP username was given. Showing the raw
+                // property here would display a blank while the sync ran perfectly well.
+                mine.map(MailAccounts.Mailbox::username).orElse(null),
                 sync.isSyncing(),
                 lastSyncAt,
                 status,
@@ -306,7 +309,7 @@ public class MailboxController {
                 states.stream().mapToInt(MailSyncState::getLastFetched).sum(),
                 states.stream().mapToInt(MailSyncState::getLastStored).sum(),
                 props.getPollIntervalMs(),
-                messages.count(),
-                messages.countByReadFalse());
+                messages.countByOwnerUserId(TenantContext.requireUser()),
+                messages.countByOwnerUserIdAndReadFalse(TenantContext.requireUser()));
     }
 }

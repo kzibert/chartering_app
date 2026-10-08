@@ -12,8 +12,10 @@ import com.chartering.repository.MailReplyRepository;
 import com.chartering.service.EmailFooterService;
 import com.chartering.service.HtmlSanitizer;
 import com.chartering.service.MailTemplateService;
-import com.chartering.service.SettingsService;
 import com.chartering.service.SettingsService.CirculationSettings;
+import com.chartering.service.SettingsService;
+import com.chartering.tenancy.TestLogin;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -82,8 +84,16 @@ class MailReplyRoutingTest {
 
     private MailReplyService service;
 
+    @AfterEach
+    void logOut() {
+        TestLogin.clear();
+    }
+
     @BeforeEach
     void setUp() {
+        // Replies go out from the caller's own mailbox, as the caller.
+        TestLogin.asDefault();
+        when(transport.hasMailbox()).thenReturn(true);
         service = new MailReplyService(messages, replies, footers, templates, sanitizer,
                 transport, smtp, brevo, settings, props, contacts);
         props.setEnabled(true);
@@ -99,7 +109,9 @@ class MailReplyRoutingTest {
         when(sanitizer.clean(anyString())).thenAnswer(i -> i.getArgument(0));
         when(templates.renderHtml(anyString(), any())).thenAnswer(i -> i.getArgument(0));
         when(templates.htmlToText(anyString())).thenReturn("plain text");
-        when(messages.findById(7L)).thenReturn(Optional.of(answeredMessage()));
+        MailMessage answered = answeredMessage();
+        answered.setOwnerUserId(TestLogin.USER_ID);
+        when(messages.findById(7L)).thenReturn(Optional.of(answered));
         when(replies.save(any())).thenAnswer(i -> i.getArgument(0));
     }
 

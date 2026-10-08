@@ -152,6 +152,12 @@ chartering:
   # and the startup log says so. That is on purpose. A default password on an application
   # reachable from the internet is the same as no password, and it is the kind of default
   # nobody ever gets round to changing.
+  # Encrypts the mailbox passwords people save for their own accounts (CredentialCipher).
+  # Any long random string; unset, personal mailboxes cannot be saved. Changing it makes the
+  # stored passwords unreadable - everyone types theirs again - and nothing else.
+  credentials:
+    key: ${CREDENTIALS_KEY:}
+
   auth:
     # The username and password seed the FIRST account (a platform administrator on the
     # default desk) when the users table is empty, and are not read again after that unless
@@ -215,6 +221,12 @@ chartering:
   # The mailbox is opened READ-ONLY. Nothing is ever written back to it: folders and
   # filing rules are the app's own, so a mis-written rule can only rearrange rows here.
   mailbox:
+    # Whose mailbox the one configured here is. Every person has their own mailbox now; this
+    # one - the server's, with its credentials in the environment - belongs to the account
+    # named here, on whatever desk that account is on. Defaults to the first account.
+    # Empty means the first account (chartering.auth.username) - resolved in MailAccounts rather
+    # than here, because compose always defines the variable and an empty one would win.
+    owner: ${MAILBOX_OWNER:}
     enabled: ${IMAP_ENABLED:false}
     host: ${IMAP_HOST:imap.zoho.eu}
     port: ${IMAP_PORT:993}

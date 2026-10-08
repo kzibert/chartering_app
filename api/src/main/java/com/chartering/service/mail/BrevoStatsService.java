@@ -68,9 +68,9 @@ public class BrevoStatsService {
      * screen that tells the user how much they have already sent today.
      */
     public BrevoUsage today() {
-        // The key is the default desk's (EnvironmentMailbox); another desk's screen has no
+        // The key is the default desk's (EnvironmentBrevo); another desk's screen has no
         // business reading that account's volume.
-        if (!EnvironmentMailbox.belongsToCurrentDesk()
+        if (!EnvironmentBrevo.belongsToCurrentDesk()
                 || brevo.getApiKey() == null || brevo.getApiKey().isBlank()) {
             return BrevoUsage.notConfigured();
         }

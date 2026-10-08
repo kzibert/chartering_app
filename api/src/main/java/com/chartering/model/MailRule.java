@@ -1,8 +1,10 @@
 package com.chartering.model;
 
+import com.chartering.tenancy.Owned;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.TenantId;
 
 import java.time.LocalDateTime;
@@ -23,7 +25,9 @@ import java.util.List;
 @Setter
 @Entity
 @Table(name = "mail_rules")
-public class MailRule {
+@EntityListeners(Owned.Stamp.class)
+@Filter(name = Owned.FILTER)
+public class MailRule implements Owned {
 
     /** Whether every condition has to match, or just one of them. */
     public enum MatchType {ALL, ANY}
@@ -36,6 +40,13 @@ public class MailRule {
     @TenantId
     @Column(name = "tenant_id", nullable = false, updatable = false)
     private Long tenantId;
+
+    /**
+     * Whose mailbox this belongs to. Stamped on insert (Owned.Stamp); null only on rows that
+     * predate accounts, until MailOwnership assigns them at startup.
+     */
+    @Column(name = "owner_user_id")
+    private Long ownerUserId;
 
     @Column(nullable = false, length = 150)
     private String name;

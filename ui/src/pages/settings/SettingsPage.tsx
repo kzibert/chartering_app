@@ -26,6 +26,7 @@ import ParserSettingsCard from './ParserSettingsCard';
 import FeedSettingsCard from './FeedSettingsCard';
 import MatchSettingsCard from './MatchSettingsCard';
 import OwnAddressesCard from './OwnAddressesCard';
+import MyMailboxCard from './MyMailboxCard';
 import { useSession } from '../../auth/session';
 
 /**
@@ -414,6 +415,7 @@ export default function SettingsPage() {
         />
       </Card>
 
+      <MyMailboxCard />
       <OwnAddressesCard />
 
       <ParserSettingsCard />

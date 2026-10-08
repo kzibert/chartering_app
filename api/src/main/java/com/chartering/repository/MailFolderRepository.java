@@ -13,6 +13,13 @@ public interface MailFolderRepository extends JpaRepository<MailFolder, Long> {
     /** Rail order: the explicit order first, then name, so untouched folders still sort sanely. */
     List<MailFolder> findAllByOrderBySortOrderAscNameAsc();
 
+    /**
+     * One of the viewer's own folders. A query rather than {@code findById}, because the owner
+     * filter applies to queries and not to loads by id (see {@code MailFolder}).
+     */
+    @Query("select f from MailFolder f where f.id = :id")
+    Optional<MailFolder> findOwned(@Param("id") Long id);
+
     /** Names are the identity in the UI, so uniqueness is checked the way the index enforces it. */
     @Query("select f from MailFolder f where lower(f.name) = lower(:name)")
     Optional<MailFolder> findByNameIgnoringCase(@Param("name") String name);

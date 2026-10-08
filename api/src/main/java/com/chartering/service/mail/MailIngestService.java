@@ -6,6 +6,7 @@ import com.chartering.model.MailRule;
 import com.chartering.repository.MailMessageRepository;
 import com.chartering.service.MailRuleService;
 import com.chartering.service.MailboxService;
+import com.chartering.tenancy.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -129,7 +130,7 @@ public class MailIngestService {
             // different folder" is not a statement that can be made about it at all.
             return false;
         }
-        return messages.findByMessageId(in.messageId())
+        return messages.findByOwnerUserIdAndMessageId(TenantContext.requireUser(), in.messageId())
                 .filter(m -> !in.imapFolder().equals(m.getImapFolder()))
                 .map(m -> {
                     log.info("Message \"{}\" has moved on the server: {} -> {}",
@@ -151,7 +152,7 @@ public class MailIngestService {
                 .filter(id -> id != null && !id.isBlank())
                 .distinct()
                 .toList();
-        return ids.isEmpty() ? new HashSet<>() : new HashSet<>(messages.findExistingMessageIds(ids));
+        return ids.isEmpty() ? new HashSet<>() : new HashSet<>(messages.findExistingMessageIds(TenantContext.requireUser(), ids));
     }
 
     private boolean isDuplicate(Incoming in, Set<String> alreadyStored) {
@@ -160,8 +161,8 @@ public class MailIngestService {
         }
         // No Message-ID: fall back to the server's own pointer. Rare, and the reason the
         // UID triple has a unique index of its own.
-        return in.uid() != null && messages.findByImapFolderAndImapValidityAndImapUid(
-                in.imapFolder(), in.uidValidity(), in.uid()).isPresent();
+        return in.uid() != null && messages.findByOwnerUserIdAndImapFolderAndImapValidityAndImapUid(
+                TenantContext.requireUser(), in.imapFolder(), in.uidValidity(), in.uid()).isPresent();
     }
 
     private static MailMessage toEntity(Incoming in) {

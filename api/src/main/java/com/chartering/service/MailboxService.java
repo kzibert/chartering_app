@@ -24,6 +24,7 @@ import com.chartering.repository.MailSyncStateRepository;
 import com.chartering.repository.PersonRepository;
 import com.chartering.service.mail.MailServerFolderService;
 import com.chartering.specification.MailMessageSpecification;
+import com.chartering.tenancy.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -85,9 +86,19 @@ public class MailboxService {
      * reading it means — every mail client in existence does this, and making it a separate
      * click would mean an inbox whose unread badge never went down on its own.
      */
+    /**
+     * A message, opened from the Mailbox tab or as the source of a shared record.
+     *
+     * <p>The owner may open any of their own mail. Anybody else on the desk may open a message
+     * only as the source of something the desk shares - a cargo, a position, an Intake
+     * question - and only to read it: the "original email" those screens offer is the reason
+     * the parser read the mail at all. A colleague's other mail answers 404, as an id on
+     * another desk does.
+     */
     @Transactional
     public MailMessageDetailResponse getDetail(Long id, boolean markRead) {
         MailMessage m = messages.findById(id)
+                .filter(found -> isMine(found) || (!markRead && messages.isSharedSource(found.getId())))
                 .orElseThrow(() -> new ResourceNotFoundException("Message", id));
         if (markRead && !m.isRead()) {
             m.setRead(true);
@@ -126,9 +137,9 @@ public class MailboxService {
         }
 
         String folder = sent.get().getFullName();
-        int inFolder = (int) messages.countByImapFolderAndReceivedAtGreaterThanEqualAndReceivedAtLessThan(
-                folder, from, until);
-        LocalDateTime syncedAt = syncState.findById(folder)
+        int inFolder = (int) messages.countByOwnerUserIdAndImapFolderAndReceivedAtGreaterThanEqualAndReceivedAtLessThan(
+                TenantContext.requireUser(), folder, from, until);
+        LocalDateTime syncedAt = syncState.findByImapFolder(folder)
                 .map(MailSyncState::getLastSyncAt)
                 .orElse(null);
         return new MailboxSendingResponse(sent.get().getDisplayName(), inFolder, syncedAt, replied);
@@ -138,15 +149,14 @@ public class MailboxService {
 
     @Transactional
     public MailMessageResponse setRead(Long id, boolean read) {
-        MailMessage m = messages.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Message", id));
+        MailMessage m = ownMessage(id);
         m.setRead(read);
         return mapper.toMailMessageResponse(messages.save(m));
     }
 
     @Transactional
     public int setReadBulk(List<Long> ids, boolean read) {
-        List<MailMessage> found = messages.findAllById(ids);
+        List<MailMessage> found = ownMessages(ids);
         found.forEach(m -> m.setRead(read));
         messages.saveAll(found);
         return found.size();
@@ -187,8 +197,7 @@ public class MailboxService {
      */
     @Transactional
     public MailMessageResponse move(Long id, Long folderId) {
-        MailMessage m = messages.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Message", id));
+        MailMessage m = ownMessage(id);
         applyMove(m, resolveFolder(folderId));
         return mapper.toMailMessageResponse(messages.save(m));
     }
@@ -196,7 +205,7 @@ public class MailboxService {
     @Transactional
     public int moveBulk(List<Long> ids, Long folderId) {
         MailFolder target = resolveFolder(folderId);
-        List<MailMessage> found = messages.findAllById(ids);
+        List<MailMessage> found = ownMessages(ids);
         found.forEach(m -> applyMove(m, target));
         messages.saveAll(found);
         return found.size();
@@ -210,7 +219,7 @@ public class MailboxService {
 
     private MailFolder resolveFolder(Long folderId) {
         if (folderId == null) return null;
-        return folders.findById(folderId)
+        return folders.findOwned(folderId)
                 .orElseThrow(() -> new ResourceNotFoundException("Mail folder", folderId));
     }
 
@@ -228,8 +237,7 @@ public class MailboxService {
      */
     @Transactional
     public MailMessageResponse link(Long id, MailLinkRequest req) {
-        MailMessage m = messages.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Message", id));
+        MailMessage m = ownMessage(id);
 
         if (req.getCompanyId() == null && req.getPersonId() == null) {
             return unlink(m);
@@ -258,8 +266,7 @@ public class MailboxService {
 
     @Transactional
     public MailMessageResponse unlinkById(Long id) {
-        MailMessage m = messages.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Message", id));
+        MailMessage m = ownMessage(id);
         return unlink(m);
     }
 
@@ -375,8 +382,24 @@ public class MailboxService {
 
     // ---------------------------------------------------------------- internals
 
+    /** The caller's own message; anybody else's answers 404 (see getDetail). */
+    private MailMessage ownMessage(Long id) {
+        return messages.findById(id)
+                .filter(this::isMine)
+                .orElseThrow(() -> new ResourceNotFoundException("Message", id));
+    }
+
+    private List<MailMessage> ownMessages(List<Long> ids) {
+        return messages.findAllById(ids).stream().filter(this::isMine).toList();
+    }
+
+    private boolean isMine(MailMessage m) {
+        return TenantContext.requireUser().equals(m.getOwnerUserId());
+    }
+
     private Specification<MailMessage> buildSpec(MailboxFilter f) {
         return Specification.allOf(
+                MailMessageSpecification.ownedBy(TenantContext.requireUser()),
                 MailMessageSpecification.matches(f.search(), f.includeBody()),
                 MailMessageSpecification.inFolder(f.folderId()),
                 MailMessageSpecification.unfiled(f.unfiled()),

@@ -6,6 +6,7 @@ import com.chartering.exception.ResourceNotFoundException;
 import com.chartering.model.MailFolder;
 import com.chartering.repository.MailFolderRepository;
 import com.chartering.repository.MailMessageRepository;
+import com.chartering.tenancy.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -37,8 +38,8 @@ public class MailFolderService {
 
     @Transactional(readOnly = true)
     public List<MailFolderResponse> listWithCounts() {
-        Map<Long, Long> totals = countsByFolder(messages.countByFolder());
-        Map<Long, Long> unread = countsByFolder(messages.countUnreadByFolder());
+        Map<Long, Long> totals = countsByFolder(messages.countByFolder(TenantContext.requireUser()));
+        Map<Long, Long> unread = countsByFolder(messages.countUnreadByFolder(TenantContext.requireUser()));
 
         List<MailFolderResponse> out = new ArrayList<>();
         // The Inbox leads the rail: it is where everything arrives, and where anything the
@@ -63,7 +64,7 @@ public class MailFolderService {
 
     @Transactional
     public MailFolderResponse update(Long id, MailFolderRequest req) {
-        MailFolder folder = folders.findById(id)
+        MailFolder folder = folders.findOwned(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Mail folder", id));
         apply(folder, req);
         folders.save(folder);

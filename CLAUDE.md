@@ -102,7 +102,8 @@ Three things bite here:
   `V25__add_intake_decisions.sql` and `V26__add_web_intake.sql` and
   `V27__capture_web_into_analysis.sql` and `V28__add_intake_review_history.sql` and
   `V29__add_mail_reply_cc.sql` and `V30__add_tenants_and_users.sql` and
-  `V31__scope_data_to_tenants.sql` exist; the next one is V32.
+  `V31__scope_data_to_tenants.sql` and `V32__add_personal_mailboxes.sql` exist; the next
+  one is V33.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
@@ -153,12 +154,31 @@ scopes: `SettingsStore` routes each key to the desk's row or the installation's 
 are the installation's and only a platform administrator changes them; a desk's settings
 need a desk administrator. The settings classes ask by key and never see the split.
 
-**The environment's mailbox is desk 1's** (`service/mail/EnvironmentMailbox`). IMAP, SMTP and
-the Brevo key are configured once per deployment, so every other desk sees them as missing,
-through the same missing-settings lists the screens already explain; the sync always runs as
-desk 1. Boards are likewise read into Intake for desk 1 only, until which boards feed a
-desk's Intake is that desk's choice. Feed sources are installation-wide and only a platform
-administrator edits them.
+**Every person has their own mailbox** (V32). `service/mail/MailAccounts` answers "whose
+mailbox is this thread using": the server's — `IMAP_*`/`MAIL_*` in the environment, as
+before — for the account named by `MAILBOX_OWNER` (empty: the first account), or a
+`mail_accounts` row the person saved on Settings › My mailbox, its password AES-GCM under
+`CREDENTIALS_KEY` (`security/CredentialCipher`; unset, nobody can save one). `SmtpTransport`,
+the IMAP sync and the circulation settings' From and SMTP host all ask it, so the reply,
+compose and circular paths did not change shape. The poller reads every mailbox in turn,
+each inside `TenantContext.runAs(tenant, user, …)`, so what it stores is the owner's. Rows
+written before accounts are handed to the server mailbox's owner at startup
+(`MailOwnership`). **The Brevo key is desk 1's** (`EnvironmentBrevo`); other desks see it as
+missing. Boards are read into Intake for desk 1 only, until which boards feed a desk's Intake
+is that desk's choice. Feed sources are installation-wide and only a platform administrator
+edits them.
+
+**Mail is personal on the Mailbox tab and shared as a source.** Folders, rules, server-folder
+mirrors, sync cursors and replies carry `owner_user_id` and the auto-enabled Hibernate filter
+`Owned.FILTER` (viewer = the person on the thread, 0 = desk-wide work), stamped on insert by
+`Owned.Stamp`. The filter does **not** apply to loads by id — a colleague opening a shared
+message lazily loads its folder — so those services fetch by query (`findOwned`).
+`mail_messages` has the column but **no filter**, on purpose: the parser, Intake, Cargoes and
+the corpus join to messages from shared records, and a filter would empty them for everyone
+but the owner. The Mailbox code names the owner explicitly instead (`MailMessageSpecification.ownedBy`,
+the owner-parameterised counts), and a colleague may open a message only read-only and only
+where `MailMessageRepository.isSharedSource` says the desk shares it — the "original email"
+buttons on cargoes, positions and Intake.
 
 ### The domain: companies, people, contacts
 

@@ -9,6 +9,8 @@ spring:
     host: localhost
 
 chartering:
+  credentials:
+    key: integration-test-credentials-key
   auth:
     username: root
     password: root-password-for-tests
