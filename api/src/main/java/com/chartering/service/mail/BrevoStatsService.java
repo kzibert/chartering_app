@@ -13,6 +13,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -54,8 +57,13 @@ public class BrevoStatsService {
     private static final String SEND_LIMIT = "sendLimit";
 
     private final BrevoProperties brevo;
+    private final BrevoAccounts accounts;
 
-    private final AtomicReference<Cached> cache = new AtomicReference<>();
+    /**
+     * One answer per key, keyed by the user it belongs to. Two people's Brevo accounts are two
+     * allowances, and a single shared slot would hand whoever asked second the first one's figures.
+     */
+    private final Map<Long, Cached> cache = new ConcurrentHashMap<>();
 
     /** Last day a stale {@code daily-limit} was complained about; see {@code ceilingFor}. */
     private final AtomicReference<LocalDate> warnedAbout = new AtomicReference<>();
@@ -68,25 +76,26 @@ public class BrevoStatsService {
      * screen that tells the user how much they have already sent today.
      */
     public BrevoUsage today() {
-        // The key is the default desk's (EnvironmentBrevo); another desk's screen has no
-        // business reading that account's volume.
-        if (!EnvironmentBrevo.belongsToCurrentDesk()
-                || brevo.getApiKey() == null || brevo.getApiKey().isBlank()) {
+        // The caller's own account and nobody else's: a colleague's key is a colleague's
+        // allowance, and another desk's screen has no business reading its volume.
+        Optional<BrevoAccounts.Brevo> account = accounts.current();
+        if (account.isEmpty() || account.get().apiKey() == null || account.get().apiKey().isBlank()) {
             return BrevoUsage.notConfigured();
         }
+        Long owner = account.get().userId();
         LocalDate day = LocalDate.now();
-        Cached hit = cache.get();
+        Cached hit = cache.get(owner);
         if (hit != null && hit.day().equals(day) && hit.fetchedAt().plus(CACHE_TTL).isAfter(Instant.now())) {
             return hit.usage();
         }
-        BrevoUsage fresh = fetch(day);
-        cache.set(new Cached(day, Instant.now(), fresh));
+        BrevoUsage fresh = fetch(day, account.get().apiKey());
+        cache.put(owner, new Cached(day, Instant.now(), fresh));
         return fresh;
     }
 
-    private BrevoUsage fetch(LocalDate day) {
+    private BrevoUsage fetch(LocalDate day, String apiKey) {
         try {
-            RestClient client = newClient();
+            RestClient client = newClient(apiKey);
             Report report = reportFor(client, day);
             Integer remaining = remainingToday(client);
             return new BrevoUsage(true, report.requests(), report.blocked(), remaining,
@@ -187,10 +196,10 @@ public class BrevoStatsService {
                 .orElse(null);
     }
 
-    private RestClient newClient() {
+    private RestClient newClient(String apiKey) {
         return RestClient.builder()
                 .baseUrl(brevo.getBaseUrl())
-                .defaultHeader("api-key", brevo.getApiKey().trim())
+                .defaultHeader("api-key", apiKey.trim())
                 .defaultHeader("accept", MediaType.APPLICATION_JSON_VALUE)
                 .build();
     }

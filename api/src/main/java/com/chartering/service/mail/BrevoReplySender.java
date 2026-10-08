@@ -66,12 +66,13 @@ import java.util.Map;
 public class BrevoReplySender {
 
     private final BrevoProperties brevo;
+    private final BrevoAccounts accounts;
 
     /** What is stopping a reply going out this way, in the words the user has to act on. */
     public List<String> missingSettings(String fromAddress) {
         List<String> missing = new ArrayList<>();
-        if (!isSet(brevo.getApiKey())) {
-            missing.add("BREVO_API_KEY");
+        if (accounts.current().isEmpty()) {
+            missing.add(BrevoAccounts.NO_KEY);
         }
         if (!isSet(fromAddress)) {
             missing.add("MAIL_USERNAME, or a From address (Settings, or MAIL_FROM)");
@@ -190,7 +191,7 @@ public class BrevoReplySender {
         return RestClient.builder()
                 .requestFactory(factory)
                 .baseUrl(brevo.getBaseUrl())
-                .defaultHeader("api-key", brevo.getApiKey() == null ? "" : brevo.getApiKey().trim())
+                .defaultHeader("api-key", accounts.current().map(BrevoAccounts.Brevo::apiKey).orElse(""))
                 .defaultHeader("accept", MediaType.APPLICATION_JSON_VALUE)
                 .build();
     }

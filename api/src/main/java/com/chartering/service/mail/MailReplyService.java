@@ -116,12 +116,9 @@ public class MailReplyService {
     /** What is stopping a reply going out by the route in force, in words the user can act on. */
     public List<String> missingSettings(CirculationSettings cfg) {
         // A reply comes from the caller's own mailbox either way; under the Brevo route it is
-        // also carried by the Brevo account, which is the default desk's.
+        // also carried by the caller's own Brevo account (BrevoAccounts).
         if (!transport.hasMailbox()) {
             return List.of(MailAccounts.NO_MAILBOX);
-        }
-        if (replyProvider() == CircularProvider.BREVO && !EnvironmentBrevo.belongsToCurrentDesk()) {
-            return List.of(EnvironmentBrevo.NOT_THIS_DESK);
         }
         return replyProvider() == CircularProvider.BREVO
                 ? brevo.missingSettings(replyFromAddress(cfg))

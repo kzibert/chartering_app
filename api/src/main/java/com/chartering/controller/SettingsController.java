@@ -1,6 +1,5 @@
 package com.chartering.controller;
 
-import com.chartering.config.BrevoProperties;
 import com.chartering.dto.CirculationProviderRequest;
 import com.chartering.dto.CirculationSettingsRequest;
 import com.chartering.dto.CirculationSettingsResponse;
@@ -11,6 +10,7 @@ import com.chartering.dto.WhatsappSettingsResponse;
 import com.chartering.service.MailTemplateService;
 import com.chartering.service.SettingsService;
 import com.chartering.service.SettingsService.CirculationSettings;
+import com.chartering.service.mail.BrevoAccounts;
 import com.chartering.service.mail.CircularProvider;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -37,7 +37,7 @@ import java.util.stream.Collectors;
 public class SettingsController {
 
     private final SettingsService settings;
-    private final BrevoProperties brevo;
+    private final BrevoAccounts brevoAccounts;
 
     /**
      * The placeholders offered under the WhatsApp greeting field: the circular ones minus
@@ -51,8 +51,9 @@ public class SettingsController {
 
     @GetMapping("/circulation")
     @Operation(summary = "Circulation settings in force, plus the defaults they reset to",
-            description = "Credentials are not included and cannot be set here — MAIL_USERNAME, "
-                    + "MAIL_PASSWORD and BREVO_API_KEY stay in the environment.")
+            description = "Credentials are not included and cannot be set here: the server's are "
+                    + "in the environment, a person's own on /me/mail-account and /me/brevo-account. "
+                    + "From and SMTP are the caller's own - see identitySource.")
     public ResponseEntity<CirculationSettingsResponse> circulation() {
         return ResponseEntity.ok(toResponse(settings.circulation()));
     }
@@ -138,9 +139,9 @@ public class SettingsController {
 
     private CirculationSettingsResponse toResponse(CirculationSettings s) {
         CirculationSettings d = settings.circulationDefaults(s.provider());
-        String key = brevo.getApiKey();
         return new CirculationSettingsResponse(
-                s.provider().name(), s.provider().label(), key != null && !key.isBlank(),
+                s.provider().name(), s.provider().label(), brevoAccounts.current().isPresent(),
+                settings.identitySource().name(),
                 s.fromAddress(), s.fromName(), s.smtpHost(), s.smtpPort(),
                 s.minDelayMs(), s.maxDelayMs(), s.maxRecipientsPerCampaign(), s.batchPauseMs(),
                 !s.equals(d),

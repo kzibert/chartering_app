@@ -22,6 +22,7 @@ import {
   type NarrowOptions,
 } from '../circulations/narrow';
 import type { ContactResponse } from '../api/types';
+import { userStorageKey } from '../auth/store';
 
 /** A new list is chosen by picking this instead of an existing list id. */
 const NEW_LIST = -1;
@@ -40,7 +41,7 @@ function loadNarrowing(): NarrowOptions {
     keywords: DEFAULT_KEYWORDS,
   };
   try {
-    const raw = localStorage.getItem(NARROW_KEY);
+    const raw = localStorage.getItem(userStorageKey(NARROW_KEY));
     if (!raw) return fallback;
     const saved = JSON.parse(raw) as Partial<NarrowOptions>;
     return {
@@ -111,7 +112,7 @@ export default function AddToListModal({
     setNarrowing((prev) => {
       const next = { ...prev, ...patch };
       try {
-        localStorage.setItem(NARROW_KEY, JSON.stringify(next));
+        localStorage.setItem(userStorageKey(NARROW_KEY), JSON.stringify(next));
       } catch {
         /* a full or blocked localStorage must not stop the add */
       }
