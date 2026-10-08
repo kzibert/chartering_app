@@ -141,6 +141,25 @@ class TenantIsolationTest extends IntegrationTest {
         getAs(south, "/api/v1/admin/tenants").andExpect(status().isForbidden());
     }
 
+    @Test
+    void eachDeskChoosesForItselfWhichBoardsItReadsIntoIntake() throws Exception {
+        String root = login(ROOT, ROOT_PASSWORD);
+        long board = create(root, "/api/v1/feed/sources", Map.of(
+                "kind", "RSS", "url", "https://board-" + UUID.randomUUID() + ".example/feed", "enabled", false));
+        // A desk administrator may not edit the board itself, only their desk's use of it.
+        putAs(north, "/api/v1/feed/sources/" + board, Map.of("kind", "RSS", "url", "https://elsewhere.example/feed"))
+                .andExpect(status().isForbidden());
+
+        putAs(north, "/api/v1/feed/sources/" + board + "/intake?on=true", Map.of())
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.intoIntake").value(true));
+
+        JsonNode southView = read(getAs(south, "/api/v1/feed/sources").andExpect(status().isOk()));
+        southView.forEach(s -> {
+            if (s.get("id").asLong() == board) assertThat(s.get("intoIntake").asBoolean()).isFalse();
+        });
+    }
+
     private List<String> names(org.springframework.test.web.servlet.ResultActions result) throws Exception {
         JsonNode page = read(result.andExpect(status().isOk()));
         List<String> names = new ArrayList<>();

@@ -97,6 +97,8 @@ public class SecurityConfig {
                         // The boards every desk reads are the installation's: one desk
                         // deleting or repointing one would change every other desk's feed.
                         // Reading them, and asking for a fetch, stays open to everyone.
+                        // ...but whether this desk reads a board into Intake is the desk's.
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/feed/sources/*/intake").hasRole("TENANT_ADMIN")
                         .requestMatchers(HttpMethod.POST, "/api/v1/feed/sources").hasRole("PLATFORM_ADMIN")
                         .requestMatchers(HttpMethod.PUT, "/api/v1/feed/sources/*").hasRole("PLATFORM_ADMIN")
                         .requestMatchers(HttpMethod.DELETE, "/api/v1/feed/sources/*").hasRole("PLATFORM_ADMIN")

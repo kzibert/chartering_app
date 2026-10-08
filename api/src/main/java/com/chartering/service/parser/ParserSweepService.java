@@ -2,7 +2,6 @@ package com.chartering.service.parser;
 
 import com.chartering.config.ParserProperties;
 import com.chartering.exception.FeatureDisabledException;
-import com.chartering.model.Tenant;
 import com.chartering.repository.ParsedEmailRepository;
 import com.chartering.service.ParserSettings;
 import com.chartering.tenancy.TenantContext;
@@ -257,15 +256,9 @@ public class ParserSweepService {
         // backlog lasted - and a position list is worth least on the day after it stops being
         // true. Bounded by the same batch, so the whole sweep is still one number of model
         // calls however the two queues divide it.
-        //
-        // Only the default desk reads the boards for now: which boards feed Intake is still
-        // one switch on the source, not a choice each desk makes, and every desk parsing every
-        // post would multiply the GPU time by the number of desks for a choice only one of
-        // them made.
-        if (Tenant.DEFAULT_ID == TenantContext.require()) {
-            feedItems.unparsedForIntake(values.receivedSince(), PageRequest.of(0, batch))
-                    .forEach(i -> queue.add(Job.post(i.getId())));
-        }
+        // The boards this desk subscribes to (V34): a post is parsed once per desk that reads it.
+        feedItems.unparsedForIntake(values.receivedSince(), PageRequest.of(0, batch))
+                .forEach(i -> queue.add(Job.post(i.getId())));
 
         if (queue.size() < batch) {
             parsedEmails.unparsed(values.receivedSince(), PageRequest.of(0, batch - queue.size()))

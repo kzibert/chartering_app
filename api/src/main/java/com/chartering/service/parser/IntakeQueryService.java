@@ -106,7 +106,7 @@ public class IntakeQueryService {
         IntakeService.Counts counts = intake.counts();
         long unparsed = parsedEmails.countUnparsed(values.receivedSince());
         long unparsedPosts = feedItems.countUnparsedForIntake(values.receivedSince());
-        long intakeSources = sources.findByIntoIntakeTrueOrderByNameAsc().stream()
+        long intakeSources = sources.findReadIntoIntake().stream()
                 .filter(com.chartering.model.FeedSource::isEnabled).count();
         ParserSweepService.SweepReport last = sweeps.lastReport();
 
@@ -325,8 +325,8 @@ public class IntakeQueryService {
         requireEnabled();
         Map<Long, Long> counts = feedItems.countBySource().stream()
                 .collect(Collectors.toMap(r -> (Long) r[0], r -> (Long) r[1]));
-        return sources.findByIntoIntakeTrueOrderByNameAsc().stream()
-                .map(s -> mapper.toFeedSourceResponse(s, counts.getOrDefault(s.getId(), 0L)))
+        return sources.findReadIntoIntake().stream()
+                .map(s -> mapper.toFeedSourceResponse(s, counts.getOrDefault(s.getId(), 0L), true))
                 .toList();
     }
 

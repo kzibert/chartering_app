@@ -89,6 +89,7 @@ export function useFeedMutations() {
     createSource: m((body: FeedSourceRequest) => feedApi.createSource(body)),
     updateSource: m((v: { id: number; body: FeedSourceRequest }) => feedApi.updateSource(v.id, v.body)),
     deleteSource: m((id: number) => feedApi.deleteSource(id)),
+    setReadIntoIntake: m((v: { id: number; on: boolean }) => feedApi.setReadIntoIntake(v.id, v.on)),
     fetchAll: m((_: void) => feedApi.fetchAll()),
     fetchSource: m((id: number) => feedApi.fetchSource(id)),
     createTopic: m((body: FeedTopicRequest) => feedApi.createTopic(body)),

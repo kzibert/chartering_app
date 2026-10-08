@@ -103,7 +103,8 @@ Three things bite here:
   `V27__capture_web_into_analysis.sql` and `V28__add_intake_review_history.sql` and
   `V29__add_mail_reply_cc.sql` and `V30__add_tenants_and_users.sql` and
   `V31__scope_data_to_tenants.sql` and `V32__add_personal_mailboxes.sql` and
-  `V33__add_personal_circulation.sql` exist; the next one is V34.
+  `V33__add_personal_circulation.sql` and `V34__add_feed_intake_subscriptions.sql` exist;
+  the next one is V35.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
@@ -164,9 +165,12 @@ compose and circular paths did not change shape. The poller reads every mailbox 
 each inside `TenantContext.runAs(tenant, user, …)`, so what it stores is the owner's. Rows
 written before accounts are handed to the server mailbox's owner at startup
 (`MailOwnership`). **The Brevo key is desk 1's** (`EnvironmentBrevo`); other desks see it as
-missing. Boards are read into Intake for desk 1 only, until which boards feed a desk's Intake
-is that desk's choice. Feed sources are installation-wide and only a platform administrator
-edits them.
+missing. **Feed sources are installation-wide** — fetched once for everybody, added, edited and
+removed by a platform administrator — but **which boards a desk reads into Intake is the
+desk's** (`feed_intake_subscriptions`, V34, replacing `feed_sources.into_intake`), switched by
+its administrators on the Feed tab. Every query asking "boards read into Intake" does so
+through a subquery on the subscription, which the tenant filter scopes to the desk on the
+thread; a post is parsed once per desk that reads it.
 
 **Mail is personal on the Mailbox tab and shared as a source.** Folders, rules, server-folder
 mirrors, sync cursors and replies carry `owner_user_id` and the auto-enabled Hibernate filter
