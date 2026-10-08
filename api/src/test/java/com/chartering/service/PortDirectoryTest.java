@@ -5,6 +5,7 @@ import com.chartering.model.PortAlias;
 import com.chartering.model.TradeArea;
 import com.chartering.repository.PortAliasRepository;
 import com.chartering.repository.PortRepository;
+import com.chartering.tenancy.TenantContext;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -30,7 +31,7 @@ class PortDirectoryTest {
         PortRepository portRepository = mock(PortRepository.class);
         PortAliasRepository aliasRepository = mock(PortAliasRepository.class);
         when(portRepository.findAllWithArea()).thenReturn(ports);
-        when(aliasRepository.findAllWithPort()).thenReturn(aliases);
+        when(aliasRepository.findGlobalWithPort()).thenReturn(aliases);
         PortDirectory d = new PortDirectory(portRepository, aliasRepository);
         d.refresh();
         return d;
@@ -116,6 +117,27 @@ class PortDirectoryTest {
         p.setName(name);
         p.setTradeArea(bsea);
         return p;
+    }
+
+    @Test
+    void aDesksOwnAliasIsReadByThatDeskAloneAndOverridesTheMarkets() {
+        // V35: a desk's correspondents write "CHORNO" for Chornomorsk; another desk's write it
+        // for nothing at all. And where a desk reads a market alias differently, its own wins.
+        Port chornomorsk = port(1L, "Chornomorsk");
+        Port odessa = port(2L, "Odessa");
+        PortRepository portRepository = mock(PortRepository.class);
+        PortAliasRepository aliasRepository = mock(PortAliasRepository.class);
+        when(portRepository.findAllWithArea()).thenReturn(List.of(chornomorsk, odessa));
+        when(aliasRepository.findGlobalWithPort()).thenReturn(List.of(alias(odessa, "Odesa Port")));
+        when(aliasRepository.findForTenantWithPort(7L))
+                .thenReturn(List.of(alias(chornomorsk, "Chorno"), alias(chornomorsk, "Odesa Port")));
+        when(aliasRepository.findForTenantWithPort(8L)).thenReturn(List.of());
+        PortDirectory d = new PortDirectory(portRepository, aliasRepository);
+
+        assertThat(TenantContext.callAs(7L, () -> d.resolve("CHORNO")).orElseThrow().name()).isEqualTo("Chornomorsk");
+        assertThat(TenantContext.callAs(8L, () -> d.resolve("CHORNO"))).isEmpty();
+        assertThat(TenantContext.callAs(7L, () -> d.resolve("odesa port")).orElseThrow().name()).isEqualTo("Chornomorsk");
+        assertThat(TenantContext.callAs(8L, () -> d.resolve("odesa port")).orElseThrow().name()).isEqualTo("Odessa");
     }
 
     private static PortAlias alias(Port port, String text) {

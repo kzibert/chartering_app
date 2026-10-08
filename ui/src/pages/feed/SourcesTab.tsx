@@ -6,6 +6,8 @@ import dayjs from 'dayjs';
 import ResponsiveTable from '../../components/ResponsiveTable';
 import type { FeedSource, FeedSourceKind, FeedSourceRequest } from '../../api/feed';
 import { useFeedMutations, useFeedParsers, useFeedSources } from '../../feed/store';
+import { useSession } from '../../auth/session';
+import { roleAtLeast } from '../../api/auth';
 
 const KIND_LABEL: Record<FeedSourceKind, string> = { TELEGRAM: 'Telegram', RSS: 'RSS / Atom', WEBSITE: 'Website' };
 const KIND_COLOR: Record<FeedSourceKind, string> = { TELEGRAM: 'cyan', RSS: 'orange', WEBSITE: 'geekblue' };
@@ -21,7 +23,12 @@ export default function SourcesTab({ analysis }: { analysis: boolean }) {
   const { message: toast } = App.useApp();
   const sources = useFeedSources();
   const parsers = useFeedParsers();
-  const { createSource, updateSource, deleteSource, fetchSource } = useFeedMutations();
+  const { createSource, updateSource, deleteSource, fetchSource, setReadIntoIntake } = useFeedMutations();
+  // The boards are the installation's: only a platform administrator adds, edits or removes
+  // one. Whether this desk reads a board into Intake is the desk's, and its administrators'.
+  const session = useSession();
+  const managesBoards = session.role === 'PLATFORM_ADMIN';
+  const choosesIntake = roleAtLeast(session.role, 'TENANT_ADMIN');
   const [editing, setEditing] = useState<FeedSource | 'new'>();
   const parserLabel = (key?: string) => parsers.data?.find((p) => p.key === key)?.label ?? key;
 
@@ -67,14 +74,18 @@ export default function SourcesTab({ analysis }: { analysis: boolean }) {
           />
         </Tooltip>
       )}
-      <Button size="small" icon={<EditOutlined />} onClick={() => setEditing(s)} aria-label="Edit" />
-      <Popconfirm
-        title={`Remove ${s.name}?`}
-        description={`Its ${s.itemCount} collected item(s) go with it. Switch it off instead to keep them.`}
-        onConfirm={() => deleteSource.mutate(s.id)}
-      >
-        <Button size="small" danger icon={<DeleteOutlined />} aria-label="Delete" />
-      </Popconfirm>
+      {managesBoards && (
+        <>
+          <Button size="small" icon={<EditOutlined />} onClick={() => setEditing(s)} aria-label="Edit" />
+          <Popconfirm
+            title={`Remove ${s.name}?`}
+            description={`Its ${s.itemCount} collected item(s) go with it, for every desk. Switch it off instead to keep them.`}
+            onConfirm={() => deleteSource.mutate(s.id)}
+          >
+            <Button size="small" danger icon={<DeleteOutlined />} aria-label="Delete" />
+          </Popconfirm>
+        </>
+      )}
     </Space>
   );
 
@@ -83,7 +94,26 @@ export default function SourcesTab({ analysis }: { analysis: boolean }) {
       title: 'On',
       key: 'enabled',
       width: 60,
-      render: (_, s) => <Switch size="small" checked={s.enabled} onChange={(v) => setEnabled(s, v)} />,
+      render: (_, s) => (
+        <Switch size="small" checked={s.enabled} disabled={!managesBoards} onChange={(v) => setEnabled(s, v)} />
+      ),
+    },
+    {
+      title: (
+        <Tooltip title="Whether this desk sends the board's posts through the email parser as circulars. Each desk chooses for itself.">
+          Intake
+        </Tooltip>
+      ),
+      key: 'intake',
+      width: 80,
+      render: (_, s) => (
+        <Switch
+          size="small"
+          checked={s.intoIntake}
+          disabled={!choosesIntake}
+          onChange={(on) => setReadIntoIntake.mutate({ id: s.id, on })}
+        />
+      ),
     },
     {
       title: 'Source',
@@ -115,11 +145,13 @@ export default function SourcesTab({ analysis }: { analysis: boolean }) {
 
   return (
     <>
-      <Space style={{ marginBottom: 12 }}>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing('new')}>
-          Add source
-        </Button>
-      </Space>
+      {managesBoards && (
+        <Space style={{ marginBottom: 12 }}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing('new')}>
+            Add source
+          </Button>
+        </Space>
+      )}
       <ResponsiveTable<FeedSource>
         rowKey={(s) => s.id}
         size="small"

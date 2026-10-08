@@ -220,7 +220,7 @@ public class AnalysisService {
         // cargo-extraction model has nothing to learn from.
         List<Long> sourceIds = req.feedSourceId() != null
                 ? List.of(req.feedSourceId())
-                : feedSources.findByIntoIntakeTrueOrderByNameAsc().stream()
+                : feedSources.findReadIntoIntake().stream()
                         .map(com.chartering.model.FeedSource::getId).toList();
         if (sourceIds.isEmpty()) {
             return new AnalysisCaptureResponse(0, 0, 0, 0, false, List.of());

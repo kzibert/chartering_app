@@ -4,10 +4,16 @@ import com.chartering.dto.FeedSourceRequest;
 import com.chartering.dto.FeedSourceResponse;
 import com.chartering.exception.ResourceNotFoundException;
 import com.chartering.mapper.DtoMapper;
+import com.chartering.model.FeedIntakeSubscription;
 import com.chartering.model.FeedSource;
 import com.chartering.model.FeedSourceKind;
+import com.chartering.repository.FeedIntakeSubscriptionRepository;
 import com.chartering.repository.FeedItemRepository;
 import com.chartering.repository.FeedSourceRepository;
+import com.chartering.tenancy.TenantContext;
+import com.chartering.tenancy.TenantDirectory;
+import java.util.HashSet;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,13 +36,16 @@ public class FeedSourceService {
     private final com.chartering.repository.IntakeItemRepository intakeItems;
     private final WebsiteReader websites;
     private final DtoMapper mapper;
+    private final FeedIntakeSubscriptionRepository subscriptions;
+    private final TenantDirectory tenants;
 
     @Transactional(readOnly = true)
     public List<FeedSourceResponse> list() {
         Map<Long, Long> counts = items.countBySource().stream()
                 .collect(Collectors.toMap(r -> (Long) r[0], r -> (Long) r[1]));
+        Set<Long> readIn = new HashSet<>(subscriptions.findSourceIds());
         return sources.findAllByOrderByNameAsc().stream()
-                .map(s -> mapper.toFeedSourceResponse(s, counts.getOrDefault(s.getId(), 0L)))
+                .map(s -> mapper.toFeedSourceResponse(s, counts.getOrDefault(s.getId(), 0L), readIn.contains(s.getId())))
                 .toList();
     }
 
@@ -44,7 +53,9 @@ public class FeedSourceService {
     public FeedSourceResponse create(FeedSourceRequest req) {
         FeedSource s = new FeedSource();
         apply(s, req);
-        return mapper.toFeedSourceResponse(sources.save(s), 0);
+        sources.save(s);
+        if (req.getIntoIntake() != null) subscribe(s.getId(), req.getIntoIntake());
+        return mapper.toFeedSourceResponse(s, 0, isReadIn(s.getId()));
     }
 
     @Transactional
@@ -57,8 +68,36 @@ public class FeedSourceService {
             s.setEtag(null);
             s.setLastModified(null);
         }
+        if (req.getIntoIntake() != null) subscribe(id, req.getIntoIntake());
         long count = items.countBySource().stream().filter(r -> id.equals(r[0])).mapToLong(r -> (Long) r[1]).sum();
-        return mapper.toFeedSourceResponse(s, count);
+        return mapper.toFeedSourceResponse(s, count, isReadIn(id));
+    }
+
+    /**
+     * Whether the caller's desk reads this board into Intake. A desk administrator's switch:
+     * the board is the installation's, what the desk does with its posts is the desk's.
+     */
+    @Transactional
+    public FeedSourceResponse setReadIntoIntake(Long id, boolean on) {
+        FeedSource s = sources.findById(id).orElseThrow(() -> new ResourceNotFoundException("Feed source", id));
+        subscribe(id, on);
+        long count = items.countBySource().stream().filter(r -> id.equals(r[0])).mapToLong(r -> (Long) r[1]).sum();
+        return mapper.toFeedSourceResponse(s, count, on);
+    }
+
+    private void subscribe(Long sourceId, boolean on) {
+        var existing = subscriptions.findByFeedSourceId(sourceId);
+        if (on && existing.isEmpty()) {
+            FeedIntakeSubscription sub = new FeedIntakeSubscription();
+            sub.setFeedSourceId(sourceId);
+            subscriptions.save(sub);
+        } else if (!on) {
+            existing.ifPresent(subscriptions::delete);
+        }
+    }
+
+    private boolean isReadIn(Long sourceId) {
+        return subscriptions.findByFeedSourceId(sourceId).isPresent();
     }
 
     /**
@@ -71,10 +110,16 @@ public class FeedSourceService {
      * of a page anyone can reload. Disabling is the reversible way to stop a source, and it is
      * what the message points at.
      */
-    @Transactional
+    /**
+     * Not one transaction: the unanswered questions are counted on every desk, each in its own
+     * session, because a source is global and the delete cascades through every desk's posts,
+     * parse records and items. A transaction around it would pin every count to the caller's desk.
+     */
     public void delete(Long id) {
         if (!sources.existsById(id)) throw new ResourceNotFoundException("Feed source", id);
-        long pending = intakeItems.countPendingFromSource(id);
+        long pending = tenants.activeIds().stream()
+                .mapToLong(desk -> TenantContext.callAs(desk, () -> intakeItems.countPendingFromSource(id)))
+                .sum();
         if (pending > 0) {
             throw new IllegalArgumentException(
                     "This source still has " + pending + " unanswered question(s) in the Intake "
@@ -106,7 +151,6 @@ public class FeedSourceService {
         s.setParserKey(parserKey);
         s.setName(req.getName() == null || req.getName().isBlank() ? defaultName(req.getKind(), url) : req.getName().strip());
         if (req.getEnabled() != null) s.setEnabled(req.getEnabled());
-        if (req.getIntoIntake() != null) s.setIntoIntake(req.getIntoIntake());
     }
 
     private static String httpUrl(String raw) {

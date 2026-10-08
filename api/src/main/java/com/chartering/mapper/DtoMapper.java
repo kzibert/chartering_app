@@ -566,9 +566,10 @@ public class DtoMapper {
                 s.getReportedAt(), s.getNotes());
     }
 
-    public FeedSourceResponse toFeedSourceResponse(FeedSource s, long itemCount) {
+    /** {@code intoIntake} is the caller's desk's answer (FeedIntakeSubscription), not the page's. */
+    public FeedSourceResponse toFeedSourceResponse(FeedSource s, long itemCount, boolean intoIntake) {
         return new FeedSourceResponse(s.getId(), s.getName(), s.getKind(), s.getUrl(), s.getParserKey(),
-                s.isEnabled(), s.isIntoIntake(), s.getLastFetchedAt(), s.getLastError(),
+                s.isEnabled(), intoIntake, s.getLastFetchedAt(), s.getLastError(),
                 s.getLastNewItems(), itemCount);
     }
 

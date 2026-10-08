@@ -9,6 +9,8 @@ import com.chartering.repository.CirculationRunRecipientRepository;
 import com.chartering.repository.CirculationRunRepository;
 import com.chartering.service.mail.BrevoStatsService;
 import com.chartering.service.mail.CircularProvider;
+import com.chartering.tenancy.TenantContext;
+import com.chartering.tenancy.TenantDirectory;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -16,6 +18,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -54,6 +57,9 @@ public class CirculationHistoryService {
     private final EmailFooterService footers;
     private final HtmlSanitizer sanitizer;
     private final MailCampaignProperties props;
+    private final TenantDirectory tenants;
+    private final SettingsService settings;
+    private final TransactionTemplate transactions;
     // Reporting only: the day counter pairs what this app sent with what Brevo says the
     // account has spent, and the second half is knowable only by asking Brevo.
     private final BrevoStatsService brevoStats;
@@ -76,10 +82,17 @@ public class CirculationHistoryService {
      * <p>Bound to ApplicationReadyEvent rather than @PostConstruct on purpose: the
      * transactional proxy is not in place while a bean is still initialising, so
      * {@code @Transactional} on a @PostConstruct method is silently ignored.
+     *
+     * <p>Once per desk, each in its own transaction opened inside that desk's binding: there is
+     * no logged-in desk at startup, and a run is only visible to the desk that sent it.
      */
     @EventListener(ApplicationReadyEvent.class)
-    @Transactional
     public void closeInterruptedRuns() {
+        tenants.forEachActive("Closing interrupted circulation runs",
+                tenant -> transactions.executeWithoutResult(status -> closeInterruptedRunsOfDesk()));
+    }
+
+    private void closeInterruptedRunsOfDesk() {
         List<CirculationRun> stale = runs.findByStateAndFinishedAtIsNull("RUNNING");
         for (CirculationRun run : stale) {
             run.setSent(recipients.countByRunIdAndStatus(run.getId(), CirculationRunRecipient.SENT));
@@ -114,8 +127,12 @@ public class CirculationHistoryService {
         run.setFooterName(footerName);
         run.setListId(listId);
         run.setListName(listName);
-        run.setFromAddress(props.getFromAddress());
-        run.setFromName(props.getFromName());
+        // The identity it actually goes out as: the sender's own mailbox where they have one,
+        // else the desk's configured From.
+        SettingsService.CirculationSettings sending = settings.circulation();
+        run.setFromAddress(sending.fromAddress());
+        run.setFromName(sending.fromName());
+        run.setSentByUserId(TenantContext.requireUser());
         run.setReplyTo(props.getReplyTo());
         run.setState("RUNNING");
         run.setTotal(toSend.size());
@@ -250,6 +267,10 @@ public class CirculationHistoryService {
     @Transactional(readOnly = true)
     public ResumableRun loadForResume(Long runId) {
         CirculationRun run = findWithRecipients(runId);
+        if (!TenantContext.requireUser().equals(run.getSentByUserId())) {
+            throw new IllegalArgumentException("Only the person who sent this circular can resume it - the rest "
+                    + "of it would go out through their mailbox. Send it again instead to start a new run from yours.");
+        }
         List<PendingRecipient> pending = run.getRecipients().stream()
                 .filter(r -> CirculationRunRecipient.PENDING.equals(r.getStatus()))
                 .map(r -> new PendingRecipient(r.getId(), toMergeFields(r)))
@@ -280,7 +301,7 @@ public class CirculationHistoryService {
     /** Runs with somebody still to send to, newest first. */
     @Transactional(readOnly = true)
     public List<CirculationRunResponse> resumable() {
-        return runs.findResumable().stream()
+        return runs.findResumable(TenantContext.requireUser()).stream()
                 .map(CirculationHistoryService::toRunResponse)
                 .toList();
     }

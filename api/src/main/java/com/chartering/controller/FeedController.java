@@ -84,6 +84,15 @@ public class FeedController {
         return ResponseEntity.ok(sourceService.update(id, req));
     }
 
+    @PutMapping("/sources/{id}/intake")
+    @Operation(summary = "Whether the caller's desk reads this board into Intake",
+            description = "The board belongs to the installation; sending its posts through the "
+                    + "parser is each desk's own choice. Desk administrators.")
+    public ResponseEntity<FeedSourceResponse> setReadIntoIntake(@PathVariable Long id,
+                                                                @RequestParam boolean on) {
+        return ResponseEntity.ok(sourceService.setReadIntoIntake(id, on));
+    }
+
     @DeleteMapping("/sources/{id}")
     @Operation(summary = "Remove a source and the items it collected",
             description = "Summaries already written stay; they lose their links to this source's items. "

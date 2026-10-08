@@ -9,7 +9,8 @@ import java.util.Optional;
 
 public interface CirculationListRepository extends JpaRepository<CirculationList, Long> {
 
-    Optional<CirculationList> findByDraftTrue();
+    /** One person's current list. */
+    Optional<CirculationList> findByDraftTrueAndOwnerUserId(Long ownerUserId);
 
     Optional<CirculationList> findByNameIgnoreCase(String name);
 

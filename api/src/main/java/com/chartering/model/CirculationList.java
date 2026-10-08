@@ -3,6 +3,7 @@ package com.chartering.model;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.TenantId;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -24,6 +25,18 @@ public class CirculationList {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    /** The desk this row belongs to. Written and filtered by Hibernate - see TenantIdentifierResolver. */
+    @TenantId
+    @Column(name = "tenant_id", nullable = false, updatable = false)
+    private Long tenantId;
+
+    /**
+     * Whose current list this is - set on the draft only. Saved lists are the desk's prepared
+     * documents and have no owner; the draft is one person's scratch pad.
+     */
+    @Column(name = "owner_user_id")
+    private Long ownerUserId;
 
     /** Null only on the draft row (see ux_circulation_lists_name). */
     private String name;

@@ -36,6 +36,10 @@ public interface MailRuleRepository extends JpaRepository<MailRule, Long> {
             """)
     List<MailRule> findAllForDisplay();
 
+    /** One of the viewer's own rules; a query so the owner filter applies (see MailFolder). */
+    @Query("select r from MailRule r where r.id = :id")
+    Optional<MailRule> findOwned(@Param("id") Long id);
+
     @Query("select r from MailRule r where lower(r.name) = lower(:name)")
     Optional<MailRule> findByNameIgnoringCase(@Param("name") String name);
 

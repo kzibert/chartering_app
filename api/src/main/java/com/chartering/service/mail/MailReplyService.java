@@ -21,8 +21,9 @@ import com.chartering.repository.MailReplyRepository;
 import com.chartering.service.EmailFooterService;
 import com.chartering.service.HtmlSanitizer;
 import com.chartering.service.MailTemplateService;
-import com.chartering.service.SettingsService;
 import com.chartering.service.SettingsService.CirculationSettings;
+import com.chartering.service.SettingsService;
+import com.chartering.tenancy.TenantContext;
 import jakarta.mail.Message;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.InternetAddress;
@@ -114,6 +115,14 @@ public class MailReplyService {
 
     /** What is stopping a reply going out by the route in force, in words the user can act on. */
     public List<String> missingSettings(CirculationSettings cfg) {
+        // A reply comes from the caller's own mailbox either way; under the Brevo route it is
+        // also carried by the Brevo account, which is the default desk's.
+        if (!transport.hasMailbox()) {
+            return List.of(MailAccounts.NO_MAILBOX);
+        }
+        if (replyProvider() == CircularProvider.BREVO && !EnvironmentBrevo.belongsToCurrentDesk()) {
+            return List.of(EnvironmentBrevo.NOT_THIS_DESK);
+        }
         return replyProvider() == CircularProvider.BREVO
                 ? brevo.missingSettings(replyFromAddress(cfg))
                 : smtp.missingSettings(cfg);
@@ -129,8 +138,7 @@ public class MailReplyService {
      */
     @Transactional
     public MailReplyResponse reply(Long messageId, MailReplyRequest req) {
-        MailMessage original = messages.findById(messageId)
-                .orElseThrow(() -> new ResourceNotFoundException("Message", messageId));
+        MailMessage original = ownMessage(messageId);
 
         CirculationSettings cfg = settings.circulation();
         CircularProvider route = replyProvider();
@@ -232,8 +240,7 @@ public class MailReplyService {
      */
     @Transactional(readOnly = true)
     public MailPreviewResponse previewReply(Long messageId, MailReplyRequest req) {
-        MailMessage original = messages.findById(messageId)
-                .orElseThrow(() -> new ResourceNotFoundException("Message", messageId));
+        MailMessage original = ownMessage(messageId);
         EmailFooterResponse footer = footerOf(req.getFooterId());
         CirculationSettings cfg = settings.circulation();
         return new MailPreviewResponse(cfg.fromName(), replyFromAddress(cfg), req.getTo().trim(),
@@ -324,6 +331,17 @@ public class MailReplyService {
                     "No SMTP transport is configured on this server, so the " + what + " was not sent.");
         }
         return sender;
+    }
+
+    /**
+     * A message in the caller's own mailbox. A reply goes out from the mailbox the message
+     * arrived in, so a colleague's mail - even one opened as the source of a shared cargo -
+     * is not one the caller can answer from here.
+     */
+    private MailMessage ownMessage(Long messageId) {
+        return messages.findById(messageId)
+                .filter(m -> TenantContext.requireUser().equals(m.getOwnerUserId()))
+                .orElseThrow(() -> new ResourceNotFoundException("Message", messageId));
     }
 
     /** When this message was last answered from here, or null. */

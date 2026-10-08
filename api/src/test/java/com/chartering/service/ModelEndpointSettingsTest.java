@@ -3,7 +3,6 @@ package com.chartering.service;
 import com.chartering.config.FeedProperties;
 import com.chartering.config.ParserProperties;
 import com.chartering.model.AppSetting;
-import com.chartering.repository.AppSettingRepository;
 import com.chartering.service.feed.FeedSettings;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -41,9 +40,9 @@ class ModelEndpointSettingsTest {
     private ParserSettings parser;
     private FeedSettings feed;
 
-    /** {@code app_settings} as a map, which is all either class uses it as. */
-    private AppSettingRepository fakeRepository() {
-        AppSettingRepository repository = mock(AppSettingRepository.class);
+    /** The settings store as a map, which is all either class uses it as. */
+    private SettingsStore fakeRepository() {
+        SettingsStore repository = mock(SettingsStore.class);
         when(repository.findByKeyIn(anyCollection())).thenAnswer(call -> {
             Collection<String> keys = call.getArgument(0);
             List<AppSetting> rows = new ArrayList<>();
@@ -83,7 +82,7 @@ class ModelEndpointSettingsTest {
         parserProps = new ParserProperties();
         parserProps.setUrl(PARSER_ENV);
         feedProps = new FeedProperties();
-        AppSettingRepository repository = fakeRepository();
+        SettingsStore repository = fakeRepository();
         parser = new ParserSettings(repository, parserProps);
         feed = new FeedSettings(repository, feedProps, parser);
     }

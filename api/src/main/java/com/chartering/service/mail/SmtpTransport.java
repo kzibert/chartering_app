@@ -6,6 +6,7 @@ import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.stereotype.Component;
 
+import java.util.Optional;
 import java.util.Properties;
 
 /**
@@ -15,16 +16,30 @@ import java.util.Properties;
  * the same way. Both flows send through the user's own mailbox and both must obey a host or
  * port changed on the Settings tab, and neither is the right place to own the rule for how
  * a changed port implies a TLS mode.
+ *
+ * <p><b>Whose connection</b> is the caller's: the mailbox of the person on the thread
+ * ({@link MailAccounts#current()}). The server's mailbox goes through the Spring-configured
+ * sender exactly as before; a personal one gets a sender built from its own saved host, port
+ * and login. Somebody with neither has no connection at all, and every answer here says so.
  */
 @Component
 @RequiredArgsConstructor
 public class SmtpTransport {
 
-    /** The Spring-configured sender: the credentials and transport properties come from it. */
+    /** The Spring-configured sender: the server's mailbox, and the transport defaults for any other. */
     private final JavaMailSender mailSender;
+    private final MailAccounts accounts;
+
+    /** Whether the caller has a mailbox to send from at all. */
+    public boolean hasMailbox() {
+        return accounts.current().isPresent();
+    }
 
     /** The mailbox the app authenticates as, for the config screen. Never the password. */
     public String username() {
+        Optional<MailAccounts.Mailbox> mailbox = accounts.current();
+        if (mailbox.isEmpty()) return null;
+        if (!mailbox.get().environment()) return mailbox.get().username();
         JavaMailSenderImpl impl = asImpl();
         return impl == null ? null : impl.getUsername();
     }
@@ -39,6 +54,9 @@ public class SmtpTransport {
      * needs it, and a getter for it would be a getter for it.
      */
     public boolean hasPassword() {
+        Optional<MailAccounts.Mailbox> mailbox = accounts.current();
+        if (mailbox.isEmpty()) return false;
+        if (!mailbox.get().environment()) return isSet(mailbox.get().password());
         JavaMailSenderImpl impl = asImpl();
         return impl != null && isSet(impl.getPassword());
     }
@@ -58,8 +76,12 @@ public class SmtpTransport {
      */
     public JavaMailSenderImpl senderFor(CirculationSettings s) {
         JavaMailSenderImpl base = asImpl();
-        if (base == null) {
+        Optional<MailAccounts.Mailbox> mailbox = accounts.current();
+        if (base == null || mailbox.isEmpty()) {
             return null;
+        }
+        if (!mailbox.get().environment()) {
+            return personalSender(base, mailbox.get());
         }
         boolean unchanged = s.smtpPort() == base.getPort()
                 && s.smtpHost() != null && s.smtpHost().equalsIgnoreCase(base.getHost());
@@ -84,6 +106,31 @@ public class SmtpTransport {
         }
         // Certificate trust names a host, so it has to follow the host it was set for.
         p.setProperty("mail.smtp.ssl.trust", s.smtpHost());
+        out.setJavaMailProperties(p);
+        return out;
+    }
+
+    /**
+     * A personal mailbox's own connection: its host, port and login, with the transport's
+     * timeouts and encoding. The TLS mode follows the port by the same rule a changed port
+     * follows above - implicit on 465, STARTTLS otherwise - because nobody filling in a
+     * mailbox form knows which one their provider wants, and the port already says.
+     */
+    private static JavaMailSenderImpl personalSender(JavaMailSenderImpl base, MailAccounts.Mailbox m) {
+        JavaMailSenderImpl out = new JavaMailSenderImpl();
+        out.setHost(m.smtpHost());
+        out.setPort(m.smtpPort());
+        out.setUsername(m.username());
+        out.setPassword(m.password());
+        out.setProtocol(base.getProtocol());
+        out.setDefaultEncoding(base.getDefaultEncoding());
+        Properties p = new Properties();
+        p.putAll(base.getJavaMailProperties());
+        boolean implicitSsl = m.smtpPort() == 465;
+        p.setProperty("mail.smtp.auth", "true");
+        p.setProperty("mail.smtp.ssl.enable", String.valueOf(implicitSsl));
+        p.setProperty("mail.smtp.starttls.enable", String.valueOf(!implicitSsl));
+        p.setProperty("mail.smtp.ssl.trust", m.smtpHost());
         out.setJavaMailProperties(p);
         return out;
     }

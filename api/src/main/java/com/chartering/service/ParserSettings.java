@@ -2,7 +2,6 @@ package com.chartering.service;
 
 import com.chartering.config.ParserProperties;
 import com.chartering.model.AppSetting;
-import com.chartering.repository.AppSettingRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -115,7 +114,7 @@ public class ParserSettings {
     public static final java.time.LocalDateTime NO_LIMIT_SINCE =
             java.time.LocalDateTime.of(1900, 1, 1, 0, 0);
 
-    private final AppSettingRepository repository;
+    private final SettingsStore repository;
     private final ParserProperties props;
 
     /** What the Settings tab shows and sends back. */

@@ -12,8 +12,9 @@ import com.chartering.repository.IntakeItemRepository;
 import com.chartering.repository.VesselLookupRepository;
 import com.chartering.repository.VesselRepository;
 import com.chartering.service.parser.Extraction;
-import com.chartering.service.parser.IntakeResolver;
 import com.chartering.service.parser.IntakePayloads;
+import com.chartering.service.parser.IntakeResolver;
+import com.chartering.tenancy.TenantDirectory;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -85,6 +86,7 @@ public class VesselLookupService {
     private final IntakeItemRepository items;
     private final VesselRepository vessels;
     private final ObjectMapper json;
+    private final TenantDirectory tenants;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
 
@@ -113,32 +115,17 @@ public class VesselLookupService {
         worker.submit(this::runPass);
     }
 
+    /**
+     * Every desk's queue, sharing one allowance. The allowance is about traffic to somebody
+     * else's server, which does not grow because there are more desks asking - so it is
+     * spent across them in turn rather than granted to each.
+     */
     private void runPass() {
         if (!running.compareAndSet(false, true)) return;
         try {
-            // Deliberately more items than the cap allows lookups. Most of what waits in
-            // this queue cannot be helped by a search at all - a hull both the email and the
-            // record name by IMO is the ordinary case - and asking for exactly `maxPerPass`
-            // rows meant a pass could spend its whole allowance recognising items it was
-            // going to skip, over and over. Those cost a payload read each and are answered
-            // below with a row, so they leave the queue; the window is what stops the first
-            // pass after a sweep from being the one that only clears them.
-            List<Long> queue = lookups.pendingWithoutLookup(
-                    PageRequest.of(0, props.getMaxPerPass() * SKIP_WINDOW));
-            int searched = 0;
-            for (Long itemId : queue) {
-                if (searched >= props.getMaxPerPass()) break;
-                try {
-                    VesselLookup row = lookUp(itemId, false);
-                    // A skip made no outside request, so it does not spend the allowance.
-                    if (row != null && !VesselLookup.STATUS_SKIPPED.equals(row.getStatus())) {
-                        searched++;
-                    }
-                } catch (Exception e) {
-                    // One bad item must not end the pass; the row records what happened.
-                    log.warn("Lookup for intake item {} failed: {}", itemId, e.toString());
-                }
-            }
+            int[] searched = {0};
+            tenants.forEachActive("Vessel lookup pass",
+                    tenant -> searched[0] += passForDesk(props.getMaxPerPass() - searched[0]));
         } catch (Exception e) {
             // Nothing above this catches: a dead worker thread would stop lookups for the
             // life of the process, silently.
@@ -146,6 +133,35 @@ public class VesselLookupService {
         } finally {
             running.set(false);
         }
+    }
+
+    /** One desk's share of a pass; returns how many outside searches it made. */
+    private int passForDesk(int allowance) {
+        if (allowance <= 0) return 0;
+        // Deliberately more items than the cap allows lookups. Most of what waits in
+        // this queue cannot be helped by a search at all - a hull both the email and the
+        // record name by IMO is the ordinary case - and asking for exactly `maxPerPass`
+        // rows meant a pass could spend its whole allowance recognising items it was
+        // going to skip, over and over. Those cost a payload read each and are answered
+        // below with a row, so they leave the queue; the window is what stops the first
+        // pass after a sweep from being the one that only clears them.
+        List<Long> queue = lookups.pendingWithoutLookup(
+                PageRequest.of(0, props.getMaxPerPass() * SKIP_WINDOW));
+        int searched = 0;
+        for (Long itemId : queue) {
+            if (searched >= allowance) break;
+            try {
+                VesselLookup row = lookUp(itemId, false);
+                // A skip made no outside request, so it does not spend the allowance.
+                if (row != null && !VesselLookup.STATUS_SKIPPED.equals(row.getStatus())) {
+                    searched++;
+                }
+            } catch (Exception e) {
+                // One bad item must not end the pass; the row records what happened.
+                log.warn("Lookup for intake item {} failed: {}", itemId, e.toString());
+            }
+        }
+        return searched;
     }
 
     /**

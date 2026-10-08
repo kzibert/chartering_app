@@ -6,6 +6,7 @@ import com.chartering.model.MailSyncState;
 import com.chartering.repository.MailMessageRepository;
 import com.chartering.repository.MailServerFolderRepository;
 import com.chartering.repository.MailSyncStateRepository;
+import com.chartering.tenancy.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -118,8 +119,8 @@ public class MailServerFolderService {
     /** The rail: every folder, its two pairs of counts, and how its last sync went. */
     @Transactional(readOnly = true)
     public List<MailServerFolderResponse> listWithCounts() {
-        Map<String, Long> totals = byFolder(messages.countByImapFolder());
-        Map<String, Long> unread = byFolder(messages.countUnreadByImapFolder());
+        Map<String, Long> totals = byFolder(messages.countByImapFolder(TenantContext.requireUser()));
+        Map<String, Long> unread = byFolder(messages.countUnreadByImapFolder(TenantContext.requireUser()));
         Map<String, MailSyncState> states = new HashMap<>();
         for (MailSyncState s : syncState.findAll()) {
             states.put(s.getImapFolder(), s);

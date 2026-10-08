@@ -101,7 +101,16 @@ Three things bite here:
   `V23__add_cargo_max_ballast_days.sql` and `V24__add_feed.sql` and
   `V25__add_intake_decisions.sql` and `V26__add_web_intake.sql` and
   `V27__capture_web_into_analysis.sql` and `V28__add_intake_review_history.sql` and
-  `V29__add_mail_reply_cc.sql` exist; the next one is V30.
+  `V29__add_mail_reply_cc.sql` and `V30__add_tenants_and_users.sql` and
+  `V31__scope_data_to_tenants.sql` and `V32__add_personal_mailboxes.sql` and
+  `V33__add_personal_circulation.sql` and `V34__add_feed_intake_subscriptions.sql` and
+  `V35__add_desk_aliases.sql` and `V36__enable_row_level_security.sql` exist; the next one
+  is V37.
+- **Since V36, a migration that reads or writes a desk's rows starts with
+  `SET LOCAL app.rls_bypass = 'on';`.** Row-level security is forced on every desk table and
+  migrations run as the role it binds; without the line such a migration sees no rows and
+  inserts fail the policy. `LOCAL` ends with the migration's transaction, so it never leaks
+  into the pool.
 - **A migration deployed from an unmerged branch makes `main` undeployable, and it has
   happened.** V8 reached the hosted database from `feature/ai_email_parsing` before that
   branch reached `main`. Every build from `main` then refused to start, because
@@ -116,6 +125,100 @@ Three things bite here:
   LF; migrations must round-trip byte-for-byte.
 - **Never edit a migration that has run.** Corrections are the next migration. Flyway
   Community has no undo, so backing one out is a manual `ALTER TABLE`.
+
+### Tenancy: every desk's data is its own
+
+One database, one schema, a `tenant_id` on every table holding a desk's work (V31), filled
+with 1 for the data that predates desks and **left without a default**, so a write that
+forgot whose it is fails instead of landing on desk 1. Hibernate does the work: every
+tenant-scoped entity carries `@TenantId Long tenantId`, and `tenancy/TenantIdentifierResolver`
+answers which desk a session belongs to — Hibernate stamps it on inserts and adds
+`tenant_id = ?` to JPQL, criteria, Specifications, loads by id and bulk updates alike. That
+is why the repositories did not change. A cross-desk id answers **404**, the same as an id
+that does not exist.
+
+`tenancy/TenantContext` is where the desk comes from: an explicit `runAs(tenantId, …)`, else
+the logged-in account's. **Nothing bound means no desk** — the resolver answers id 0, reads
+find nothing and inserts fail on the foreign key — never "all desks". Three rules follow:
+
+- **Work without a request names its desk.** Timers loop over `TenantDirectory.forEachActive`
+  (suspended desks are skipped); a request handing work to a worker thread wraps it in
+  `TenantContext.carry(…)`, which brings the login along so the change log still names who
+  pressed the button. One-at-a-time guards stay installation-wide where there is one of the
+  thing (the GPU, the outgoing mailbox), but the progress and reports are kept **per desk** —
+  another desk's run is shown as idle, never with its subject or counts.
+- **Bind before the transaction.** Hibernate asks for the desk when a session opens; a
+  `runAs` inside a transaction already open changes nothing.
+- **SQL Hibernate does not write names the desk itself.** `DataChangeWriter` inserts
+  `tenant_id`; `Cargo.lastSentAt` reads `mail.ownAddresses` with `o.tenant_id = tenant_id`.
+
+**The vocabulary is the market's, with each desk's own spellings on top** (V35).
+`port_aliases` and `trade_area_aliases` carry a nullable `tenant_id`: null is the market's
+spelling (migrations only), a desk id is one that desk added on Settings › Desk vocabulary.
+`PortDirectory` and `TradeAreaGraph` keep **one snapshot per desk** (key 0: the market's
+alone) built on first use; the desk's aliases win over the market's for the same key, and a
+port's own name still beats both. `DeskAliasService` drops a desk's snapshot after its
+commit. Ports, areas, distances and sea routes themselves stay global.
+
+**Postgres enforces the same line underneath** (V36). Every desk table has a forced
+row-level security policy reading `app.tenant_id`, which `tenancy/TenantAwareDataSource`
+sets on every connection checkout from `TenantContext` (empty: no rows). It catches what
+Hibernate's filter cannot see — plain JDBC, a hand-written native query, a bulk update
+missing its predicate. A superuser or a `BYPASSRLS` role is exempt: the local compose
+database's default user is one, and `RowLevelSecurityCheck` logs at startup whether the
+connected role is enforced. The integration suite connects as an ordinary role
+(`IntegrationTest`) so the policies are really exercised; `RowLevelSecurityTest` drives plain
+SQL against them.
+
+`TenantScopeTest` fails on any entity that has no `@TenantId` and is not listed as global
+with its reason. Global on purpose: `tenants`/`users` (the login needs them first), the
+reference vocabulary (ports, trade areas, sea routes, regions, tonnage categories),
+`feed_sources`/`feed_items` (public pages fetched once), and `app_settings`, which holds two
+scopes: `SettingsStore` routes each key to the desk's row or the installation's (NULL
+`tenant_id`) — the model servers, the sweep and fetch timers and the served context window
+are the installation's and only a platform administrator changes them; a desk's settings
+need a desk administrator. The settings classes ask by key and never see the split.
+
+**Every person has their own mailbox** (V32). `service/mail/MailAccounts` answers "whose
+mailbox is this thread using": the server's — `IMAP_*`/`MAIL_*` in the environment, as
+before — for the account named by `MAILBOX_OWNER` (empty: the first account), or a
+`mail_accounts` row the person saved on Settings › My mailbox, its password AES-GCM under
+`CREDENTIALS_KEY` (`security/CredentialCipher`; unset, nobody can save one). `SmtpTransport`,
+the IMAP sync and the circulation settings' From and SMTP host all ask it, so the reply,
+compose and circular paths did not change shape. The poller reads every mailbox in turn,
+each inside `TenantContext.runAs(tenant, user, …)`, so what it stores is the owner's. Rows
+written before accounts are handed to the server mailbox's owner at startup
+(`MailOwnership`). **The Brevo key is desk 1's** (`EnvironmentBrevo`); other desks see it as
+missing. **Feed sources are installation-wide** — fetched once for everybody, added, edited and
+removed by a platform administrator — but **which boards a desk reads into Intake is the
+desk's** (`feed_intake_subscriptions`, V34, replacing `feed_sources.into_intake`), switched by
+its administrators on the Feed tab. Every query asking "boards read into Intake" does so
+through a subquery on the subscription, which the tenant filter scopes to the desk on the
+thread; a post is parsed once per desk that reads it.
+
+**Mail is personal on the Mailbox tab and shared as a source.** Folders, rules, server-folder
+mirrors, sync cursors and replies carry `owner_user_id` and the auto-enabled Hibernate filter
+`Owned.FILTER` (viewer = the person on the thread, 0 = desk-wide work), stamped on insert by
+`Owned.Stamp`. The filter does **not** apply to loads by id — a colleague opening a shared
+message lazily loads its folder — so those services fetch by query (`findOwned`).
+`mail_messages` has the column but **no filter**, on purpose: the parser, Intake, Cargoes and
+the corpus join to messages from shared records, and a filter would empty them for everyone
+but the owner. The Mailbox code names the owner explicitly instead (`MailMessageSpecification.ownedBy`,
+the owner-parameterised counts), and a colleague may open a message only read-only and only
+where `MailMessageRepository.isSharedSource` says the desk shares it — the "original email"
+buttons on cargoes, positions and Intake.
+
+**Circulars are sent per person** (V33). `EmailCampaignService` keeps one `Slot` per account —
+running flag, stop request, progress, the settings the run started with — found by the person
+on the thread, which the worker has too because `TenantContext.carry` brings the login. The
+worker is a pool, so two people's paced runs proceed side by side; one person still has one
+run at a time, because two runs through one mailbox would share its allowance unawares. The
+send log is one file per account (`MAIL_LOG_FILE` with `-user<id>` before the extension). A
+run records `sent_by_user_id`: the desk reads all of History, only the sender resumes a run
+(the rest would go out through their mailbox), and anybody may send it again as a new run of
+their own. **The current list is per person** (`circulation_lists.owner_user_id`, set on the
+draft only); saved lists are the desk's prepared documents and have no owner. Somebody else's
+current list answers 404.
 
 ### The domain: companies, people, contacts
 
@@ -1170,10 +1273,33 @@ Nothing `feed_*` is audited — machine copies of other people's pages, and docu
 
 ### Auth
 
-One account. `AUTH_PASSWORD` (or `AUTH_PASSWORD_HASH`) plus a JWT signed with `JWT_SECRET`;
-`security/JwtAuthFilter` + `JwtService`. There is deliberately no working default password —
-until one is set the api starts normally and refuses every login. Leaving `JWT_SECRET` unset
-generates a key per boot, which logs everyone out on each restart.
+Accounts live in `users` (V30), each on one desk (`tenants`); a login name is unique across
+the installation so the login screen stays two fields. There is **no self-registration** —
+an administrator makes every account on the Admin › Users screen (`UserAdminService`), with
+a password typed there or generated and shown once, and `must_change_password` forces the
+person to choose their own before the server answers anything but `/auth/me` and
+`/auth/change-password`. Roles nest: `USER` < `TENANT_ADMIN` (accounts on their own desk) <
+`PLATFORM_ADMIN` (desks, and accounts on any desk). No role reads another desk's data.
+
+`AUTH_USERNAME` / `AUTH_PASSWORD` (or `AUTH_PASSWORD_HASH`) only **seed the first account**
+— a platform administrator on desk 1 — when `users` is empty (`UserBootstrap`), so an
+installation that used the single environment credential keeps working. After that they are
+not read, except that `AUTH_RESET_PASSWORD=true` re-applies them for one restart: the way
+back in when the only administrator is locked out. Until an account exists the api starts
+normally and refuses every login.
+
+The JWT (`JwtService`, HS256 over `JWT_SECRET`) carries the user id, the desk and the
+account's `token_version`, and nothing else. `JwtAuthFilter` reads the row on **every
+request** and refuses a disabled account, a suspended desk or a version mismatch — a
+password change or reset, a disable and a role change all bump the version, which is what
+makes a stateless token revocable. The principal is `security/AuthenticatedUser`, an
+`AuthenticatedPrincipal`, so `Authentication.getName()` is still the username the change log
+and reply records were written with. Lockout counters are on the row, per account. Leaving
+`JWT_SECRET` unset generates a key per boot, which logs everyone out on each restart.
+
+Cross-desk access to an account answers **404, never 403** — "not allowed" would confirm the
+id exists on somebody else's desk. A desk always keeps one enabled administrator, and nobody
+disables themselves or changes their own role.
 
 ### One UI, two layouts
 
