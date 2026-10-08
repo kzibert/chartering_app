@@ -13,6 +13,8 @@ import com.chartering.model.MailRuleCondition;
 import com.chartering.repository.MailFolderRepository;
 import com.chartering.repository.MailMessageRepository;
 import com.chartering.repository.MailRuleRepository;
+import com.chartering.specification.MailMessageSpecification;
+import com.chartering.tenancy.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -84,7 +86,7 @@ public class MailRuleService {
 
     @Transactional
     public MailRuleResponse update(Long id, MailRuleRequest req) {
-        MailRule rule = rules.findById(id)
+        MailRule rule = rules.findOwned(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Mail rule", id));
         if (req.getSortOrder() != null) {
             rule.setSortOrder(req.getSortOrder());
@@ -109,7 +111,7 @@ public class MailRuleService {
     }
 
     private void apply(MailRule rule, MailRuleRequest req) {
-        MailFolder folder = folders.findById(req.getFolderId())
+        MailFolder folder = folders.findOwned(req.getFolderId())
                 .orElseThrow(() -> new ResourceNotFoundException("Mail folder", req.getFolderId()));
 
         String name = req.getName().trim();
@@ -222,9 +224,12 @@ public class MailRuleService {
     @Transactional
     public MailRuleRunResponse applyToExisting() {
         List<MailRule> ordered = rules.findEnabledForEvaluation();
-        Specification<MailMessage> ruleManaged = (root, query, cb) -> cb.or(
-                cb.isNull(root.get("folder")),
-                cb.isNotNull(root.get("filedByRuleId")));
+        // The caller's own mail: rules are personal, and so is the mailbox they file.
+        Specification<MailMessage> ruleManaged = Specification.allOf(
+                MailMessageSpecification.ownedBy(TenantContext.requireUser()),
+                (root, query, cb) -> cb.or(
+                        cb.isNull(root.get("folder")),
+                        cb.isNotNull(root.get("filedByRuleId"))));
 
         int evaluated = 0;
         int filed = 0;

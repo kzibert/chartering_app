@@ -28,6 +28,18 @@ public class AppSetting {
     public static final String OWN_ADDRESSES = "mail.ownAddresses";
 
     @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    /**
+     * The desk this setting belongs to, or null for one that describes the whole installation
+     * (the model servers, the timers). Deliberately not {@code @TenantId}: that would hide the
+     * installation's rows from every desk. {@code SettingsStore} decides which keys are which
+     * and asks for the right rows explicitly.
+     */
+    @Column(name = "tenant_id")
+    private Long tenantId;
+
     @Column(name = "key", nullable = false, length = 100)
     private String key;
 

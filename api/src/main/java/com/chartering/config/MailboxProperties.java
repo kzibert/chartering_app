@@ -30,6 +30,15 @@ public class MailboxProperties {
      */
     private boolean enabled = false;
 
+    /**
+     * The login of the account this mailbox belongs to. One mailbox configured in the
+     * environment and many people on the installation: it is somebody's, and only theirs
+     * appears on their Mailbox tab, replies from it go out as them, and everybody else sets up
+     * their own. Defaults to the first account, which on an upgraded installation is the
+     * person who was using it before there were accounts.
+     */
+    private String owner;
+
     /** IMAP host. Defaults to Zoho's EU data centre, matching the SMTP default. */
     private String host = "imap.zoho.eu";
 

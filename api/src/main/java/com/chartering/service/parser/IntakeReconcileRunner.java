@@ -2,6 +2,7 @@ package com.chartering.service.parser;
 
 import com.chartering.config.ParserProperties;
 import com.chartering.config.VesselLookupProperties;
+import com.chartering.tenancy.TenantDirectory;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -37,10 +38,16 @@ public class IntakeReconcileRunner {
     private final IntakeService intake;
     private final ParserProperties parser;
     private final VesselLookupProperties lookups;
+    private final TenantDirectory tenants;
 
+    /** Each desk's queue in turn: a pass reads and writes one desk's items and records. */
     @Scheduled(fixedDelay = TICK_MS, initialDelay = 45_000)
     public void run() {
         if (!parser.isEnabled()) return;
+        tenants.forEachActive("Intake reconciliation", tenant -> runForDesk());
+    }
+
+    private void runForDesk() {
         // Needs only the parser: which side of the queue a question sits on depends on the
         // record, and the record moves whether or not anything is being looked up.
         try {

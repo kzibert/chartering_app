@@ -1,8 +1,11 @@
 package com.chartering.model;
 
+import com.chartering.tenancy.Owned;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.Filter;
+import org.hibernate.annotations.TenantId;
 
 import java.time.LocalDateTime;
 
@@ -17,7 +20,9 @@ import java.time.LocalDateTime;
 @Setter
 @Entity
 @Table(name = "mail_sync_state")
-public class MailSyncState {
+@EntityListeners(Owned.Stamp.class)
+@Filter(name = Owned.FILTER)
+public class MailSyncState implements Owned {
 
     /** How the last attempt ended. */
     public static final String OK = "OK";
@@ -25,8 +30,23 @@ public class MailSyncState {
 
     /** The IMAP folder read, e.g. {@code INBOX}. The folder is the identity. */
     @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
     @Column(name = "imap_folder", nullable = false, length = 255)
     private String imapFolder;
+
+    /** The desk this row belongs to. Written and filtered by Hibernate - see TenantIdentifierResolver. */
+    @TenantId
+    @Column(name = "tenant_id", nullable = false, updatable = false)
+    private Long tenantId;
+
+    /**
+     * Whose mailbox this belongs to. Stamped on insert (Owned.Stamp); null only on rows that
+     * predate accounts, until MailOwnership assigns them at startup.
+     */
+    @Column(name = "owner_user_id")
+    private Long ownerUserId;
 
     /**
      * The server's UIDVALIDITY at the last read. When it changes, every UID stored against

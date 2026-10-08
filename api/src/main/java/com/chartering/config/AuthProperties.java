@@ -5,25 +5,22 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 /**
- * The one account that can use this application, and the key its tokens are signed with.
+ * The first account, the key tokens are signed with, and the login policy.
  *
- * <p><b>Why one user and not a users table.</b> This is a single-desk application: the
- * database has no concept of an owner, every row is visible to whoever is logged in, and
- * nothing in it is attributed to an account. A users table would therefore add a schema, a
- * migration and an admin screen while changing nothing about who can see what. The login
- * exists to stop the internet reaching the data, and one credential does that. If a second
- * person ever needs their own account, this class is what grows a repository behind it —
- * nothing else in the app asks who the caller is.
- *
- * <p>Everything here comes from the environment. Nothing is stored in the database, so
- * rotating the password or the signing key is an environment change and a restart.
+ * <p><b>Accounts live in the {@code users} table</b> (V30); each person logs in as
+ * themselves and belongs to one desk. The username and password below no longer decide who
+ * may log in. They seed the very first account - a platform administrator on the default desk
+ * - when the table is empty ({@code UserBootstrap}), which is how an installation that used to
+ * have one environment credential upgrades without anybody being locked out: the same name and
+ * password keep working, now as a row. After that, changing them here changes nothing, unless
+ * {@link #resetPassword} asks for exactly that.
  */
 @Component
 @ConfigurationProperties(prefix = "chartering.auth")
 @Data
 public class AuthProperties {
 
-    /** The login name. Not an email address unless you make it one — it is only compared. */
+    /** The first account's login name. Not an email address unless you make it one. */
     private String username = "admin";
 
     /**
@@ -57,9 +54,10 @@ public class AuthProperties {
 
     /**
      * How long a token stays valid. Long enough to work a day without re-entering the
-     * password, short enough that a token copied off a machine expires on its own — there
-     * is no revocation list here, and with a stateless token there cannot be one: a token
-     * is valid until it expires or the signing key changes.
+     * password, short enough that a token copied off a machine expires on its own. There is
+     * no list of issued tokens; what revokes them early is the account's
+     * {@code token_version}, bumped by a disable, a password change or reset and a role
+     * change - all of one account's tokens at once, which is the granularity that matters.
      */
     private long tokenTtlMinutes = 720;
 
@@ -75,4 +73,12 @@ public class AuthProperties {
 
     /** How long the lockout lasts. Cleared early by a successful login. */
     private long lockoutSeconds = 300;
+
+    /**
+     * The way back in when the only administrator has lost their password. When true, the
+     * account named {@link #username} is given the configured password at startup, unlocked
+     * and re-enabled, and every token it held is revoked. Meant to be switched on for one
+     * restart and off again - left on, the environment would quietly own that password again.
+     */
+    private boolean resetPassword;
 }

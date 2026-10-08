@@ -94,6 +94,14 @@ services:
       # out. Left unset the app generates one per boot and every redeploy logs you out.
       - key: JWT_SECRET
         generateValue: true
+      # Encrypts the mailbox passwords people save for themselves. A fact about this
+      # deployment, owned by the dashboard: set it there once. Unset, nobody can save a
+      # personal mailbox; changing it makes every saved password unreadable.
+      - key: CREDENTIALS_KEY
+        sync: false
+      # Whose the server's own mailbox (IMAP_*/MAIL_*) is. Empty means the first account.
+      - key: MAILBOX_OWNER
+        sync: false
 
       # ---- posture ----------------------------------------------------------
       # No API documentation on a public instance. Not because the endpoints are secret -

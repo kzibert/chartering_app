@@ -1,8 +1,11 @@
 package com.chartering.model;
 
+import com.chartering.tenancy.Owned;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.Filter;
+import org.hibernate.annotations.TenantId;
 
 import java.time.LocalDateTime;
 
@@ -28,11 +31,25 @@ import java.time.LocalDateTime;
 @Setter
 @Entity
 @Table(name = "mail_replies")
-public class MailReply {
+@EntityListeners(Owned.Stamp.class)
+@Filter(name = Owned.FILTER)
+public class MailReply implements Owned {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    /** The desk this row belongs to. Written and filtered by Hibernate - see TenantIdentifierResolver. */
+    @TenantId
+    @Column(name = "tenant_id", nullable = false, updatable = false)
+    private Long tenantId;
+
+    /**
+     * Whose mailbox this belongs to. Stamped on insert (Owned.Stamp); null only on rows that
+     * predate accounts, until MailOwnership assigns them at startup.
+     */
+    @Column(name = "owner_user_id")
+    private Long ownerUserId;
 
     /**
      * The message replied to, or null if it has since been deleted from the mailbox

@@ -4,6 +4,8 @@ import com.chartering.config.FeedProperties;
 import com.chartering.exception.FeatureDisabledException;
 import com.chartering.model.FeedSource;
 import com.chartering.repository.FeedSourceRepository;
+import com.chartering.tenancy.TenantContext;
+import com.chartering.tenancy.TenantDirectory;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -40,6 +42,7 @@ public class FeedFetchService {
     private final FeedSettings settings;
     private final FeedSourceRepository sources;
     private final FeedFetchRunner runner;
+    private final TenantDirectory tenants;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
 
@@ -83,7 +86,10 @@ public class FeedFetchService {
      */
     private boolean fetches() {
         if (props.isAnalysisEnabled()) return true;
-        return parser.isEnabled() && sources.existsByEnabledTrueAndIntoIntakeTrue();
+        // Any desk reading any enabled board into Intake. Asked desk by desk: the timer has no
+        // desk of its own, and the subscriptions are each desk's.
+        return parser.isEnabled() && tenants.activeIds().stream()
+                .anyMatch(desk -> TenantContext.callAs(desk, sources::existsEnabledReadIntoIntake));
     }
 
     /** Fetch every enabled source now. */
@@ -113,19 +119,23 @@ public class FeedFetchService {
             throw new FeatureDisabledException(
                     "The email parser is not enabled on this deployment (PARSER_ENABLED).");
         }
-        submit(sourceId, sourceId == null);
-    }
-
-    private void submit(Long onlySource) {
-        submit(onlySource, false);
-    }
-
-    private void submit(Long onlySource, boolean intakeOnly) {
+        // Which boards "every board marked" means is the caller's desk's answer, so it is
+        // settled here, on the request, rather than on the worker that has no desk.
+        List<Long> boards = sourceId != null ? List.of(sourceId)
+                : sources.findReadIntoIntake().stream().filter(FeedSource::isEnabled).map(FeedSource::getId).toList();
         if (running.get()) {
             log.debug("A feed fetch is already running; this request is skipped");
             return;
         }
-        worker.submit(() -> fetchIfIdle(onlySource, intakeOnly));
+        worker.submit(() -> fetchIfIdle(boards));
+    }
+
+    private void submit(Long onlySource) {
+        if (running.get()) {
+            log.debug("A feed fetch is already running; this request is skipped");
+            return;
+        }
+        worker.submit(() -> fetchIfIdle(onlySource == null ? null : List.of(onlySource)));
     }
 
     public boolean isRunning() {
@@ -146,26 +156,25 @@ public class FeedFetchService {
         return lastFetch.plusMinutes(minutes);
     }
 
-    private void fetchIfIdle(Long onlySource, boolean intakeOnly) {
+    /** @param only the sources to read, or null for every enabled one (the timer's pass) */
+    private void fetchIfIdle(List<Long> only) {
         if (!running.compareAndSet(false, true)) return;
         try {
-            lastReport = fetch(onlySource, intakeOnly);
+            lastReport = fetch(only);
         } catch (Exception e) {
             log.error("Feed fetch failed", e);
             lastReport = new FetchReport(0, 0, 0, "The fetch failed: " + e.getMessage(), OffsetDateTime.now());
         } finally {
-            if (onlySource == null) lastFetch = OffsetDateTime.now();
+            if (only == null) lastFetch = OffsetDateTime.now();
             running.set(false);
         }
     }
 
-    private FetchReport fetch(Long onlySource, boolean intakeOnly) {
-        List<Long> ids = onlySource != null ? List.of(onlySource)
-                : sources.findByEnabledTrueOrderByIdAsc().stream()
-                        .filter(s -> !intakeOnly || s.isIntoIntake())
-                        .map(FeedSource::getId).toList();
+    private FetchReport fetch(List<Long> only) {
+        List<Long> ids = only != null ? only
+                : sources.findByEnabledTrueOrderByIdAsc().stream().map(FeedSource::getId).toList();
         if (ids.isEmpty()) {
-            return new FetchReport(0, 0, 0, intakeOnly
+            return new FetchReport(0, 0, 0, only != null
                     ? "No sources are marked to be read into Intake."
                     : "No enabled sources to read.", OffsetDateTime.now());
         }

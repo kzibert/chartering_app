@@ -4,8 +4,8 @@ import com.chartering.config.BrevoProperties;
 import com.chartering.config.MailCampaignProperties;
 import com.chartering.dto.CirculationSettingsRequest;
 import com.chartering.model.AppSetting;
-import com.chartering.repository.AppSettingRepository;
 import com.chartering.service.mail.CircularProvider;
+import com.chartering.service.mail.MailAccounts;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,6 +20,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Pattern;
@@ -94,7 +95,8 @@ public class SettingsService {
     /** A day between two messages is already absurd; beyond that it is a typo. */
     private static final long MAX_DELAY_ALLOWED_MS = 86_400_000L;
 
-    private final AppSettingRepository repository;
+    private final SettingsStore repository;
+    private final MailAccounts mailAccounts;
     private final MailCampaignProperties props;
     private final BrevoProperties brevo;
     private final JavaMailSender mailSender;
@@ -154,12 +156,20 @@ public class SettingsService {
         Map<String, String> stored = repository.findByKeyIn(keysFor(provider)).stream()
                 .collect(Collectors.toMap(AppSetting::getKey, AppSetting::getValue));
         CirculationSettings defaults = circulationDefaults(provider);
+        // A personal mailbox sends as itself: its own address and its own server. The desk's
+        // From and SMTP endpoint are the server mailbox's, and a provider refuses a From its
+        // login does not own. Pacing stays the desk's either way.
+        Optional<MailAccounts.Mailbox> own = mailAccounts.current().filter(m -> !m.environment());
         return new CirculationSettings(
                 provider,
-                stored.getOrDefault(FROM_ADDRESS, defaults.fromAddress()),
-                stored.getOrDefault(FROM_NAME, defaults.fromName()),
-                stored.getOrDefault(SMTP_HOST, defaults.smtpHost()),
-                parse(stored, SMTP_PORT, defaults.smtpPort(), Integer::parseInt),
+                own.map(MailAccounts.Mailbox::address)
+                        .orElseGet(() -> stored.getOrDefault(FROM_ADDRESS, defaults.fromAddress())),
+                own.map(MailAccounts.Mailbox::displayName).filter(n -> !n.isBlank())
+                        .orElseGet(() -> stored.getOrDefault(FROM_NAME, defaults.fromName())),
+                own.map(MailAccounts.Mailbox::smtpHost)
+                        .orElseGet(() -> stored.getOrDefault(SMTP_HOST, defaults.smtpHost())),
+                own.map(MailAccounts.Mailbox::smtpPort)
+                        .orElseGet(() -> parse(stored, SMTP_PORT, defaults.smtpPort(), Integer::parseInt)),
                 parse(stored, pacingKey(provider, MIN_DELAY_MS), defaults.minDelayMs(), Long::parseLong),
                 parse(stored, pacingKey(provider, MAX_DELAY_MS), defaults.maxDelayMs(), Long::parseLong),
                 parse(stored, pacingKey(provider, MAX_RECIPIENTS), defaults.maxRecipientsPerCampaign(), Integer::parseInt),

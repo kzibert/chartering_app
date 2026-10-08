@@ -2,7 +2,7 @@ package com.chartering.service.feed;
 
 import com.chartering.config.FeedProperties;
 import com.chartering.model.AppSetting;
-import com.chartering.repository.AppSettingRepository;
+import com.chartering.service.SettingsStore;
 import com.chartering.service.ModelEndpoint;
 import com.chartering.service.ParserSettings;
 import lombok.RequiredArgsConstructor;
@@ -90,7 +90,7 @@ public class FeedSettings {
     /** What must be left for the material once the prompt and the answer are reserved. */
     private static final int MIN_MATERIAL_TOKENS = 512;
 
-    private final AppSettingRepository repository;
+    private final SettingsStore repository;
     private final FeedProperties props;
 
     /**
@@ -193,9 +193,16 @@ public class FeedSettings {
         return endpoint();
     }
 
+    /**
+     * Read on its own rather than through {@link #values()}: the fetch timer asks, and it runs
+     * for the whole installation with no desk on the thread, while most of what {@code values()}
+     * reads is a desk's.
+     */
     @Transactional(readOnly = true)
     public int fetchIntervalMinutes() {
-        return values().fetchIntervalMinutes();
+        Map<String, String> stored = repository.findByKeyIn(List.of(FETCH_INTERVAL_MINUTES)).stream()
+                .collect(Collectors.toMap(AppSetting::getKey, AppSetting::getValue));
+        return readInt(stored, FETCH_INTERVAL_MINUTES, DEFAULT_FETCH_INTERVAL_MINUTES);
     }
 
     @Transactional

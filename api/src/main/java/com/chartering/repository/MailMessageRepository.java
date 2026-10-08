@@ -16,88 +16,79 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * Synced mail. Desk-scoped like everything else; <b>whose mailbox</b> a query is about is a
+ * parameter here rather than a filter, and that is deliberate. A message is one person's mail
+ * on the Mailbox tab and, once the parser has read a cargo or a position out of it, the source
+ * the whole desk opens from that cargo - so a filter hiding other people's mail everywhere
+ * would empty the desk's shared screens. The Mailbox code names the owner; everything else
+ * reads the desk.
+ */
 public interface MailMessageRepository
         extends JpaRepository<MailMessage, Long>, JpaSpecificationExecutor<MailMessage> {
 
-    /**
-     * The paged search, with the three associations every row displays already loaded.
-     *
-     * <p>Overridden purely for the graph: without it, rendering a page of twenty rows costs
-     * sixty extra selects for the folder, company and person names. All three are
-     * many-to-one, so fetching them cannot multiply the rows and paging stays honest.
-     */
     @Override
     @EntityGraph(attributePaths = {"folder", "company", "person"})
     Page<MailMessage> findAll(Specification<MailMessage> spec, Pageable pageable);
 
-    /** The dedupe lookup: a message already stored under this Message-ID is not stored again. */
-    Optional<MailMessage> findByMessageId(String messageId);
+    Optional<MailMessage> findByOwnerUserIdAndMessageId(Long ownerUserId, String messageId);
 
-    /** Fallback identity for a message that arrived without a Message-ID header. */
-    Optional<MailMessage> findByImapFolderAndImapValidityAndImapUid(
-            String imapFolder, Long imapValidity, Long imapUid);
+    Optional<MailMessage> findByOwnerUserIdAndImapFolderAndImapValidityAndImapUid(
+            Long ownerUserId, String imapFolder, Long imapValidity, Long imapUid);
 
-    /** Have we seen any of these Message-IDs? One query per fetch batch, not one per message. */
-    @Query("select m.messageId from MailMessage m where m.messageId in :ids")
-    List<String> findExistingMessageIds(@Param("ids") Collection<String> ids);
+    @Query("select m.messageId from MailMessage m where m.ownerUserId = :owner and m.messageId in :ids")
+    List<String> findExistingMessageIds(@Param("owner") Long owner, @Param("ids") Collection<String> ids);
 
-    /**
-     * Unread counts per folder in one query, the null key being the Inbox. The rail shows
-     * every folder's badge on every load, so this is deliberately one round trip rather than
-     * one count per folder.
-     *
-     * <p>The left join is what keeps the Inbox in the result: an unfiled message has no
-     * folder, and joining to it any other way would count every folder except the one most
-     * of the mail is actually in.
-     */
     @Query("""
             select f.id, count(m) from MailMessage m
               left join m.folder f
-            where m.read = false
+            where m.ownerUserId = :owner and m.read = false
             group by f.id
             """)
-    List<Object[]> countUnreadByFolder();
+    List<Object[]> countUnreadByFolder(@Param("owner") Long owner);
 
-    /** Total messages per folder, same shape and same reason as the unread counts. */
     @Query("""
             select f.id, count(m) from MailMessage m
               left join m.folder f
+            where m.ownerUserId = :owner
             group by f.id
             """)
-    List<Object[]> countByFolder();
+    List<Object[]> countByFolder(@Param("owner") Long owner);
+
+    @Query("select m.imapFolder, count(m) from MailMessage m where m.ownerUserId = :owner group by m.imapFolder")
+    List<Object[]> countByImapFolder(@Param("owner") Long owner);
+
+    @Query("""
+            select m.imapFolder, count(m) from MailMessage m
+            where m.ownerUserId = :owner and m.read = false
+            group by m.imapFolder
+            """)
+    List<Object[]> countUnreadByImapFolder(@Param("owner") Long owner);
+
+    long countByOwnerUserId(Long ownerUserId);
+
+    long countByOwnerUserIdAndReadFalse(Long ownerUserId);
+
+    long countByOwnerUserIdAndImapFolderAndReceivedAtGreaterThanEqualAndReceivedAtLessThan(
+            Long ownerUserId, String imapFolder, LocalDateTime from, LocalDateTime until);
 
     /**
-     * The same two counts again, by the folder the mail server itself has the message in.
-     * Grouped on a plain column rather than a join: server folders are mirrored by name, and
-     * the name is what every message carries.
+     * Whether a message is the source of something the desk shares - a cargo, a position, a
+     * question on Intake, an example in the corpus. Those are the messages a colleague may open
+     * from that record; anything else in somebody's mailbox stays theirs.
      */
-    @Query("select m.imapFolder, count(m) from MailMessage m group by m.imapFolder")
-    List<Object[]> countByImapFolder();
+    @Query("""
+            select count(m) > 0 from MailMessage m where m.id = :id and (
+                 exists (select 1 from CargoSource s where s.mailMessage = m)
+              or exists (select 1 from Cargo c where c.sourceMailMessage = m)
+              or exists (select 1 from VesselPosition p where p.sourceMailMessage = m)
+              or exists (select 1 from IntakeItemSource i where i.mailMessage = m)
+              or exists (select 1 from IntakeItem i where i.parsedEmail.mailMessage = m)
+              or exists (select 1 from AnalysisSample a where a.mailMessage = m))
+            """)
+    boolean isSharedSource(@Param("id") Long id);
 
-    @Query("select m.imapFolder, count(m) from MailMessage m where m.read = false group by m.imapFolder")
-    List<Object[]> countUnreadByImapFolder();
-
-    long countByReadFalse();
-
-    /**
-     * How much mail the server has in one of its folders inside a window — the Sent folder
-     * and today, in the only caller.
-     *
-     * <p>Counted on {@code receivedAt}, which for a folder the server files our own outgoing
-     * copies into is when the copy was written, i.e. when the message was sent. The Date
-     * header would be the sender's own clock, and the sender here is a mail server rather
-     * than a correspondent's laptop, but {@code receivedAt} is what every other query in the
-     * mailbox is ordered and filtered by and one query reading a different column would be
-     * the odd one out for no gain.
-     */
-    long countByImapFolderAndReceivedAtGreaterThanEqualAndReceivedAtLessThan(
-            String imapFolder, LocalDateTime from, LocalDateTime until);
-
-    /**
-     * Messages whose sender matches one of these addresses and whose link was not set by
-     * hand — the re-link pass after contacts change. Case-insensitive, because an address
-     * is stored as it was written but matched as it is meant.
-     */
+    /** Auto-linking reads the whole desk's mail: which firm a sender is, is the desk's fact. */
     @Query("""
             select m from MailMessage m
             where m.linkManual = false
@@ -106,18 +97,12 @@ public interface MailMessageRepository
     List<MailMessage> findAutoLinkableByFromAddresses(
             @Param("addresses") Collection<String> addresses);
 
-    /** Every distinct sender that has no company link yet — the input to a re-link run. */
     @Query("""
             select distinct lower(m.fromAddress) from MailMessage m
             where m.linkManual = false
             """)
     List<String> findAutoLinkableSenders();
 
-    /**
-     * Clear a rule's fingerprints when it is deleted. The folder assignment stays: the mail
-     * was filed, and un-filing it because the rule that filed it was tidied away would move
-     * mail nobody asked to move.
-     */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("update MailMessage m set m.filedByRuleId = null where m.filedByRuleId = :ruleId")
     void clearRuleReference(@Param("ruleId") Long ruleId);

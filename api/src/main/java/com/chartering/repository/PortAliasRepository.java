@@ -3,6 +3,7 @@ package com.chartering.repository;
 import com.chartering.model.PortAlias;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 
@@ -15,6 +16,11 @@ public interface PortAliasRepository extends JpaRepository<PortAlias, Long> {
      * join is done once rather than per alias — the same shape, and for the same reason, as
      * {@code TradeAreaAliasRepository.findAllWithArea}.
      */
-    @Query("select a from PortAlias a join fetch a.port")
-    List<PortAlias> findAllWithPort();
+    /** The market's own spellings, read by every desk. */
+    @Query("select a from PortAlias a join fetch a.port where a.tenantId is null")
+    List<PortAlias> findGlobalWithPort();
+
+    /** One desk's additions. */
+    @Query("select a from PortAlias a join fetch a.port where a.tenantId = :tenantId order by a.alias")
+    List<PortAlias> findForTenantWithPort(@Param("tenantId") Long tenantId);
 }

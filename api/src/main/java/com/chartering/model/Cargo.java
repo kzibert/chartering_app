@@ -6,6 +6,7 @@ import lombok.Getter;
 import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.Formula;
+import org.hibernate.annotations.TenantId;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.math.BigDecimal;
@@ -35,6 +36,11 @@ public class Cargo {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    /** The desk this row belongs to. Written and filtered by Hibernate - see TenantIdentifierResolver. */
+    @TenantId
+    @Column(name = "tenant_id", nullable = false, updatable = false)
+    private Long tenantId;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
@@ -245,11 +251,13 @@ public class Cargo {
      * <p>Arrivals from the desk's own addresses ({@link AppSetting#OWN_ADDRESSES}) do not
      * count: the sweep reads our replies too, and a reply quoting a cargo is not the cargo
      * being sent to us. Read from the setting in the query, so a change to the list applies to
-     * rows already stored.
+     * rows already stored. The setting is the cargo's own desk's: settings are per desk, and
+     * this SQL is one of the few places Hibernate's tenant filter does not reach, so it names
+     * the desk itself.
      */
     @Formula("coalesce((select max(s.reported_at) from cargo_sources s where s.cargo_id = id"
             + " and not exists (select 1 from app_settings o where o.key = '"
-            + AppSetting.OWN_ADDRESSES + "'"
+            + AppSetting.OWN_ADDRESSES + "' and o.tenant_id = tenant_id"
             + " and lower(s.from_address) = any(string_to_array(o.value, ',')))),"
             + " received_at, created_at)")
     @Setter(AccessLevel.NONE)

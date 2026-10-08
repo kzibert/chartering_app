@@ -11,6 +11,7 @@ import com.chartering.service.feed.FeedItemSelector.Candidate;
 import com.chartering.service.feed.FeedLlmClient.Completion;
 import com.chartering.service.feed.FeedLlmClient.ModelUnavailableException;
 import com.chartering.service.parser.ParserSweepService;
+import com.chartering.tenancy.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -22,8 +23,10 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -60,9 +63,14 @@ public class FeedSummaryService {
     private final FeedSummaryRecorder recorder;
     private final ParserSweepService parserSweep;
 
+    /**
+     * One run at a time for the installation - there is one model server - and which desk it
+     * is for. Progress is shown only to that desk: a topic's name is the desk's own business.
+     */
     private final AtomicBoolean running = new AtomicBoolean(false);
+    private volatile Long runningFor;
     private volatile Progress progress;
-    private volatile RunReport lastReport;
+    private final Map<Long, RunReport> lastReports = new ConcurrentHashMap<>();
 
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "feed-summary");
@@ -78,16 +86,17 @@ public class FeedSummaryService {
                             OffsetDateTime finishedAt) {
     }
 
+    /** Whether the caller's desk has a run going. Another desk's run is not this desk's news. */
     public boolean isRunning() {
-        return running.get();
+        return running.get() && TenantContext.require().equals(runningFor);
     }
 
     public Progress progress() {
-        return progress;
+        return isRunning() ? progress : null;
     }
 
     public RunReport lastReport() {
-        return lastReport;
+        return lastReports.get(TenantContext.require());
     }
 
     /** Runs the selected topics. Returns at once; refused while the parser sweep is reading. */
@@ -103,20 +112,28 @@ public class FeedSummaryService {
         if (topics.findBySelectedTrueOrderBySortOrderAscIdAsc().isEmpty()) {
             throw new IllegalArgumentException("No topics are selected. Tick at least one on the Topics tab.");
         }
-        if (running.get()) return;
-        worker.submit(this::runIfIdle);
+        if (running.get()) {
+            if (isRunning()) return;
+            throw new IllegalStateException("The summary model is busy with another desk's run. "
+                    + "Try again when it has finished.");
+        }
+        worker.submit(TenantContext.carry(this::runIfIdle));
     }
 
     private void runIfIdle() {
         if (!running.compareAndSet(false, true)) return;
+        Long tenant = TenantContext.require();
+        runningFor = tenant;
         UUID runId = UUID.randomUUID();
         try {
-            lastReport = run(runId);
+            lastReports.put(tenant, run(runId));
         } catch (Exception e) {
             log.error("Feed summary run failed", e);
-            lastReport = new RunReport(runId, 0, 0, 0, "The run failed: " + e.getMessage(), OffsetDateTime.now());
+            lastReports.put(tenant,
+                    new RunReport(runId, 0, 0, 0, "The run failed: " + e.getMessage(), OffsetDateTime.now()));
         } finally {
             progress = null;
+            runningFor = null;
             running.set(false);
         }
     }

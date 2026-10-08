@@ -50,6 +50,9 @@ public class SmtpCircularSender implements CircularSender {
 
     @Override
     public List<String> missingSettings(CirculationSettings cfg) {
+        if (!transport.hasMailbox()) {
+            return List.of(MailAccounts.NO_MAILBOX);
+        }
         List<String> missing = new ArrayList<>();
         // Host comes from Settings, which falls back to MAIL_HOST when it was never changed.
         if (!isSet(cfg.smtpHost())) {

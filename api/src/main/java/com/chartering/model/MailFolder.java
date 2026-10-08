@@ -1,8 +1,14 @@
 package com.chartering.model;
 
+import com.chartering.tenancy.Owned;
+import com.chartering.tenancy.ViewerResolver;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.Filter;
+import org.hibernate.annotations.FilterDef;
+import org.hibernate.annotations.ParamDef;
+import org.hibernate.annotations.TenantId;
 
 import java.time.LocalDateTime;
 
@@ -21,11 +27,33 @@ import java.time.LocalDateTime;
 @Setter
 @Entity
 @Table(name = "mail_folders")
-public class MailFolder {
+@FilterDef(name = Owned.FILTER,
+        // On for every session: nobody needs to remember to switch it on. Not applied to loads
+        // by id, because a colleague opening a shared-source message lazily loads its folder,
+        // and a filtered load would fail; the services ask for a person's own rows by query.
+        autoEnabled = true,
+        applyToLoadByKey = false,
+        defaultCondition = "(:viewer = 0 or owner_user_id = :viewer)",
+        parameters = @ParamDef(name = "viewer", type = Long.class, resolver = ViewerResolver.class))
+@EntityListeners(Owned.Stamp.class)
+@Filter(name = Owned.FILTER)
+public class MailFolder implements Owned {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    /** The desk this row belongs to. Written and filtered by Hibernate - see TenantIdentifierResolver. */
+    @TenantId
+    @Column(name = "tenant_id", nullable = false, updatable = false)
+    private Long tenantId;
+
+    /**
+     * Whose mailbox this belongs to. Stamped on insert (Owned.Stamp); null only on rows that
+     * predate accounts, until MailOwnership assigns them at startup.
+     */
+    @Column(name = "owner_user_id")
+    private Long ownerUserId;
 
     @Column(nullable = false, length = 100)
     private String name;

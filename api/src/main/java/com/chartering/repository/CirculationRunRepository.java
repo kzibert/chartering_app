@@ -48,7 +48,8 @@ public interface CirculationRunRepository extends JpaRepository<CirculationRun, 
             select distinct r from CirculationRun r
               join r.recipients p
             where p.status = 'PENDING' and r.state <> 'RUNNING'
+              and r.sentByUserId = :sender
             order by r.startedAt desc
             """)
-    List<CirculationRun> findResumable();
+    List<CirculationRun> findResumable(@Param("sender") Long sender);
 }

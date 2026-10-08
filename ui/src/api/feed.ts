@@ -196,6 +196,9 @@ export const feedApi = {
   updateSource: (id: number, body: FeedSourceRequest) =>
     client.put<FeedSource>(`/feed/sources/${id}`, body).then((r) => r.data),
   deleteSource: (id: number) => client.delete(`/feed/sources/${id}`),
+  /** This desk's own choice; the board itself is the installation's. */
+  setReadIntoIntake: (id: number, on: boolean) =>
+    client.put<FeedSource>(`/feed/sources/${id}/intake`, null, { params: { on } }).then((r) => r.data),
   parsers: () => client.get<FeedParser[]>('/feed/parsers').then((r) => r.data),
 
   fetchAll: () => client.post<FeedStatus>('/feed/fetch').then((r) => r.data),

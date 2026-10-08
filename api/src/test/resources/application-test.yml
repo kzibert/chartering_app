@@ -1,0 +1,23 @@
+# Integration tests (com.chartering.it): a throwaway Postgres from Testcontainers, every
+# optional feature off, and a known first account. The datasource itself comes from the
+# container (@ServiceConnection), never from here.
+spring:
+  jpa:
+    show-sql: false
+  # A mail server the tests never reach; nothing here sends.
+  mail:
+    host: localhost
+
+chartering:
+  credentials:
+    key: integration-test-credentials-key
+  auth:
+    username: root
+    password: root-password-for-tests
+    jwt-secret: integration-test-signing-key-of-sufficient-length
+    max-failed-attempts: 0
+
+logging:
+  level:
+    root: WARN
+    com.chartering: INFO

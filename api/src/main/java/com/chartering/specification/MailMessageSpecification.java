@@ -86,6 +86,15 @@ public final class MailMessageSpecification {
         return value.replace("!", "!!").replace("%", "!%").replace("_", "!_");
     }
 
+    /**
+     * One person's mailbox. Always part of a Mailbox-tab query: messages are scoped to the desk
+     * by Hibernate, and to their owner here, because the same rows are the desk's shared
+     * sources everywhere else (see MailMessageRepository).
+     */
+    public static Specification<MailMessage> ownedBy(Long ownerUserId) {
+        return (root, query, cb) -> cb.equal(root.get("ownerUserId"), ownerUserId);
+    }
+
     /** One app folder. Pair with {@link #unfiled} to mean the Inbox instead. */
     public static Specification<MailMessage> inFolder(Long folderId) {
         return (root, query, cb) -> folderId == null ? null

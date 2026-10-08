@@ -58,7 +58,8 @@ public interface FeedItemRepository
      */
     @Query("""
             select i from FeedItem i join fetch i.source s
-            where s.enabled = true and s.intoIntake = true
+            where s.enabled = true
+              and exists (select 1 from FeedIntakeSubscription x where x.feedSourceId = s.id)
               and i.text is not null and i.text <> ''
               and coalesce(i.publishedAt, i.fetchedAt) >= :since
               and not exists (select 1 from ParsedEmail p where p.feedItem = i)
@@ -69,7 +70,8 @@ public interface FeedItemRepository
     /** How many posts are waiting to be read, for the Intake tab's header. */
     @Query("""
             select count(i) from FeedItem i
-            where i.source.enabled = true and i.source.intoIntake = true
+            where i.source.enabled = true
+              and exists (select 1 from FeedIntakeSubscription x where x.feedSourceId = i.source.id)
               and i.text is not null and i.text <> ''
               and coalesce(i.publishedAt, i.fetchedAt) >= :since
               and not exists (select 1 from ParsedEmail p where p.feedItem = i)

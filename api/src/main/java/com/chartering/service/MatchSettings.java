@@ -1,7 +1,6 @@
 package com.chartering.service;
 
 import com.chartering.model.AppSetting;
-import com.chartering.repository.AppSettingRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -128,7 +127,7 @@ public class MatchSettings {
     private static final double MAX_SPEED = 25;
     private static final int MAX_ALLOWANCE_HOURS = 168;
 
-    private final AppSettingRepository repository;
+    private final SettingsStore repository;
 
     /** What the Settings tab shows and sends back. */
     public record Values(double ballastSpeedKnots,

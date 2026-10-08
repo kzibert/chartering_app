@@ -1,5 +1,6 @@
 package com.chartering.audit;
 
+import com.chartering.tenancy.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -40,8 +41,8 @@ public class DataChangeWriter {
     private static final String INSERT = """
             insert into data_changes
               (change_set, entity_type, entity_id, entity_label, operation,
-               field_name, old_value, new_value, changed_at, changed_by, context)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               field_name, old_value, new_value, changed_at, changed_by, context, tenant_id)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """;
 
     private final JdbcTemplate jdbcTemplate;
@@ -53,6 +54,16 @@ public class DataChangeWriter {
         OffsetDateTime at = ChangeContext.changedAt();
         String by = ChangeContext.changedBy();
         String context = ChangeContext.context();
+
+        // The desk the change was made on, which is the desk of the session that flushed it:
+        // Hibernate binds a session to one desk, so the rows being described are that desk's.
+        // Checked before the insert rather than left to NOT NULL, because a failed statement
+        // aborts the whole Postgres transaction - the edit would be lost with its history.
+        Long tenantId = TenantContext.current().orElse(null);
+        if (tenantId == null) {
+            log.error("Not writing {} change-log row(s): no tenant on this thread", rows.size());
+            return;
+        }
 
         try {
             jdbcTemplate.batchUpdate(INSERT, rows, rows.size(), (ps, row) -> {
@@ -67,6 +78,7 @@ public class DataChangeWriter {
                 ps.setObject(9, at);
                 ps.setString(10, by);
                 ps.setString(11, context);
+                ps.setLong(12, tenantId);
             });
         } catch (RuntimeException e) {
             // The log is a record of the work, not the work. A save that succeeded must not

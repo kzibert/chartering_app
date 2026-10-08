@@ -1,6 +1,7 @@
 package com.chartering.security;
 
 import com.chartering.config.AuthProperties;
+import com.chartering.model.AppUser;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
@@ -20,10 +21,11 @@ import java.util.Optional;
  * both make and check is exactly the right shape, and an asymmetric key would only add a
  * key pair to manage.
  *
- * <p>The token carries the username and an expiry and nothing else. Deliberately: a JWT is
- * readable by anyone holding it (it is signed, not encrypted), so it is the wrong place for
- * anything the browser should not see, and this application has no roles or per-user data to
- * put there anyway.
+ * <p>The token carries the account's id, its desk, the account's token version and an expiry,
+ * and nothing else. Deliberately: a JWT is readable by anyone holding it (it is signed, not
+ * encrypted), so it is the wrong place for anything the browser should not see. The role is
+ * not in it either - it is read from the row on every request, so a demotion is not
+ * outlived by a token issued before it.
  */
 @Service
 @Slf4j
@@ -66,12 +68,17 @@ public class JwtService {
         return Keys.hmacShaKeyFor(bytes);
     }
 
-    /** A signed token for {@code username}, valid for the configured TTL. */
-    public String issue(String username) {
+    static final String TENANT_CLAIM = "tid";
+    static final String VERSION_CLAIM = "ver";
+
+    /** A signed token for {@code user}, valid for the configured TTL. */
+    public String issue(AppUser user) {
         Instant now = Instant.now();
         Instant expiry = now.plusSeconds(props.getTokenTtlMinutes() * 60);
         return Jwts.builder()
-                .subject(username)
+                .subject(String.valueOf(user.getId()))
+                .claim(TENANT_CLAIM, user.getTenant().getId())
+                .claim(VERSION_CLAIM, user.getTokenVersion())
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(expiry))
                 .signWith(key)
@@ -84,19 +91,25 @@ public class JwtService {
     }
 
     /**
-     * The username inside a valid token, or empty if it is expired, tampered with, signed
-     * with another key, or simply not a JWT. Every one of those is the same answer to the
-     * caller — "not authenticated" — so they are not distinguished here.
+     * What a valid token says, or empty if it is expired, tampered with, signed with another
+     * key, not a JWT, or a token from before accounts existed (its subject was a username,
+     * not an id). Every one of those is the same answer to the caller - "not authenticated" -
+     * so they are not distinguished here.
      */
-    public Optional<String> subjectOf(String token) {
+    public Optional<TokenClaims> claimsOf(String token) {
         try {
             Claims claims = Jwts.parser()
                     .verifyWith(key)
                     .build()
                     .parseSignedClaims(token)
                     .getPayload();
-            return Optional.ofNullable(claims.getSubject());
+            Long userId = Long.valueOf(claims.getSubject());
+            Number tenant = claims.get(TENANT_CLAIM, Number.class);
+            Number version = claims.get(VERSION_CLAIM, Number.class);
+            if (tenant == null || version == null) return Optional.empty();
+            return Optional.of(new TokenClaims(userId, tenant.longValue(), version.intValue()));
         } catch (JwtException | IllegalArgumentException ex) {
+            // NumberFormatException is an IllegalArgumentException: a pre-accounts token.
             log.debug("Rejected token: {}", ex.getMessage());
             return Optional.empty();
         }

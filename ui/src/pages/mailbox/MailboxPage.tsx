@@ -1040,10 +1040,19 @@ function SyncBar({
           showIcon
           message="The mailbox is not being read"
           description={
-            <>
-              Set {status.missingSettings.join(', ')} in <code>.env</code> and restart the api
-              container. Until then this tab shows whatever was synced before.
-            </>
+            // A personal mailbox is set up on the Settings tab; only the server's own is a
+            // matter of environment variables, and its missing list names them.
+            status.missingSettings.some((m) => m.includes('Settings')) ? (
+              <>
+                Still needed: {status.missingSettings.join(', ')}. Add your mailbox on the{' '}
+                <a href="/settings">Settings</a> tab. Until then this tab shows whatever was synced before.
+              </>
+            ) : (
+              <>
+                Set {status.missingSettings.join(', ')} in <code>.env</code> and restart the api
+                container. Until then this tab shows whatever was synced before.
+              </>
+            )
           }
         />
       )}

@@ -1,20 +1,22 @@
 package com.chartering.service.mail;
 
 import com.chartering.config.MailCampaignProperties;
+import com.chartering.dto.MailComposeRequest;
+import com.chartering.dto.MailReplyRequest;
 import com.chartering.exception.MailSendFailedException;
 import com.chartering.model.MailMessage;
 import com.chartering.model.MailReply;
 import com.chartering.repository.ContactRepository;
 import com.chartering.repository.MailMessageRepository;
 import com.chartering.repository.MailReplyRepository;
-import com.chartering.dto.MailComposeRequest;
-import com.chartering.dto.MailReplyRequest;
 import com.chartering.service.EmailFooterService;
 import com.chartering.service.HtmlSanitizer;
 import com.chartering.service.MailTemplateService;
-import com.chartering.service.SettingsService;
 import com.chartering.service.SettingsService.CirculationSettings;
+import com.chartering.service.SettingsService;
+import com.chartering.tenancy.TestLogin;
 import jakarta.mail.internet.MimeMessage;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -70,6 +72,11 @@ class MailReplyServiceTest {
             CircularProvider.SMTP, "circulars@example.com", "Chartering Desk",
             "smtp.zoho.eu", 465, 0, 0, 200, 0);
 
+    @AfterEach
+    void logOut() {
+        TestLogin.clear();
+    }
+
     @BeforeEach
     void setUp() {
         props = new MailCampaignProperties();
@@ -100,7 +107,11 @@ class MailReplyServiceTest {
         original.setFromName("A Broker");
         original.setBodyText("open Marmara");
         original.setReceivedAt(LocalDateTime.of(2026, 8, 31, 9, 30));
+        original.setOwnerUserId(TestLogin.USER_ID);
         Mockito.when(messages.findById(7L)).thenReturn(Optional.of(original));
+        // Replies go out from the caller's own mailbox, as the caller.
+        TestLogin.asDefault();
+        Mockito.when(transport.hasMailbox()).thenReturn(true);
 
         service = new MailReplyService(messages, replies, footers, new MailTemplateService(),
                 new HtmlSanitizer(), transport, smtp, brevo, settings, props, contacts);
