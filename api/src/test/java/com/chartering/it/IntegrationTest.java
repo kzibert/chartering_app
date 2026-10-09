@@ -13,6 +13,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -48,7 +49,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 public abstract class IntegrationTest {
 
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    // pgvector's image, not plain postgres: V38 needs the vector extension, and a hosted database
+    // ships it as the provider installs it. asCompatibleSubstituteFor keeps Testcontainers treating
+    // it as a PostgreSQL container (the JDBC URL, the default user and database).
+    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(
+            DockerImageName.parse("pgvector/pgvector:pg16").asCompatibleSubstituteFor("postgres"));
 
     static final String APP_ROLE = "chartering_app";
     static final String APP_PASSWORD = "chartering-app-password";
@@ -60,6 +65,9 @@ public abstract class IntegrationTest {
             // Extensions need a superuser; a hosted database ships with the ones V1 asks for,
             // as the provider installs them, and this does the same.
             st.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm");
+            // pgvector too (V38). The migration's own CREATE EXTENSION IF NOT EXISTS is then a
+            // no-op, because the application role cannot create extensions and must not need to.
+            st.execute("CREATE EXTENSION IF NOT EXISTS vector");
             st.execute("CREATE ROLE " + APP_ROLE + " LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '" + APP_PASSWORD + "'");
             st.execute("ALTER SCHEMA public OWNER TO " + APP_ROLE);
         } catch (SQLException e) {

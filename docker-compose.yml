@@ -161,6 +161,13 @@ services:
       PARSER_MODEL: ${PARSER_MODEL:-}
       PARSER_READ_TIMEOUT_MS: ${PARSER_READ_TIMEOUT_MS:-180000}
       PARSER_MAX_ATTEMPTS: ${PARSER_MAX_ATTEMPTS:-3}
+      # The embedding server for retrieval (CPU, chartering-ml's serve/docker-compose.embed.yml,
+      # port 8092). The URL uses ${VAR-default} rather than ${VAR:-default} on purpose: a blank
+      # EMBEDDING_URL in .env must stay blank, which turns retrieval off, and :- would replace it
+      # with the default. See .env.example.
+      EMBEDDING_URL: "${EMBEDDING_URL-http://host.docker.internal:8092/v1/embeddings}"
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text-v1.5}
+      EMBEDDING_PREFIX: "${EMBEDDING_PREFIX:-clustering: }"
       # The Feed tab's fetching and summarising, with the model above. The tab and its data are
       # on every deployment; this instance is the one that reads the sources and runs the model,
       # so it is ON here and off on Render.

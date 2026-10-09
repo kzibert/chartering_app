@@ -9,6 +9,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 public interface AnalysisSampleRepository
         extends JpaRepository<AnalysisSample, Long>, JpaSpecificationExecutor<AnalysisSample> {
@@ -70,4 +71,18 @@ public interface AnalysisSampleRepository
     List<AnalysisSample> findByStatusOrderByIdAsc(AnalysisStatus status);
 
     long countByStatus(AnalysisStatus status);
+
+    /**
+     * The text the embedding pass reads, for every sample with this status, in id order. Only the
+     * three columns an embedding is made from - see {@link AnalysisSampleText}.
+     */
+    @Query("select new com.chartering.repository.AnalysisSampleText(s.id, s.subject, s.bodyText) "
+            + "from AnalysisSample s where s.status = :status order by s.id")
+    List<AnalysisSampleText> findTextByStatus(@Param("status") AnalysisStatus status);
+
+    /** One sample's embedding text, if it is in the given status. */
+    @Query("select new com.chartering.repository.AnalysisSampleText(s.id, s.subject, s.bodyText) "
+            + "from AnalysisSample s where s.id = :id and s.status = :status")
+    Optional<AnalysisSampleText> findTextByIdAndStatus(@Param("id") Long id,
+                                                       @Param("status") AnalysisStatus status);
 }

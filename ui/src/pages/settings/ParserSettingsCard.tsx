@@ -30,6 +30,8 @@ interface FormValues {
   sweepMaxAgeDays: number;
   modelUrl: string;
   modelName: string;
+  fewShotExamples: number;
+  fewShotMaxChars: number;
 }
 
 /**
@@ -79,6 +81,8 @@ export default function ParserSettingsCard() {
         // configured one is deleted, which leaves .env still owning it.
         modelUrl: settings.modelUrl,
         modelName: settings.modelName,
+        fewShotExamples: settings.fewShotExamples,
+        fewShotMaxChars: settings.fewShotMaxChars,
       });
     }
   }, [settings, form]);
@@ -90,6 +94,8 @@ export default function ParserSettingsCard() {
     (settings.sweepIntervalMinutes !== settings.defaultSweepIntervalMinutes ||
       settings.sweepBatchSize !== settings.defaultSweepBatchSize ||
       settings.sweepMaxAgeDays !== settings.defaultSweepMaxAgeDays ||
+      settings.fewShotExamples !== settings.defaultFewShotExamples ||
+      settings.fewShotMaxChars !== settings.defaultFewShotMaxChars ||
       settings.modelUrlCustomised ||
       settings.modelNameCustomised);
   const running = sweep.data?.running === true;
@@ -115,7 +121,7 @@ export default function ParserSettingsCard() {
               settings?.defaultSweepBatchSize ?? 20
             } messages a sweep, mail from the last ${
               settings?.defaultSweepMaxAgeDays ?? 30
-            } days, and the model at ${settings?.defaultModelUrl ?? 'the configured address'}.`}
+            } days, the model at ${settings?.defaultModelUrl ?? 'the configured address'}, and no retrieved examples.`}
             onConfirm={() => resetSettings.mutate(undefined, {
               onSuccess: () => toast.success('Back to the defaults'),
             })}
@@ -257,6 +263,52 @@ export default function ParserSettingsCard() {
               }
             >
               <Input placeholder="none" allowClear autoComplete="off" spellCheck={false} />
+            </Form.Item>
+          </Col>
+        </Row>
+
+        <Divider style={{ marginTop: 0 }} orientation="left" plain>
+          <Space size={4} wrap>
+            Retrieved examples (experimental)
+            {settings && settings.fewShotExamples > 0 ? (
+              <Tag color="blue">{settings.fewShotExamples} per email</Tag>
+            ) : (
+              <Tag>off</Tag>
+            )}
+          </Space>
+        </Divider>
+
+        <Row gutter={16}>
+          <Col xs={24} md={12}>
+            <Form.Item
+              name="fewShotExamples"
+              label="Examples per email"
+              rules={[{ required: true, message: 'A number from 0 to 8 is required' }]}
+              extra={
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  0 = off. When on, the parser is shown this many of the most similar labelled
+                  emails from the Analysis corpus before each email. The model was trained
+                  without examples — switch this on only after the evaluation harness has scored
+                  it. Default <b>{settings?.defaultFewShotExamples ?? 0}</b>.
+                </Typography.Text>
+              }
+            >
+              <InputNumber min={0} max={8} style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} md={12}>
+            <Form.Item
+              name="fewShotMaxChars"
+              label="Example budget (characters)"
+              rules={[{ required: true, message: 'A budget of characters is required' }]}
+              extra={
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Examples are added nearest-first while they fit; an example is never cut short.
+                  Default <b>{settings?.defaultFewShotMaxChars ?? 0}</b>.
+                </Typography.Text>
+              }
+            >
+              <InputNumber min={1000} max={60000} step={1000} addonAfter="chars" style={{ width: '100%' }} />
             </Form.Item>
           </Col>
         </Row>

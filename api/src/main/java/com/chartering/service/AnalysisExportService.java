@@ -8,7 +8,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
@@ -102,10 +101,10 @@ public class AnalysisExportService {
                     .put("content", AnalysisAnnotationTemplates.TRAINING_SYSTEM_PROMPT);
             msgs.addObject()
                     .put("role", "user")
-                    .put("content", userTurn(s));
+                    .put("content", TrainingTurns.userTurn(s));
             msgs.addObject()
                     .put("role", "assistant")
-                    .put("content", json.writeValueAsString(json.readTree(s.getAnnotation())));
+                    .put("content", TrainingTurns.assistantContent(s.getAnnotation(), json));
 
             // Not part of the training turns — trainers ignore unknown keys, and this is what
             // lets an example in a file be traced back to the row it came from when it turns
@@ -127,25 +126,5 @@ public class AnalysisExportService {
             throw new IllegalStateException(
                     "Sample " + s.getId() + " could not be exported: " + e.getMessage(), e);
         }
-    }
-
-    private static String userTurn(AnalysisSample s) {
-        StringBuilder sb = new StringBuilder();
-        // Sent before received: the sender's own clock is the one the "07/10 SEPTEMBER" in
-        // the body was written against, and a message that sat in a queue overnight would
-        // otherwise be dated a day after the laycan it announces. Received is the fallback,
-        // for the mail that arrived carrying no Date header at all.
-        LocalDateTime when = s.getSentAt() != null ? s.getSentAt() : s.getReceivedAt();
-        if (when != null) {
-            // The day, not the timestamp. Nothing in a circular resolves to an hour, and a
-            // time of day on every line is noise the model would learn to reproduce.
-            sb.append("Date: ").append(when.toLocalDate()).append('\n');
-        }
-        if (s.getSubject() != null && !s.getSubject().isBlank()) {
-            sb.append("Subject: ").append(s.getSubject().strip()).append('\n');
-        }
-        if (!sb.isEmpty()) sb.append('\n');
-        sb.append(s.getBodyText());
-        return sb.toString();
     }
 }

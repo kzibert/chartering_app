@@ -433,18 +433,22 @@ public class IntakeController {
     }
 
     @PutMapping("/settings")
-    @Operation(summary = "Change the sweep interval, batch size or model address",
+    @Operation(summary = "Change the sweep interval, batch size, model address or few-shot examples",
             description = "An interval of 0 turns the timer off; Parse now still works. A "
                     + "lookback of 0 removes the age limit, so a sweep will reach back through "
                     + "the whole mailbox. A blank model address or name restores PARSER_URL / "
-                    + "PARSER_MODEL. Every field is optional, so the form can send one "
-                    + "without holding the others.")
+                    + "PARSER_MODEL. The few-shot examples (0 to 8, 0 is off) and their character "
+                    + "budget are installation-wide and need a platform administrator. Every field "
+                    + "is optional, so the form can send one without holding the others.")
     public ResponseEntity<ParserSettingsResponse> updateSettings(
             @Valid @RequestBody ParserSettingsRequest req) {
         // The address is its own write because it is its own question, and because a form that
         // did not send it must not be read as asking for the configured one back.
         if (req.getModelUrl() != null || req.getModelName() != null) {
             settings.updateEndpoint(req.getModelUrl(), req.getModelName());
+        }
+        if (req.getFewShotExamples() != null || req.getFewShotMaxChars() != null) {
+            settings.updateFewShot(req.getFewShotExamples(), req.getFewShotMaxChars());
         }
         return ResponseEntity.ok(toResponse(
                 settings.update(req.getSweepIntervalMinutes(), req.getSweepBatchSize(),
@@ -453,25 +457,30 @@ public class IntakeController {
 
     @DeleteMapping("/settings")
     @Operation(summary = "Back to the configured defaults",
-            description = "The pacing and the model address together — they are one card, and a "
-                    + "Reset that left the address behind would leave the screen saying it is "
-                    + "using defaults while pointing somewhere else.")
+            description = "The pacing, the model address and the few-shot experiment together — they "
+                    + "are one card, and a Reset that left any of them behind would leave the screen "
+                    + "saying it is using defaults while it is not.")
     @ResponseStatus(HttpStatus.OK)
     public ResponseEntity<ParserSettingsResponse> resetSettings() {
         settings.resetEndpoint();
+        settings.resetFewShot();
         return ResponseEntity.ok(toResponse(settings.reset()));
     }
 
     private ParserSettingsResponse toResponse(ParserSettings.Values v) {
         ParserSettings.Values defaults = ParserSettings.defaults();
         com.chartering.service.ModelEndpoint endpoint = settings.endpoint();
+        ParserSettings.FewShot fewShot = settings.fewShot();
+        ParserSettings.FewShot fewShotDefaults = ParserSettings.fewShotDefaults();
         return new ParserSettingsResponse(
                 v.sweepIntervalMinutes(), v.sweepBatchSize(), v.sweepMaxAgeDays(),
                 defaults.sweepIntervalMinutes(), defaults.sweepBatchSize(),
                 defaults.sweepMaxAgeDays(),
                 endpoint.url(), endpoint.model(),
                 endpoint.urlCustomised(), endpoint.modelCustomised(),
-                endpoint.configuredUrl(), endpoint.configuredModel());
+                endpoint.configuredUrl(), endpoint.configuredModel(),
+                fewShot.examples(), fewShot.maxChars(),
+                fewShotDefaults.examples(), fewShotDefaults.maxChars());
     }
 
     private static String currentUser() {

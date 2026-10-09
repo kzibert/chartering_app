@@ -30,6 +30,7 @@ import { usePersistedFilters } from '../../components/usePersistedState';
 import { useTableControls } from '../../components/useTableControls';
 import { useAnalysisMutations, useAnalysisSamples, useAnalysisStatus } from '../../analysis/store';
 import CaptureModal from './CaptureModal';
+import RetrievalIndexCard from './RetrievalIndexCard';
 import PasteSampleModal from './PasteSampleModal';
 import SampleDrawer from './SampleDrawer';
 import { LABELS, STATUSES, labelMeta, statusMeta } from './labels';
@@ -203,6 +204,8 @@ export default function AnalysisPage() {
         exporting={exportJsonl.isPending}
         onExport={() => exportJsonl.mutate()}
       />
+
+      <RetrievalIndexCard />
 
       {/* The Form wraps the panel: on a phone these fields render into a drawer portalled
           to the end of <body>, and only a Form above them in the tree still reaches them. */}

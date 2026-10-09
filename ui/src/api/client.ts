@@ -15,6 +15,16 @@ import { clearToken, getToken } from '../auth/store';
  */
 const API_BASE = import.meta.env.VITE_API_BASE_URL?.replace(/\/+$/, '') ?? '';
 
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    /**
+     * The caller turns this failure into its own message (a 409 it words differently, say), so
+     * the notification tray stays quiet for it rather than saying the same thing twice.
+     */
+    quiet?: boolean;
+  }
+}
+
 export const client = axios.create({
   baseURL: `${API_BASE}/api/v1`,
 });
@@ -53,7 +63,7 @@ client.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    if (isLoginCall(url)) return Promise.reject(error);
+    if (isLoginCall(url) || error?.config?.quiet) return Promise.reject(error);
 
     const data = error?.response?.data;
     const message = data?.message ?? error?.message ?? 'Request failed';

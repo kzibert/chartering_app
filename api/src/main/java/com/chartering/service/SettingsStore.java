@@ -48,6 +48,8 @@ public class SettingsStore {
             ParserSettings.SWEEP_MAX_AGE_DAYS,
             ParserSettings.MODEL_URL,
             ParserSettings.MODEL_NAME,
+            ParserSettings.FEW_SHOT_EXAMPLES,
+            ParserSettings.FEW_SHOT_MAX_CHARS,
             FeedSettings.MODEL_URL,
             FeedSettings.MODEL_NAME,
             FeedSettings.FETCH_INTERVAL_MINUTES,
