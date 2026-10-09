@@ -34,5 +34,14 @@ public record ParserSettingsResponse(
         /** {@code PARSER_URL}, which is what clearing the field restores. */
         String defaultModelUrl,
         /** {@code PARSER_MODEL}, normally blank. */
-        String defaultModelName) {
+        String defaultModelName,
+        /**
+         * Worked examples per email in force. 0 means the few-shot experiment is off, which is
+         * the default and what every installation runs until the harness has scored it.
+         */
+        int fewShotExamples,
+        /** The character budget for those examples. */
+        int fewShotMaxChars,
+        int defaultFewShotExamples,
+        int defaultFewShotMaxChars) {
 }

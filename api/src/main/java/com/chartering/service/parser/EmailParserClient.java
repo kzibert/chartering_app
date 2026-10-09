@@ -4,6 +4,7 @@ import com.chartering.config.ParserProperties;
 import com.chartering.service.AnalysisAnnotationTemplates;
 import com.chartering.service.ModelEndpoint;
 import com.chartering.service.ParserSettings;
+import com.chartering.service.TrainingTurns;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -21,8 +22,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * The one thing in this application that talks to the model.
@@ -108,11 +109,17 @@ public class EmailParserClient {
     /**
      * What one email cost and what it said.
      *
-     * @param content   the model's answer, verbatim, before any parsing
-     * @param model     which model answered, as the endpoint reported it
-     * @param durationMs wall clock for the request, which is what the Intake tab reports
+     * @param content     the model's answer, verbatim, before any parsing
+     * @param model       which model answered, as the endpoint reported it
+     * @param durationMs  wall clock for the request, which is what the Intake tab reports
+     * @param promptChars the characters sent in the user turns, examples included, so the Log
+     *                    shows what a few-shot parse actually cost
+     * @param exampleIds  the corpus samples shown to the model, in the order sent; empty when
+     *                    the parse was zero-shot. Kept so a wrong answer can be traced to the
+     *                    examples that were in front of it.
      */
-    public record Completion(String content, String model, int durationMs, int promptChars) {
+    public record Completion(String content, String model, int durationMs, int promptChars,
+                             List<Long> exampleIds) {
     }
 
     /** Failure that is worth another go later, and worth a message the user can act on. */
@@ -135,9 +142,22 @@ public class EmailParserClient {
      *                announces, which is the same reason the corpus export prefers it.
      */
     public Completion complete(String subject, LocalDateTime sentAt, String bodyText) {
+        return complete(subject, sentAt, bodyText, List.of());
+    }
+
+    /**
+     * Read one email with worked examples in front of it.
+     *
+     * <p>The examples go between the system prompt and the real question, as user/assistant pairs,
+     * nearest last. Only {@link FewShotRetriever} produces them, and only when the
+     * {@code parser.fewShotExamples} setting is above zero. Empty is the normal zero-shot request,
+     * byte for byte the same as the three-argument call.
+     */
+    public Completion complete(String subject, LocalDateTime sentAt, String bodyText,
+                               List<FewShotRetriever.Example> examples) {
         ModelEndpoint endpoint = settings.endpoint();
         String user = userTurn(subject, sentAt, bodyText);
-        String payload = requestBody(user, endpoint.model());
+        String payload = requestBody(examples, user, endpoint.model());
 
         HttpRequest request = HttpRequest.newBuilder(URI.create(endpoint.url()))
                 .header("Content-Type", "application/json")
@@ -177,8 +197,13 @@ public class EmailParserClient {
                         "The model's reply carried no message content: " + abbreviate(response.body()));
             }
             lastError = null;
+            int promptChars = user.length();
+            for (FewShotRetriever.Example e : examples) {
+                promptChars += e.user().length() + e.assistant().length();
+            }
             return new Completion(message.asText(), body.path("model").asText(null),
-                    durationMs, user.length());
+                    durationMs, promptChars,
+                    examples.stream().map(FewShotRetriever.Example::sampleId).toList());
         } catch (IOException e) {
             lastError = e.getMessage();
             throw new ParserUnavailableException(
@@ -221,7 +246,15 @@ public class EmailParserClient {
 
     // --------------------------------------------------------------- internals
 
-    private String requestBody(String user, String model) {
+    /**
+     * The chat request for one question.
+     *
+     * <p>Package-private so a test can read the bytes the server would get. With no examples the
+     * messages are exactly system then user, the request the model was measured under. Examples
+     * go between them, never after the question, so the model reads the email it is asked about
+     * last.
+     */
+    String requestBody(List<FewShotRetriever.Example> examples, String user, String model) {
         ObjectNode root = json.createObjectNode();
         // llama-server serves one model and ignores this; Ollama refuses the request without
         // it, since it can hold many. Sent only when configured, so the normal case carries
@@ -232,6 +265,12 @@ public class EmailParserClient {
         var messages = root.putArray("messages");
         messages.addObject().put("role", "system")
                 .put("content", AnalysisAnnotationTemplates.SYSTEM_PROMPT);
+        // The same two strings the export writes for each sample (TrainingTurns), so an example
+        // in a request looks exactly like an example in the file the model was finetuned on.
+        for (FewShotRetriever.Example e : examples) {
+            messages.addObject().put("role", "user").put("content", e.user());
+            messages.addObject().put("role", "assistant").put("content", e.assistant());
+        }
         messages.addObject().put("role", "user").put("content", user);
         root.put("temperature", 0);
         // From configuration, not a literal: a request-level max_tokens overrides the
@@ -252,24 +291,13 @@ public class EmailParserClient {
     /**
      * The email as the model was trained to read it: Date, Subject, a blank line, the body.
      *
-     * <p>Kept identical to {@code AnalysisExportService#userTurn} on purpose. The corpus was
-     * exported in this layout and the model learned the layout along with the content, so
-     * the two have to move together — a difference here would be invisible in every test and
-     * would show up only as the model reading slightly worse than it measures.
+     * <p>The layout is {@link TrainingTurns#userTurn}, which {@code AnalysisExportService} also
+     * uses, so the two cannot drift: the corpus was exported in this layout and the model learned
+     * the layout along with the content. What is added here is only the trimming and capping of
+     * the body, which is a live-request concern — the export writes what was stored.
      */
     private String userTurn(String subject, LocalDateTime sentAt, String bodyText) {
-        StringBuilder sb = new StringBuilder();
-        if (sentAt != null) {
-            // The day, not the timestamp. Nothing in a circular resolves to an hour.
-            LocalDate day = sentAt.toLocalDate();
-            sb.append("Date: ").append(day).append('\n');
-        }
-        if (subject != null && !subject.isBlank()) {
-            sb.append("Subject: ").append(subject.strip()).append('\n');
-        }
-        if (!sb.isEmpty()) sb.append('\n');
-        sb.append(trimBody(bodyText));
-        return sb.toString();
+        return TrainingTurns.userTurn(subject, sentAt, trimBody(bodyText));
     }
 
     private String trimBody(String body) {

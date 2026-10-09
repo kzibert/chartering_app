@@ -19,6 +19,7 @@ const KEY = ['analysis'] as const;
 export const analysisKeys = {
   all: KEY,
   status: [...KEY, 'status'] as const,
+  embeddings: [...KEY, 'embeddings'] as const,
   samples: (filter: AnalysisSampleFilter) => [...KEY, 'samples', filter] as const,
   sample: (id: number) => [...KEY, 'sample', id] as const,
 };
@@ -45,6 +46,18 @@ export const useAnalysisStatus = () =>
     // retry here would only ever be retrying a real outage — which the rest of the app is
     // already telling the user about.
     retry: false,
+  });
+
+/**
+ * The retrieval index. Polled only while a run is going: each poll reads the whole corpus on
+ * the server, so an idle page asks once and then stays quiet until somebody starts a run.
+ */
+export const useEmbeddingStatus = (enabled: boolean) =>
+  useQuery({
+    queryKey: analysisKeys.embeddings,
+    queryFn: analysisApi.embeddings,
+    enabled,
+    refetchInterval: (q) => (q.state.data?.running ? 3000 : false),
   });
 
 export const useAnalysisSamples = (filter: AnalysisSampleFilter, enabled: boolean) =>
@@ -95,5 +108,17 @@ export function useAnalysisMutations() {
    */
   const exportJsonl = useMutation({ mutationFn: analysisApi.exportJsonl });
 
-  return { update, remove, capture, paste, exportJsonl };
+  /**
+   * Starting a run answers with the status it began from, so the progress bar and the poll
+   * start at once rather than after the next tick. A 409 means a run is already going, so the
+   * status is pulled to find out how far it has got.
+   */
+  const qc = useQueryClient();
+  const indexEmbeddings = useMutation({
+    mutationFn: analysisApi.startEmbeddingIndex,
+    onSuccess: (status) => qc.setQueryData(analysisKeys.embeddings, status),
+    onError: () => qc.invalidateQueries({ queryKey: analysisKeys.embeddings }),
+  });
+
+  return { update, remove, capture, paste, exportJsonl, indexEmbeddings };
 }

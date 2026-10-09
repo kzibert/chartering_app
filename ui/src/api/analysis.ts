@@ -138,6 +138,29 @@ export interface AnalysisSampleFilter {
   sort?: string;
 }
 
+/**
+ * How far the retrieval index has got: which READY samples have a vector computed from their
+ * current text. Only asked for when the workbench is on, and only meaningful when EMBEDDING_URL
+ * is set — `enabled` says whether an index can be built here at all.
+ */
+export interface AnalysisEmbeddingStatusResponse {
+  enabled: boolean;
+  /** The name the vectors are stored under. */
+  model?: string;
+  /** READY samples on this desk — the ones that are ever embedded. */
+  ready: number;
+  /** READY samples whose vector matches their current text. */
+  indexed: number;
+  /** READY samples with no vector, or one computed from text that has since changed. */
+  stale: number;
+  running: boolean;
+  /** Samples embedded so far in the current run, and how many the run set out to do. */
+  done: number;
+  total: number;
+  lastError?: string;
+  lastFinishedAt?: string;
+}
+
 export const analysisApi = {
   status: () => client.get<AnalysisStatusResponse>('/analysis/status').then((r) => r.data),
 
@@ -163,6 +186,23 @@ export const analysisApi = {
 
   paste: (body: AnalysisPasteRequest) =>
     client.post<AnalysisSampleDetailResponse>('/analysis/samples', body).then((r) => r.data),
+
+  embeddings: () =>
+    client
+      .get<AnalysisEmbeddingStatusResponse>('/analysis/embeddings')
+      .then((r) => r.data),
+
+  /**
+   * Starts a run over this desk's stale samples. 409 when one is already running for the desk,
+   * 503 with a message when EMBEDDING_URL is not set — both are worded by the caller, so the
+   * global error notification is switched off for this call.
+   */
+  startEmbeddingIndex: () =>
+    client
+      .post<AnalysisEmbeddingStatusResponse>('/analysis/embeddings/index', undefined, {
+        quiet: true,
+      })
+      .then((r) => r.data),
 
   /**
    * The training file.

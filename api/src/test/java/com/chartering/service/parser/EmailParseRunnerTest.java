@@ -34,7 +34,8 @@ class EmailParseRunnerTest {
     private static final String ESCAPED_NUL = "\\" + "u0000";
 
     private final ObjectMapper json = new ObjectMapper();
-    private final EmailParseRunner runner = new EmailParseRunner(null, null, null, null, null, json);
+    private final EmailParseRunner runner =
+            new EmailParseRunner(null, null, null, null, null, json, null, null);
 
     @Test
     void takesTheNulOutOfAValueNestedAnywhereInTheAnswer() throws Exception {

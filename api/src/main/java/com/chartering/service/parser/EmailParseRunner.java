@@ -6,6 +6,7 @@ import com.chartering.model.ParseStatus;
 import com.chartering.model.ParsedEmail;
 import com.chartering.repository.MailMessageRepository;
 import com.chartering.repository.ParsedEmailRepository;
+import com.chartering.service.ParserSettings;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -58,6 +59,8 @@ public class EmailParseRunner {
     private final EmailParserClient client;
     private final IntakeService intake;
     private final ObjectMapper json;
+    private final FewShotRetriever shots;
+    private final ParserSettings settings;
 
     /**
      * Read one message.
@@ -135,9 +138,23 @@ public class EmailParseRunner {
             return null;
         }
 
+        // Retrieved here, beside the model call they feed, because that is the network step this
+        // transaction already makes and the one a slow server stalls. Zero-shot when the setting is
+        // off, and the retriever answers empty rather than failing when the embedding server is down,
+        // so the only way a message fails here is the model itself.
+        ParserSettings.FewShot fewShot = settings.fewShot();
+        List<FewShotRetriever.Example> examples = fewShot.examples() > 0
+                ? shots.examplesFor(subject, when, body, fewShot.examples(), fewShot.maxChars(),
+                        List.of(), 0)
+                : List.of();
+        if (!examples.isEmpty()) {
+            log.debug("Parsing with {} few-shot examples: samples {}", examples.size(),
+                    examples.stream().map(FewShotRetriever.Example::sampleId).toList());
+        }
+
         EmailParserClient.Completion completion;
         try {
-            completion = client.complete(subject, when, body);
+            completion = client.complete(subject, when, body, examples);
         } catch (EmailParserClient.ParserUnavailableException e) {
             row.setStatus(ParseStatus.FAILED);
             row.setError(e.getMessage());

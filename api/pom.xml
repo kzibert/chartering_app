@@ -18,6 +18,7 @@
 		<java.version>21</java.version>
 		<springdoc.version>2.7.0</springdoc.version>
 		<jjwt.version>0.12.6</jjwt.version>
+		<spring-ai.version>1.0.1</spring-ai.version>
 		<!--
 			Connection the flyway-maven-plugin uses. Not the application's: the app reads
 			application.yml and these are only for the command-line goals, which run
@@ -28,6 +29,24 @@
 		<flyway.user>chartering_user</flyway.user>
 		<flyway.password>password</flyway.password>
 	</properties>
+
+	<!--
+		Spring AI, for one thing: the OpenAI-compatible client that the embedding pass uses to
+		talk to llama-server's /v1/embeddings. The BOM pins every spring-ai artifact to one
+		release line, which is the only way the modules stay compatible with each other.
+		Versions for the rest of Spring Boot still come from the parent.
+	-->
+	<dependencyManagement>
+		<dependencies>
+			<dependency>
+				<groupId>org.springframework.ai</groupId>
+				<artifactId>spring-ai-bom</artifactId>
+				<version>${spring-ai.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+		</dependencies>
+	</dependencyManagement>
 
 	<dependencies>
 		<dependency>
@@ -140,6 +159,20 @@
 			<groupId>org.jsoup</groupId>
 			<artifactId>jsoup</artifactId>
 			<version>1.18.3</version>
+		</dependency>
+
+		<!--
+			The OpenAI-compatible client, for the embedding pass only. Deliberately NOT
+			spring-ai-starter-model-openai: the starter auto-configures one ChatModel and one
+			EmbeddingModel at startup from spring.ai.openai.*, and fails the whole boot without
+			an API key. This application resolves its model addresses at runtime (ParserSettings,
+			EmbeddingClient) and must start with no model configured at all, so the client is
+			built by hand from EmbeddingProperties when it is first needed. Without the
+			autoconfigure module on the classpath, nothing creates a bean the starter would have.
+		-->
+		<dependency>
+			<groupId>org.springframework.ai</groupId>
+			<artifactId>spring-ai-openai</artifactId>
 		</dependency>
 
 		<dependency>

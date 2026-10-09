@@ -34,6 +34,8 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -76,6 +78,7 @@ public class AnalysisService {
     private final MailServerFolderService serverFolders;
     private final ObjectMapper json;
     private final DtoMapper mapper;
+    private final SampleEmbeddingIndexer indexer;
 
     // ------------------------------------------------------------------ status
 
@@ -436,6 +439,7 @@ public class AnalysisService {
                 }
             }
             s.setStatus(req.status());
+            if (req.status() == AnalysisStatus.READY) embedAfterCommit(s.getId());
         }
         return toDetail(s);
     }
@@ -447,6 +451,24 @@ public class AnalysisService {
     }
 
     // --------------------------------------------------------------- internals
+
+    /**
+     * Embeds a sample that has just become READY, once the save that made it so has committed.
+     *
+     * <p>Not inside the save. The embedding server is a separate process that may be slow or
+     * switched off, and a call to it from here would hold the review's transaction open for the
+     * length of a timeout - or fail the review, which was correct, over a vector. After commit the
+     * READY status is on disk and a failure costs only the vector, which the next index run fills
+     * in. {@link SampleEmbeddingIndexer#indexOne} swallows its own failures for the same reason.
+     */
+    private void embedAfterCommit(Long sampleId) {
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                indexer.indexOne(sampleId);
+            }
+        });
+    }
 
     private AnalysisSample find(Long id) {
         return samples.findById(id)
