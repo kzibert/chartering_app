@@ -557,10 +557,14 @@ be thrown away and recomputed. It needs pgvector. It declares no dimension and h
 desk's corpus is a few thousand rows, an exact scan over that takes milliseconds, and an index would
 add a build step and a recall trade-off for nothing. Leaving the width open means changing the
 embedding model is a re-embed, not a migration. Rows are keyed by model, and retrieval compares only
-vectors from the configured one. `content_hash` is the SHA-256 of the exact text embedded, which is
-the prefix, the subject and the truncated body, so changing any of them makes a row stale and it is
-re-embedded without anybody naming what changed. Hibernate never writes these rows, so
-`SampleEmbeddingStore` writes them with plain JDBC and names `tenant_id` itself, as `DataChangeWriter`
+vectors from the configured one. `content_hash` is the SHA-256 of the text before the token fit,
+which is the prefix, the subject and the truncated body, so changing any of them makes a row stale
+and it is re-embedded without anybody naming what changed. Each text is then fitted to
+`EMBEDDING_MAX_TOKENS` (2048, the model's native window) by the server's own `/tokenize`, trimming
+the tail: figure-dense circulars run about two characters a token, and a 6,000-character cap alone
+sent one of 2,908 tokens. The model is not stretched past 2048 to make room, because the RoPE scaling
+that would do it bends every vector, short ones included. Changing that limit or the server means
+re-indexing. Hibernate never writes these rows, so `SampleEmbeddingStore` writes them with plain JDBC and names `tenant_id` itself, as `DataChangeWriter`
 does; the row-level security policy (V36) is the same wall underneath. An upsert attaches only to a
 sample on the caller's desk. Not audited, for the reason `analysis_samples` is not: they are machine
 writes.

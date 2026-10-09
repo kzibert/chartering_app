@@ -67,6 +67,22 @@ public class EmbeddingProperties {
      */
     private int maxChars = 6_000;
 
+    /**
+     * The most tokens one input may be, counted by the server's own tokenizer with its special
+     * tokens included.
+     *
+     * <p>nomic-embed-text was trained with a 2,048-token window and must run at that size, not
+     * stretched, so the server is started with {@code -c 2048 -ub 2048} (chartering-ml's
+     * {@code serve/docker-compose.embed.yml}). This must not exceed that, or the server refuses
+     * the input. Circulars dense with figures run about two characters a token, so
+     * {@link #maxChars} alone does not keep an input in range: the client counts each text and
+     * trims its tail to this before sending.
+     *
+     * <p>Changing it changes what is embedded for a long email, so the stored vectors must be
+     * re-indexed after a change. The hash does not cover it, the same as changing the server.
+     */
+    private int maxTokens = 2048;
+
     /** Short, for the same reason as the parser's: a server that is off should fail at once. */
     private Duration connectTimeout = Duration.ofSeconds(3);
 

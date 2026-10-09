@@ -2,6 +2,9 @@ package com.chartering.service.parser;
 
 import com.chartering.config.EmbeddingProperties;
 import com.chartering.service.SpringAiClients;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.MetadataMode;
 import org.springframework.ai.embedding.Embedding;
@@ -12,7 +15,11 @@ import org.springframework.ai.openai.OpenAiEmbeddingOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -40,9 +47,20 @@ import java.util.List;
  * template here makes one attempt and the failure comes back at once.
  *
  * <p><b>The text embedded is {@link #textFor}, and the hash is {@link #hash}.</b> The hash covers
- * the prefix and the truncation as well as the words, so changing either makes every stored vector
- * mismatch and the indexer re-embeds the corpus. That is the intended behaviour, not a side effect:
- * a vector computed under another prefix is in another space and must not be compared.
+ * the prefix, the subject and the character truncation, so changing any of them makes every stored
+ * vector mismatch and the indexer re-embeds the corpus. That is the intended behaviour, not a side
+ * effect: a vector computed under another prefix is in another space and must not be compared.
+ * The hash is of the text before the token fit below; the fit is a function of that text and
+ * {@code maxTokens}, so changing {@code maxTokens} or the server means re-indexing for the same
+ * reason.
+ *
+ * <p><b>Fitted in tokens, not only in characters.</b> {@code maxChars} bounds what is hashed and
+ * sent, but the model reads 2,048 tokens and a circular dense with figures runs about two
+ * characters a token - one real one was 2,908 tokens at 6,000 characters, and the server refused
+ * it. So before sending, the server's own {@code /tokenize} counts each text and the tail is
+ * trimmed until it fits. Trimmed rather than refused, because the densest circulars are the ones
+ * most worth retrieving: a refusal would leave exactly those without vectors. The prefix and the
+ * subject are at the start and are kept; the end is what goes.
  */
 @Component
 @Slf4j
@@ -54,15 +72,28 @@ public class EmbeddingClient {
      */
     static final int BATCH_SIZE = 16;
 
+    /**
+     * Rounds of trimming before a text is refused. Each round aims a little under the budget
+     * (the 0.95 factor), so one round normally lands; four is for a tokenizer that counts more
+     * per character than the last round measured.
+     */
+    private static final int FIT_ROUNDS = 4;
+
     private static final String DEFAULT_PATH = "/v1/embeddings";
 
     private final EmbeddingProperties props;
+
+    /** For {@code /tokenize} only. The embeddings call goes through {@link #model}. */
+    private final HttpClient http;
+
+    private final ObjectMapper json = new ObjectMapper();
 
     /** Built on first use. The URL is an environment setting, so it cannot change under it. */
     private volatile OpenAiEmbeddingModel model;
 
     public EmbeddingClient(EmbeddingProperties props) {
         this.props = props;
+        this.http = HttpClient.newBuilder().connectTimeout(props.getConnectTimeout()).build();
     }
 
     /**
@@ -141,12 +172,82 @@ public class EmbeddingClient {
      * returns its data out of order still lines up.
      */
     public List<float[]> embedAll(List<String> texts) {
-        List<float[]> out = new ArrayList<>(texts.size());
-        for (int from = 0; from < texts.size(); from += BATCH_SIZE) {
-            List<String> batch = texts.subList(from, Math.min(from + BATCH_SIZE, texts.size()));
+        List<String> fitted = new ArrayList<>(texts.size());
+        for (String text : texts) {
+            fitted.add(fit(text));
+        }
+        List<float[]> out = new ArrayList<>(fitted.size());
+        for (int from = 0; from < fitted.size(); from += BATCH_SIZE) {
+            List<String> batch = fitted.subList(from, Math.min(from + BATCH_SIZE, fitted.size()));
             out.addAll(callOnce(batch));
         }
         return out;
+    }
+
+    /**
+     * The text trimmed from its end until the server's tokenizer counts it within
+     * {@link EmbeddingProperties#getMaxTokens}. Returned unchanged when it already fits.
+     *
+     * <p>Each round scales the length by the ratio of the budget to the count, under-shooting by
+     * 5% so the usual case is one round. The cut keeps the start: the prefix and the subject are
+     * what say what kind of email it is. Counting goes to the same server that will embed, so if
+     * the count cannot be had the embedding cannot either, and that failure is not hidden behind
+     * an estimate.
+     */
+    String fit(String text) {
+        int max = props.getMaxTokens();
+        int tokens = count(text);
+        if (tokens <= max) {
+            return text;
+        }
+        int charsBefore = text.length();
+        int tokensBefore = tokens;
+        String fitted = text;
+        for (int round = 0; round < FIT_ROUNDS && tokens > max; round++) {
+            int newLen = (int) (fitted.length() * (max / (double) tokens) * 0.95);
+            fitted = cut(fitted, newLen);
+            tokens = count(fitted);
+        }
+        if (tokens > max) {
+            throw unavailable("could not fit a text into " + max + " tokens", null);
+        }
+        log.debug("Trimmed embedding input from {} to {} chars ({} to {} tokens)",
+                charsBefore, fitted.length(), tokensBefore, tokens);
+        return fitted;
+    }
+
+    /**
+     * Tokens in a text, counted by the server's own tokenizer with its special tokens. Any failure
+     * to count is an {@link EmbeddingUnavailableException}: no estimate stands in for it.
+     */
+    int count(String text) {
+        if (!isEnabled()) {
+            throw new EmbeddingUnavailableException("embedding server is not configured "
+                    + "(EMBEDDING_URL is blank)");
+        }
+        String tokenizeUrl = SpringAiClients.split(serverUri(), DEFAULT_PATH).baseUrl() + "/tokenize";
+        try {
+            ObjectNode body = json.createObjectNode().put("content", text).put("add_special", true);
+            HttpRequest request = HttpRequest.newBuilder(URI.create(tokenizeUrl))
+                    .header("Content-Type", "application/json")
+                    .timeout(props.getReadTimeout())
+                    .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8))
+                    .build();
+            HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() / 100 != 2) {
+                throw unavailable("could not count tokens: HTTP " + response.statusCode(), null);
+            }
+            JsonNode tokens = json.readTree(response.body()).path("tokens");
+            if (!tokens.isArray()) {
+                throw unavailable("answered /tokenize with no tokens array", null);
+            }
+            return tokens.size();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw unavailable("was interrupted counting tokens", e);
+        } catch (IOException | IllegalArgumentException e) {
+            throw unavailable("could not count tokens", e);
+        }
     }
 
     private List<float[]> callOnce(List<String> batch) {
@@ -206,7 +307,8 @@ public class EmbeddingClient {
         return m;
     }
 
-    private OpenAiEmbeddingModel build() {
+    /** The configured URL, checked to be absolute. Shared by the model and the tokenizer call. */
+    private URI serverUri() {
         URI uri;
         try {
             uri = URI.create(props.getUrl().trim());
@@ -216,9 +318,12 @@ public class EmbeddingClient {
         if (uri.getScheme() == null || uri.getHost() == null) {
             throw unavailable("EMBEDDING_URL is not an absolute URL", null);
         }
+        return uri;
+    }
 
+    private OpenAiEmbeddingModel build() {
         // Spring AI takes the server as a base and a path, not as one URL.
-        SpringAiClients.Endpoint endpoint = SpringAiClients.split(uri, DEFAULT_PATH);
+        SpringAiClients.Endpoint endpoint = SpringAiClients.split(serverUri(), DEFAULT_PATH);
 
         OpenAiApi api = OpenAiApi.builder()
                 .baseUrl(endpoint.baseUrl())
