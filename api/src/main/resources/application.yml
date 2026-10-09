@@ -297,6 +297,8 @@ chartering:
     # Quoted because the value ends in a colon and a space, which a plain YAML scalar cannot hold.
     prefix: "${EMBEDDING_PREFIX:clustering: }"
     max-chars: ${EMBEDDING_MAX_CHARS:6000}
+    # The server's context (-c 2048): each text is trimmed to this many tokens before it is sent.
+    max-tokens: ${EMBEDDING_MAX_TOKENS:2048}
     connect-timeout: 3s
     read-timeout: 30s
 

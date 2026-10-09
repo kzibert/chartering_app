@@ -168,6 +168,7 @@ services:
       EMBEDDING_URL: "${EMBEDDING_URL-http://host.docker.internal:8092/v1/embeddings}"
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text-v1.5}
       EMBEDDING_PREFIX: "${EMBEDDING_PREFIX:-clustering: }"
+      EMBEDDING_MAX_TOKENS: ${EMBEDDING_MAX_TOKENS:-2048}
       # The Feed tab's fetching and summarising, with the model above. The tab and its data are
       # on every deployment; this instance is the one that reads the sources and runs the model,
       # so it is ON here and off on Render.

@@ -33,12 +33,38 @@ class EmbeddingClientTest {
 
     private final ObjectMapper json = new ObjectMapper();
     private final List<String> requestBodies = new CopyOnWriteArrayList<>();
+    private final List<String> tokenizeBodies = new CopyOnWriteArrayList<>();
     private HttpServer server;
     private int status = 200;
+    private int tokenizeStatus = 200;
+    /** The fake tokenizer: one token per character when true, one per whitespace-separated word otherwise. */
+    private boolean tokenPerChar = false;
 
     @BeforeEach
     void startServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/tokenize", exchange -> {
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            tokenizeBodies.add(body);
+            byte[] reply;
+            if (tokenizeStatus != 200) {
+                reply = "{\"error\":\"boom\"}".getBytes(StandardCharsets.UTF_8);
+            } else {
+                try {
+                    String content = json.readTree(body).get("content").asText();
+                    int n = tokenPerChar ? content.length()
+                            : (content.isBlank() ? 0 : content.trim().split("\\s+").length);
+                    reply = tokensReply(n).getBytes(StandardCharsets.UTF_8);
+                } catch (IOException e) {
+                    throw new IllegalStateException(e);
+                }
+            }
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(tokenizeStatus, reply.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(reply);
+            }
+        });
         server.createContext("/v1/embeddings", exchange -> {
             String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             requestBodies.add(body);
@@ -72,6 +98,17 @@ class EmbeddingClientTest {
         p.setConnectTimeout(Duration.ofSeconds(3));
         p.setReadTimeout(Duration.ofSeconds(10));
         return p;
+    }
+
+    /** A tokenizer answer with {@code n} token ids. */
+    private static String tokensReply(int n) {
+        return IntStream.range(0, n).mapToObj(Integer::toString)
+                .collect(java.util.stream.Collectors.joining(",", "{\"tokens\":[", "]}"));
+    }
+
+    /** The text of the {@code i}th input of the {@code i}th embeddings request. */
+    private String sentInput(int i) throws IOException {
+        return json.readTree(requestBodies.get(i)).get("input").get(0).asText();
     }
 
     /** One entry per input, in input order, each vector carrying the number from its text. */
@@ -197,6 +234,47 @@ class EmbeddingClientTest {
         assertThat(EmbeddingClient.hash(textA)).isNotEqualTo(EmbeddingClient.hash(textB));
         assertThat(EmbeddingClient.hash(textA)).hasSize(64);
         assertThat(EmbeddingClient.hash(textA)).isEqualTo(EmbeddingClient.hash(textA));
+    }
+
+    @Test
+    void aTextWithinTheTokenLimitIsSentUnchangedAfterOneCount() throws IOException {
+        EmbeddingClient client = new EmbeddingClient(props());
+
+        client.embed("clustering: Cargo 9\n\nwheat to Spain");
+
+        assertThat(tokenizeBodies).hasSize(1);
+        assertThat(tokenizeBodies.get(0)).contains("\"add_special\":true");
+        assertThat(sentInput(0)).isEqualTo("clustering: Cargo 9\n\nwheat to Spain");
+    }
+
+    @Test
+    void aTextOverTheTokenLimitIsTrimmedFromTheEndAndKeepsItsStart() throws IOException {
+        tokenPerChar = true;
+        EmbeddingProperties p = props();
+        p.setMaxTokens(50);
+        EmbeddingClient client = new EmbeddingClient(p);
+        String text = client.textFor("Subject", "alpha ".repeat(100));
+
+        client.embed(text);
+
+        String sent = sentInput(0);
+        assertThat(sent.length()).isLessThanOrEqualTo(50);
+        assertThat(sent).startsWith("clustering: Subject\n\nalpha");
+        assertThat(text).startsWith(sent);
+        // Counted, trimmed, counted again: the second count is what let the text through.
+        assertThat(tokenizeBodies).hasSizeGreaterThanOrEqualTo(2);
+        assertThat(requestBodies).hasSize(1);
+    }
+
+    @Test
+    void tokenizeFailureFailsAtOnceAndNeverEmbeds() {
+        tokenizeStatus = 500;
+        EmbeddingClient client = new EmbeddingClient(props());
+
+        assertThatThrownBy(() -> client.embed("x"))
+                .isInstanceOf(EmbeddingUnavailableException.class)
+                .hasMessageContaining(url());
+        assertThat(requestBodies).isEmpty();
     }
 
     @Test
