@@ -46,4 +46,15 @@ public class ParserSettingsRequest {
      * one, so pointing this at an Ollama is the address and this field and nothing else.
      */
     private String modelName;
+
+    /**
+     * Worked examples per email, 0 to 8. Absent leaves the setting alone.
+     *
+     * <p>Installation-wide, so only a platform administrator can change it; a desk administrator
+     * sending it gets the refusal the endpoint keys give.
+     */
+    private Integer fewShotExamples;
+
+    /** The character budget for those examples, 1,000 to 60,000. Absent leaves it alone. */
+    private Integer fewShotMaxChars;
 }

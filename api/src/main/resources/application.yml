@@ -288,6 +288,18 @@ chartering:
     max-tokens: ${PARSER_MAX_TOKENS:6144}
     max-attempts: ${PARSER_MAX_ATTEMPTS:3}
 
+  # The embedding server: nomic-embed-text on CPU, for finding the corpus samples most like an
+  # incoming email. Blank URL means retrieval is off, and nothing else in the app changes. See
+  # EmbeddingProperties for what the model name and prefix do to stored vectors.
+  embedding:
+    url: ${EMBEDDING_URL:}
+    model: ${EMBEDDING_MODEL:nomic-embed-text-v1.5}
+    # Quoted because the value ends in a colon and a space, which a plain YAML scalar cannot hold.
+    prefix: "${EMBEDDING_PREFIX:clustering: }"
+    max-chars: ${EMBEDDING_MAX_CHARS:6000}
+    connect-timeout: 3s
+    read-timeout: 30s
+
   # The Feed tab: Telegram channels, RSS feeds and a few websites read on a timer, and summarised
   # per topic by a local model of their own (llm-url below, or the Settings tab).
   #

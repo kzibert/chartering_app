@@ -34,6 +34,7 @@ import com.chartering.repository.PersonRepository;
 import com.chartering.service.CargoService;
 import com.chartering.service.CompanyService;
 import com.chartering.service.ContactService;
+import com.chartering.service.ParserSettings;
 import com.chartering.service.PersonService;
 import com.chartering.service.QuantityTolerance;
 import com.chartering.service.VesselTypes;
@@ -85,6 +86,8 @@ public class IntakePasteService {
     private final PersonService personService;
     private final ContactService contactService;
     private final ObjectMapper json;
+    private final FewShotRetriever shots;
+    private final ParserSettings settings;
 
     // ------------------------------------------------------------------ reading
 
@@ -96,10 +99,16 @@ public class IntakePasteService {
         Extraction extraction = null;
         String modelError = null;
         try {
-            EmailParserClient.Completion completion = client.complete(
-                    req.subject() == null ? "" : req.subject(),
-                    req.receivedAt() == null ? LocalDateTime.now() : req.receivedAt(),
-                    text);
+            String subject = req.subject() == null ? "" : req.subject();
+            LocalDateTime when = req.receivedAt() == null ? LocalDateTime.now() : req.receivedAt();
+            // The same examples the sweep would show for this text, so a paste is read the way a
+            // mailed email of the same shape is. Empty when the experiment is off.
+            ParserSettings.FewShot fewShot = settings.fewShot();
+            List<FewShotRetriever.Example> examples = fewShot.examples() > 0
+                    ? shots.examplesFor(subject, when, text, fewShot.examples(), fewShot.maxChars(),
+                            List.of(), 0)
+                    : List.of();
+            EmailParserClient.Completion completion = client.complete(subject, when, text, examples);
             extraction = json.readValue(completion.content(), Extraction.class);
         } catch (EmailParserClient.ParserUnavailableException e) {
             modelError = "The model server did not answer, so only the company details were read: "

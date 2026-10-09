@@ -57,7 +57,45 @@ public class ParserSettings {
     /** The model name to send. Absent means {@code PARSER_MODEL}, which is normally nothing. */
     public static final String MODEL_NAME = "parser.modelName";
 
+    /**
+     * Worked examples shown to the model before each email. 0 is off.
+     *
+     * <p>An installation setting, like the model address: the examples change what the one served
+     * model is asked, so a desk switching them on would change the parser for every desk. Off until
+     * the harness has scored the retrieved examples against held-out emails.
+     */
+    public static final String FEW_SHOT_EXAMPLES = "parser.fewShotExamples";
+
+    /**
+     * The character budget for the examples in one request, counting each example's user and
+     * assistant turns. The budget is what keeps a request inside the server's context window; an
+     * example that does not fit is skipped rather than cut.
+     */
+    public static final String FEW_SHOT_MAX_CHARS = "parser.fewShotMaxChars";
+
     private static final List<String> MODEL_KEYS = List.of(MODEL_URL, MODEL_NAME);
+
+    private static final List<String> FEW_SHOT_KEYS = List.of(FEW_SHOT_EXAMPLES, FEW_SHOT_MAX_CHARS);
+
+    /** Off. The experiment is opt-in per installation. */
+    public static final int DEFAULT_FEW_SHOT_EXAMPLES = 0;
+
+    /**
+     * Ten thousand characters, about two and a half thousand tokens.
+     *
+     * <p>Sized so that a few typical examples fit beside a long question inside the 8,192-token
+     * window the served model is run with, leaving room for the answer. Raise it only together with
+     * the server's context size.
+     */
+    public static final int DEFAULT_FEW_SHOT_MAX_CHARS = 10_000;
+
+    /** Eight is where a context window stops being the limit and the model starts to be confused. */
+    private static final int MAX_FEW_SHOT_EXAMPLES = 8;
+
+    private static final int MIN_FEW_SHOT_MAX_CHARS = 1_000;
+
+    /** Sixty thousand characters is already more than the served window can hold beside an answer. */
+    private static final int MAX_FEW_SHOT_MAX_CHARS = 60_000;
 
     /**
      * Thirty minutes.
@@ -116,6 +154,10 @@ public class ParserSettings {
 
     private final SettingsStore repository;
     private final ParserProperties props;
+
+    /** The few-shot experiment's two knobs. Zero examples means the feature is off. */
+    public record FewShot(int examples, int maxChars) {
+    }
 
     /** What the Settings tab shows and sends back. */
     public record Values(int sweepIntervalMinutes, int sweepBatchSize, int sweepMaxAgeDays) {
@@ -218,6 +260,75 @@ public class ParserSettings {
         return endpoint();
     }
 
+    /**
+     * The few-shot settings, read on every parse like the endpoint.
+     *
+     * <p>Read per call for the same reason {@link #endpoint()} is: a cache would need invalidating
+     * from the write, and an experiment someone has just switched on must be the one the next email
+     * gets. A stored value outside its range is treated as absent, so a hand-edited row cannot put
+     * sixty examples into a request.
+     */
+    @Transactional(readOnly = true)
+    public FewShot fewShot() {
+        Map<String, String> stored = repository.findByKeyIn(FEW_SHOT_KEYS).stream()
+                .collect(Collectors.toMap(AppSetting::getKey, AppSetting::getValue));
+        return new FewShot(
+                readBounded(stored, FEW_SHOT_EXAMPLES, DEFAULT_FEW_SHOT_EXAMPLES, 0, MAX_FEW_SHOT_EXAMPLES),
+                readBounded(stored, FEW_SHOT_MAX_CHARS, DEFAULT_FEW_SHOT_MAX_CHARS,
+                        MIN_FEW_SHOT_MAX_CHARS, MAX_FEW_SHOT_MAX_CHARS));
+    }
+
+    public static FewShot fewShotDefaults() {
+        return new FewShot(DEFAULT_FEW_SHOT_EXAMPLES, DEFAULT_FEW_SHOT_MAX_CHARS);
+    }
+
+    /**
+     * Saves either few-shot knob. Null leaves it alone, so a form can send one without the other.
+     *
+     * <p>Refused rather than clamped, as the sweep knobs are: a value quietly reduced to the
+     * ceiling is a setting that looks saved and is not.
+     */
+    @Transactional
+    public FewShot updateFewShot(Integer examples, Integer maxChars) {
+        if (examples != null) {
+            requireFewShotExamples(examples);
+            put(FEW_SHOT_EXAMPLES, String.valueOf(examples));
+        }
+        if (maxChars != null) {
+            requireFewShotMaxChars(maxChars);
+            put(FEW_SHOT_MAX_CHARS, String.valueOf(maxChars));
+        }
+        FewShot values = fewShot();
+        log.info("Parser few-shot settings updated: {} examples, {} characters",
+                values.examples(), values.maxChars());
+        return values;
+    }
+
+    @Transactional
+    public FewShot resetFewShot() {
+        repository.deleteByKeyIn(FEW_SHOT_KEYS);
+        return fewShot();
+    }
+
+    /**
+     * The example count's bounds, shared with the evaluation endpoint so that a request cannot ask
+     * for something the settings would refuse.
+     */
+    public static void requireFewShotExamples(int examples) {
+        if (examples < 0 || examples > MAX_FEW_SHOT_EXAMPLES) {
+            throw new IllegalArgumentException("Few-shot examples must be between 0 (off) and "
+                    + MAX_FEW_SHOT_EXAMPLES + ".");
+        }
+    }
+
+    /** The character budget's bounds, shared with the evaluation endpoint for the same reason. */
+    public static void requireFewShotMaxChars(int maxChars) {
+        if (maxChars < MIN_FEW_SHOT_MAX_CHARS || maxChars > MAX_FEW_SHOT_MAX_CHARS) {
+            throw new IllegalArgumentException("The few-shot character budget must be between "
+                    + MIN_FEW_SHOT_MAX_CHARS + " and " + MAX_FEW_SHOT_MAX_CHARS + " characters.");
+        }
+    }
+
     @Transactional
     public Values update(Integer intervalMinutes, Integer batchSize, Integer maxAgeDays) {
         if (intervalMinutes != null) {
@@ -272,6 +383,16 @@ public class ParserSettings {
         } else {
             put(key, value);
         }
+    }
+
+    /** A malformed or out-of-range row is ignored with a warning, as {@link #readInt} does. */
+    private static int readBounded(Map<String, String> stored, String key, int fallback, int min, int max) {
+        int value = readInt(stored, key, fallback);
+        if (value < min || value > max) {
+            log.warn("Setting {} holds {}, outside {}..{}; using the default", key, value, min, max);
+            return fallback;
+        }
+        return value;
     }
 
     private static String readText(Map<String, String> stored, String key, String fallback) {

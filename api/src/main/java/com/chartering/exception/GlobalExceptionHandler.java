@@ -90,6 +90,15 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * The feature is on but its embedding server address is not set. 503 rather than 404: the
+     * feature is part of this deployment and the fix is a setting, not a missing endpoint.
+     */
+    @ExceptionHandler(EmbeddingNotConfiguredException.class)
+    public ResponseEntity<Map<String, Object>> handleEmbeddingNotConfigured(EmbeddingNotConfiguredException ex) {
+        return body(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
+    }
+
+    /**
      * Wrong credentials, or the login endpoint temporarily refusing to answer after too many
      * attempts. One status and one message for all of those — see AuthService.
      */

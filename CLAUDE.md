@@ -47,6 +47,7 @@ mvn -q compile -DskipTests                   # compile check
 mvn test                                     # all tests
 mvn test -Dtest=AuthServiceTest              # one test class
 mvn test -Dtest=AuthServiceTest#methodName   # one test method
+cd ../chartering-ml && make serve-embed     # optional: retrieval's embedding server, :8092
 
 # ui: needs Node 20. Vite proxies /api -> localhost:8081
 cd ui && npm install && npm run dev
@@ -105,7 +106,8 @@ Three things bite here:
   `V31__scope_data_to_tenants.sql` and `V32__add_personal_mailboxes.sql` and
   `V33__add_personal_circulation.sql` and `V34__add_feed_intake_subscriptions.sql` and
   `V35__add_desk_aliases.sql` and `V36__enable_row_level_security.sql` and
-  `V37__add_personal_brevo_keys.sql` exist; the next one is V38.
+  `V37__add_personal_brevo_keys.sql` and `V38__add_analysis_sample_embeddings.sql` exist;
+  the next one is V39.
 - **Since V36, a migration that reads or writes a desk's rows starts with
   `SET LOCAL app.rls_bypass = 'on';`.** Row-level security is forced on every desk table and
   migrations run as the role it binds; without the line such a migration sees no rows and
@@ -516,6 +518,65 @@ Flyway builds one schema, not one per environment.
   and one a real caller could send** — it asks for the classification too, because at
   inference time which kind of email arrived is the question rather than the premise. Rows
   come out in id order, so two exports of one corpus are the same file.
+
+### Retrieved few-shot: the corpus as examples
+
+The labelled corpus can also be shown to the parser. Each READY sample is embedded with
+nomic-embed-text v1.5 on the CPU, served by `chartering-ml`'s `make serve-embed` on :8092, and
+before an email is parsed the `k` nearest READY samples on the desk go into the request as
+user/assistant turns between the system prompt and the email, nearest last, so the closest
+example sits beside the question. `EMBEDDING_URL` is the switch for the embeddings: blank, nothing
+is embedded and nothing is retrieved, and the rest of the app is unaffected.
+
+**Off by default, and per installation.** `parser.fewShotExamples` is 0 until the finetuned model
+has been measured with examples in front of it. It was trained and scored under a system prompt
+and one user turn, so showing it examples changes what it is asked, and that is an experiment to
+win on held-out emails, not a setting to flip. The chartering-ml harness scores retrieved examples
+against fixed few-shot and against the finetune alone. `POST /analysis/few-shot` returns exactly
+the turns the parser would insert, from the same `FewShotRetriever`, so the score measures what
+production would send. `minDistance` keeps a re-sent copy of the scored circular out of its own
+examples, and `excludeSampleIds` keeps the sample itself out. The switch is installation-wide for
+the reason the model address is: the examples change the one served model every desk shares.
+
+The turns come from `TrainingTurns`, which the export calls too, so an example in a request is laid
+out as the training file laid it out. With no examples the request is byte-identical to the
+zero-shot one, and a test pins that.
+
+**The budget is spent on examples, never on their text.** `parser.fewShotMaxChars` (10,000 by
+default) bounds the examples' combined length. They are taken nearest-first while they fit, and a
+sample too long for what is left is skipped, not cut. A cut email paired with its full annotation
+teaches the model to report what is not in the text.
+
+**A dead embedding server costs the examples, not the parse.** If the server does not answer, the
+email is parsed with no examples and one warning is logged. Nothing retries (`SpringAiClients.noRetry`):
+against a stopped server a retry is a minute of stall in front of every email, for the same answer.
+
+**Storage.** `analysis_sample_embeddings` (V38) holds one vector per sample, beside the sample and
+not on it. The sample is the human's work; the vector is a machine's reading of its text, which can
+be thrown away and recomputed. It needs pgvector. It declares no dimension and has no ANN index: a
+desk's corpus is a few thousand rows, an exact scan over that takes milliseconds, and an index would
+add a build step and a recall trade-off for nothing. Leaving the width open means changing the
+embedding model is a re-embed, not a migration. Rows are keyed by model, and retrieval compares only
+vectors from the configured one. `content_hash` is the SHA-256 of the exact text embedded, which is
+the prefix, the subject and the truncated body, so changing any of them makes a row stale and it is
+re-embedded without anybody naming what changed. Hibernate never writes these rows, so
+`SampleEmbeddingStore` writes them with plain JDBC and names `tenant_id` itself, as `DataChangeWriter`
+does; the row-level security policy (V36) is the same wall underneath. An upsert attaches only to a
+sample on the caller's desk. Not audited, for the reason `analysis_samples` is not: they are machine
+writes.
+
+**Indexing.** A sample that becomes READY is embedded after its save commits, best effort: an
+embedding timeout never holds that transaction open, and a failure is one warning, with the sample
+picked up by the next run. "Index corpus" on the Analysis tab backfills what is missing or stale for
+the desk asking, on one worker thread for the installation, and stops at the first unreachable-server
+error with what it has written kept. The same desk's vectors from other models are deleted only after
+a run that reached the end, so a run that died halfway never leaves retrieval with nothing to compare.
+
+**pgvector is required now.** Neon has it. The local database in `../chartering-db` builds pgvector
+from source into its Alpine image rather than using the Debian `pgvector/pgvector` image: a data
+directory initialised under musl collations would be opened under glibc, which can misorder indexes
+without an error. The integration tests use `pgvector/pgvector:pg16` and create the extension as the
+superuser, as they already do for `pg_trgm`, because the application role cannot.
 
 ### Cargoes, open fleet, and the match between them
 
@@ -1237,7 +1298,13 @@ source that refuses that is dropped, not worked around.
   different server; t.me being slow says nothing about ship.gr.
 - **`FeedLlmClient` is a sibling of `EmailParserClient`, not a reuse.** That client's prompt,
   schema and Date/Subject turn are pinned to the extraction measurement; a summary wants none of
-  them, and the schema would make prose impossible.
+  them, and the schema would make prose impossible. The chat call goes through Spring AI
+  (`spring-ai-openai`), as the retrieval embeddings do, but not through the starter: the starter
+  builds one model at startup from one key, while every address here is resolved per request, so
+  models are built on first use and cached per URL and model name. `EmailParserClient` stays
+  hand-written for the reason above, its request being the training measurement's exact bytes.
+  llama-server's own `/tokenize`, `/props` and `/health` stay plain HTTP, since Spring AI has no
+  model for them.
 - **Summaries go to a different model, and that was measured, not preferred.** The address is
   the Feed's own setting on the Settings tab, with `FEED_LLM_URL` as its default, and the chain
   is three links: the setting, else that variable, else **the parser's endpoint as resolved** —

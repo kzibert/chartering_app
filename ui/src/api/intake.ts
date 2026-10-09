@@ -331,6 +331,12 @@ export interface ParserSettingsResponse {
   /** PARSER_URL / PARSER_MODEL — what clearing the field restores. */
   defaultModelUrl: string;
   defaultModelName: string;
+  /** Labelled emails shown to the model before each one; 0 = off. Installation-wide. */
+  fewShotExamples: number;
+  /** Character budget the shown examples must fit in, nearest first. */
+  fewShotMaxChars: number;
+  defaultFewShotExamples: number;
+  defaultFewShotMaxChars: number;
 }
 
 export interface ParserSettingsRequest {
@@ -342,6 +348,10 @@ export interface ParserSettingsRequest {
   modelUrl?: string;
   /** Blank restores PARSER_MODEL. */
   modelName?: string;
+  /** 0..8. 0 turns retrieved examples off. */
+  fewShotExamples?: number;
+  /** 1000..60000. */
+  fewShotMaxChars?: number;
 }
 
 /** Who has told us about a cargo — one row per arrival, kept through a merge. */

@@ -2,6 +2,9 @@ package com.chartering.controller;
 
 import com.chartering.dto.AnalysisCaptureRequest;
 import com.chartering.dto.AnalysisCaptureResponse;
+import com.chartering.dto.AnalysisEmbeddingStatusResponse;
+import com.chartering.dto.AnalysisFewShotRequest;
+import com.chartering.dto.AnalysisFewShotResponse;
 import com.chartering.dto.AnalysisPasteRequest;
 import com.chartering.dto.AnalysisSampleDetailResponse;
 import com.chartering.dto.AnalysisSampleResponse;
@@ -13,6 +16,10 @@ import com.chartering.model.AnalysisStatus;
 import com.chartering.service.AnalysisExportService;
 import com.chartering.service.AnalysisService;
 import com.chartering.service.AnalysisService.SampleFilter;
+import com.chartering.service.ParserSettings;
+import com.chartering.service.SampleEmbeddingIndexer;
+import com.chartering.service.parser.EmbeddingClient;
+import com.chartering.service.parser.FewShotRetriever;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -29,6 +36,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * The email-analysis workbench: mail kept as training data for a model that reads cargo
@@ -48,6 +56,10 @@ public class AnalysisController {
 
     private final AnalysisService analysis;
     private final AnalysisExportService export;
+    private final SampleEmbeddingIndexer indexer;
+    private final EmbeddingClient embeddings;
+    private final FewShotRetriever shots;
+    private final ParserSettings parserSettings;
 
     @GetMapping("/status")
     @Operation(summary = "Whether this deployment runs the analysis workbench, and how the corpus stands",
@@ -57,6 +69,62 @@ public class AnalysisController {
                     + "when clicked.")
     public ResponseEntity<AnalysisStatusResponse> status() {
         return ResponseEntity.ok(analysis.status());
+    }
+
+    @GetMapping("/embeddings")
+    @Operation(summary = "How far this desk's retrieval index has got",
+            description = "Counts READY samples with a vector computed from their current text, and "
+                    + "whether an index run is going. 404 where ANALYSIS_ENABLED is off.")
+    public ResponseEntity<AnalysisEmbeddingStatusResponse> embeddingStatus() {
+        return ResponseEntity.ok(indexer.status());
+    }
+
+    @PostMapping("/embeddings/index")
+    @Operation(summary = "Build or refresh the retrieval index for this desk",
+            description = "Embeds every READY sample whose vector is missing or stale, on a worker "
+                    + "thread; returns at once with 202 and the status. 409 while this desk's run is "
+                    + "still going. 503 when EMBEDDING_URL is not set, 404 where ANALYSIS_ENABLED is off.")
+    public ResponseEntity<AnalysisEmbeddingStatusResponse> startEmbeddingIndex() {
+        indexer.requireConfigured();
+        if (!indexer.start()) {
+            throw new IllegalStateException("The retrieval index is already being built for this desk. "
+                    + "Watch GET /api/v1/analysis/embeddings until running is false.");
+        }
+        return ResponseEntity.accepted().body(indexer.status());
+    }
+
+    /**
+     * The worked examples the parser would be given for one email.
+     *
+     * <p>Exists for the chartering-ml harness, which scores the few-shot experiment offline. The
+     * answer is produced by {@link FewShotRetriever} itself, so the examples a score was measured
+     * against are the ones production would send, not a reimplementation of them. Gated like the
+     * rest of this controller: 404 with ANALYSIS_ENABLED off, 503 without EMBEDDING_URL.
+     */
+    @PostMapping("/few-shot")
+    @Operation(summary = "The examples the parser would be shown for one email",
+            description = "The nearest READY samples on this desk, nearest last, as the user and "
+                    + "assistant turns the parser inserts between the system prompt and the question. "
+                    + "k and maxChars default to the installation's few-shot settings; minDistance "
+                    + "(default 0) drops near-duplicates, and excludeSampleIds keeps a sample from "
+                    + "being shown its own answer. 404 where ANALYSIS_ENABLED is off, 503 when "
+                    + "EMBEDDING_URL is not set.")
+    public ResponseEntity<AnalysisFewShotResponse> fewShot(@RequestBody AnalysisFewShotRequest body) {
+        indexer.requireConfigured();
+        ParserSettings.FewShot defaults = parserSettings.fewShot();
+        int k = body.k() != null ? body.k() : defaults.examples();
+        int maxChars = body.maxChars() != null ? body.maxChars() : defaults.maxChars();
+        ParserSettings.requireFewShotExamples(k);
+        ParserSettings.requireFewShotMaxChars(maxChars);
+        List<FewShotRetriever.Example> examples = shots.examplesFor(
+                body.subject() == null ? "" : body.subject(),
+                body.sentAt(),
+                body.body(),
+                k,
+                maxChars,
+                body.excludeSampleIds() == null ? List.of() : body.excludeSampleIds(),
+                body.minDistance() == null ? 0 : body.minDistance());
+        return ResponseEntity.ok(new AnalysisFewShotResponse(embeddings.model(), examples));
     }
 
     @GetMapping("/samples")
