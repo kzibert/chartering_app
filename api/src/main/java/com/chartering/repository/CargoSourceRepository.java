@@ -46,9 +46,20 @@ public interface CargoSourceRepository extends JpaRepository<CargoSource, Long> 
             + "where s.reportedByCompany is null and lower(s.fromAddress) = lower(?1)")
     java.util.Set<Long> cargoIdsReportedFrom(String fromAddress);
 
-    /** Arrivals on a cargo whose sender could not be named when they were filed. */
-    @Query("select s from CargoSource s left join fetch s.mailMessage left join fetch s.feedItem "
-            + "where s.reportedByCompany is null "
-            + "and (s.mailMessage is not null or s.feedItem is not null)")
-    List<CargoSource> findUnreportedWithSource();
+    /**
+     * Arrivals by mail on a cargo whose sender could not be named when they were filed, and whose
+     * message the mailbox now places on file. Only a message with a company can name a sender
+     * (see {@code Arrival.of(MailMessage)}), so the rest are not loaded at all.
+     */
+    @Query("select s from CargoSource s join fetch s.mailMessage m "
+            + "where s.reportedByCompany is null and m.company is not null")
+    List<CargoSource> findUnreportedFromMail();
+
+    /**
+     * Arrivals off a board post on a cargo whose sender could not be named. Its own query so the
+     * reconcile pass can skip it while the directory is unchanged; see
+     * {@code CompanyDirectoryVersion}.
+     */
+    @Query("select s from CargoSource s join fetch s.feedItem where s.reportedByCompany is null")
+    List<CargoSource> findUnreportedFromPost();
 }

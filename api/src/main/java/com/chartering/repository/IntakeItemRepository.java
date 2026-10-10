@@ -56,24 +56,23 @@ public interface IntakeItemRepository
     List<IntakeItem> pendingForVessel(IntakeItemKind kind, Long vesselId);
 
     /**
-     * Every waiting item of one kind, with its parse and message loaded.
+     * Every waiting item of one kind, and nothing hanging off it.
      *
-     * <p>For the pass that re-reads {@code NEW_VESSEL} items against what a lookup has since
-     * found: a hull whose number turns out to be on file is not a new ship, and the item is
-     * rewritten rather than left asking the wrong question. Small by construction — the queue
-     * is a screen's worth, not a table scan — and the fetch is because converting reads the
-     * message to file her position.
+     * <p>For the timed passes that re-weigh the queue ({@code IntakeReconcileRunner}), which run
+     * every few minutes whether or not anything arrived. They read the item's own payload and
+     * a company or vessel by id, so the parse is a lazy reference that is never initialised
+     * unless a row actually needs its message. Fetching the parse here would drag each one's
+     * raw model output and the whole email, body included, over the wire on every tick, for
+     * every waiting item - a cost that scales with the queue and is paid whether or not any
+     * item changes.
      */
     @Query("""
-            select distinct i from IntakeItem i
-            left join fetch i.parsedEmail p
-            left join fetch p.mailMessage
-            left join fetch p.feedItem
+            select i from IntakeItem i
             where i.status = com.chartering.model.IntakeItemStatus.PENDING
               and i.kind = ?1
             order by i.id asc
             """)
-    List<IntakeItem> pendingByKind(IntakeItemKind kind);
+    List<IntakeItem> pendingOfKind(IntakeItemKind kind);
 
     /**
      * A pending question already open about this firm.

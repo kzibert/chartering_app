@@ -71,6 +71,16 @@ hosted Postgres. A sibling project `../chartering-db` provides a local one on po
 working offline and for trying a migration somewhere harmless. Nothing in this project holds
 state, which is why compose has no `db` service, no volume, and no `down -v`.
 
+**Database transfer.** Neon's free plan allows 5 GB a month of data *sent from* the database, and
+it stops answering everyone — Render included — once that is spent. It was, on 2026-10-10, by
+a timer: the intake reconcile pass loaded every company and every phone for each unattributed
+board post, 6.6 MB every 150 seconds from the office api. So a timer that runs whether or not
+anything changed must read nothing in proportion to a table: select the columns it compares
+rather than whole entities (a `MailMessage` brings both bodies), filter in SQL, skip work
+whose inputs have not moved (`CompanyDirectoryVersion`), and run at the pace the answer
+actually drifts. `local/neon-resync/PLAN.md` has the measurement method
+(`pg_stat_statements` and the database container's transmit bytes, against a local copy).
+
 API layering is plain and deliberately thin: `controller` → `service` → `repository`, with
 one shared `mapper/DtoMapper` doing all entity→DTO mapping (services stay thin, mapping stays
 consistent) and `specification/*Specification` holding the JPA criteria for filtered search.
@@ -1051,9 +1061,10 @@ So three things stop and become `intake_items`:
   are always asked. Nothing is dropped by weighing: an item whose rows are all minor is
   `intake_items.minor` and waits on the Intake tab's **Minor updates** sub-tab, off the
   Needs review count, with minor rows starting unticked and their reason printed beside them.
-  The flag is recomputed when another arrival merges in and by a timed pass
+  The flag is recomputed when another arrival merges in and by a timed pass every half hour
   (`IntakeService.reweighPending`, from `IntakeReconcileRunner`), because the record moves on
-  its own.
+  its own. Not every tick: the pass reads in proportion to the queue, and on Neon that read is
+  billed as network transfer (see "Database transfer" below).
 - **`COMPANY_DETAILS`** — the firm that signed it, against the firm on file. Every circular
   ends in a full style, and it is the one part of the mail that is *about the sender* rather
   than about the market; the contacts database goes stale in exactly that place while the market

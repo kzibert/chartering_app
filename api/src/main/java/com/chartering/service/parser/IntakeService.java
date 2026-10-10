@@ -7,11 +7,14 @@ import com.chartering.service.CargoService;
 import com.chartering.service.VesselService;
 import com.chartering.service.lookup.VesselLookupService;
 import com.chartering.service.QuantityTolerance;
+import com.chartering.tenancy.TenantContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -24,6 +27,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Turning one read email into rows — and into the questions it could not answer.
@@ -68,6 +72,7 @@ public class IntakeService {
     private final VesselRepository vessels;
     private final VesselExNameRepository exNames;
     private final IntakeItemSourceRepository itemSources;
+    private final ParsedEmailRepository parsedEmails;
     private final IntakeFieldDecisionRepository decisions;
     private final IntakeVesselAliasRepository aliases;
     private final VesselFieldReportRepository fieldReports;
@@ -82,6 +87,14 @@ public class IntakeService {
     private final VesselLookupService lookups;
     private final VesselService vesselService;
     private final ObjectMapper json;
+    private final CompanyDirectoryVersion directory;
+
+    /**
+     * The directory version each desk's board posts were last read at. In memory on purpose: a
+     * restart costs one full pass, which is cheap. A desk's entry is written after its commit and
+     * read by the reconcile timer, so it is a concurrent map.
+     */
+    private final Map<Long, CompanyDirectoryVersion.Version> postsCheckedAt = new ConcurrentHashMap<>();
 
     /** What one email produced, for the parse row and the sweep's log line. */
     public record ApplyOutcome(int positionsApplied, int cargoesApplied, int itemsRaised) {
@@ -249,6 +262,13 @@ public class IntakeService {
      * both current, while two that are both FEYZ's are a list and its correction. The older
      * of those is superseded here, as it would have been had the reporter been known on the day.
      *
+     * <p><b>Board posts are read again only when the desk's companies, people or addresses have
+     * changed.</b> A post's signature is the one arrival here that costs a read of the firm list
+     * (see {@code CompanyMatcher}), and a firm not on file stays not on file on every tick until
+     * somebody adds it. So a post is re-read only when {@link CompanyDirectoryVersion} has moved
+     * since the desk's posts were last read. Mail is always re-read: its sender is one indexed
+     * lookup, and it is the mailbox that changes it.
+     *
      * @return how many rows gained a reporter or a broker
      */
     @Transactional
@@ -256,9 +276,18 @@ public class IntakeService {
         // One circular files a dozen positions and a cargo; its signature is read once.
         Map<String, Optional<Arrival>> seen = new java.util.HashMap<>();
 
+        // Read before anything else, so a directory change made while this pass runs is seen by
+        // the next tick rather than lost. With no desk on the thread nothing is recorded for it,
+        // so its posts are read every time: the safe answer, and not one a request reaches.
+        Optional<Long> tenant = TenantContext.current();
+        CompanyDirectoryVersion.Version version = directory.current();
+        boolean rereadPosts = tenant.isEmpty() || !version.equals(postsCheckedAt.get(tenant.get()));
+
         int written = 0;
+        List<VesselPosition> unreported = new ArrayList<>(positions.findUnreportedFromMail());
+        if (rereadPosts) unreported.addAll(positions.findUnreportedFromPost());
         Set<List<Long>> reporters = new java.util.HashSet<>();
-        for (VesselPosition p : positions.findUnreportedWithSource()) {
+        for (VesselPosition p : unreported) {
             Optional<Arrival> a = namedSender(seen, p.getSourceMailMessage(), p.getSourceFeedItem());
             if (a.isEmpty()) continue;
             p.setReportedByCompany(a.get().company());
@@ -275,7 +304,9 @@ public class IntakeService {
             for (int i = 1; i < live.size(); i++) live.get(i).setStatus(PositionStatus.SUPERSEDED);
         }
 
-        for (CargoSource src : cargoSources.findUnreportedWithSource()) {
+        List<CargoSource> sources = new ArrayList<>(cargoSources.findUnreportedFromMail());
+        if (rereadPosts) sources.addAll(cargoSources.findUnreportedFromPost());
+        for (CargoSource src : sources) {
             Optional<Arrival> a = namedSender(seen, src.getMailMessage(), src.getFeedItem());
             if (a.isEmpty()) continue;
             src.setReportedByCompany(a.get().company());
@@ -283,7 +314,8 @@ public class IntakeService {
             written++;
         }
 
-        List<Cargo> unbrokered = cargoes.findUnbrokeredWithSource();
+        List<Cargo> unbrokered = new ArrayList<>(cargoes.findUnbrokeredFromMail());
+        if (rereadPosts) unbrokered.addAll(cargoes.findUnbrokeredFromPost());
         if (!unbrokered.isEmpty()) {
             ChangeContext.describe("Intake: broker named once the sender was on file");
         }
@@ -294,7 +326,27 @@ public class IntakeService {
             if (c.getBrokerPerson() == null) c.setBrokerPerson(a.get().person());
             written++;
         }
+
+        tenant.ifPresent(t -> rememberCheck(t, version));
         return written;
+    }
+
+    /**
+     * Records the directory version a desk's posts were last read at, once this pass's writes
+     * have committed. Recording it earlier would let a failed commit leave posts unread until the
+     * next directory change; outside a transaction there is nothing to wait for, so it is at once.
+     */
+    private void rememberCheck(Long tenant, CompanyDirectoryVersion.Version version) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            postsCheckedAt.put(tenant, version);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                postsCheckedAt.put(tenant, version);
+            }
+        });
     }
 
     /** The arrival behind a row, only where it now names a firm. */
@@ -700,7 +752,7 @@ public class IntakeService {
     @Transactional
     public int reconcileIdentifiedHulls() {
         int converted = 0;
-        for (IntakeItem item : items.pendingByKind(IntakeItemKind.NEW_VESSEL)) {
+        for (IntakeItem item : items.pendingOfKind(IntakeItemKind.NEW_VESSEL)) {
             try {
                 if (convertToFieldsReview(item)) converted++;
             } catch (Exception e) {
@@ -726,7 +778,7 @@ public class IntakeService {
     @Transactional
     public int reweighPending() {
         int moved = 0;
-        for (IntakeItem item : items.pendingByKind(IntakeItemKind.VESSEL_FIELDS)) {
+        for (IntakeItem item : items.pendingOfKind(IntakeItemKind.VESSEL_FIELDS)) {
             try {
                 IntakePayloads.VesselFields payload = read(item, IntakePayloads.VesselFields.class);
                 if (payload == null || payload.vesselId() == null || payload.vessel() == null) continue;
@@ -741,7 +793,7 @@ public class IntakeService {
                 log.warn("Could not re-weigh intake item {}: {}", item.getId(), e.toString());
             }
         }
-        for (IntakeItem item : items.pendingByKind(IntakeItemKind.COMPANY_DETAILS)) {
+        for (IntakeItem item : items.pendingOfKind(IntakeItemKind.COMPANY_DETAILS)) {
             try {
                 IntakePayloads.CompanyDetails payload = read(item, IntakePayloads.CompanyDetails.class);
                 if (payload == null || payload.draft() == null) continue;
@@ -1307,8 +1359,22 @@ public class IntakeService {
         }
         // An item raised before sources were kept, or one whose only arrival could not be
         // placed: the question was still asked by somebody, and "nobody" is a value here.
-        if (out.isEmpty()) out.add(companyOf(item.getParsedEmail().getMailMessage()));
+        if (out.isEmpty()) out.add(senderOfParse(item.getParsedEmail()));
         return out;
+    }
+
+    /**
+     * The firm behind a parse's mail, asked for without the mail.
+     *
+     * <p>Why not {@code companyOf(parsed.getMailMessage())}: that loads the whole message, body
+     * and all, to read one foreign key, and the re-weigh timer asks for it on every waiting item
+     * every few minutes. The parse's id is already to hand, so the query goes straight to the
+     * company and the bodies stay where they are. A parse with no message (a board post) or a
+     * sender the sync could not place answers null, as it always has.
+     */
+    private Company senderOfParse(ParsedEmail parsed) {
+        if (parsed == null) return null;
+        return parsedEmails.senderOf(parsed.getId()).orElse(null);
     }
 
     private List<Long> senderIdsOf(IntakeItem item) {
