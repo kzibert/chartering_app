@@ -538,11 +538,15 @@ user/assistant turns between the system prompt and the email, nearest last, so t
 example sits beside the question. `EMBEDDING_URL` is the switch for the embeddings: blank, nothing
 is embedded and nothing is retrieved, and the rest of the app is unaffected.
 
-**Off by default, and per installation.** `parser.fewShotExamples` is 0 until the finetuned model
-has been measured with examples in front of it. It was trained and scored under a system prompt
-and one user turn, so showing it examples changes what it is asked, and that is an experiment to
-win on held-out emails, not a setting to flip. The chartering-ml harness scores retrieved examples
-against fixed few-shot and against the finetune alone. `POST /analysis/few-shot` returns exactly
+**On by default since it was measured, and per installation.** `parser.fewShotExamples` defaults to
+2. The finetune was trained and scored under a system prompt and one user turn, so showing it
+examples changes what it is asked, and that had to win on held-out emails before it became a
+default. The chartering-ml harness (`tools/fewshot_eval.sh`, 2026-10-10) scored it on both frozen
+held-out sets: two retrieved examples raised cargo F1 on every set (0.477 to 0.619 on the anchor,
+0.589 to 0.625 on unseen senders) and vessel F1 on unseen senders (0.759 to 0.824) at the same
+time per email; two *fixed* examples did worse than none. The cost is five or six points of email
+type, which is only recorded on the parse row. Another `k` or a larger budget is unmeasured, and
+the harness is the place to try it. `POST /analysis/few-shot` returns exactly
 the turns the parser would insert, from the same `FewShotRetriever`, so the score measures what
 production would send. `minDistance` keeps a re-sent copy of the scored circular out of its own
 examples, and `excludeSampleIds` keeps the sample itself out. The switch is installation-wide for
@@ -552,8 +556,8 @@ The turns come from `TrainingTurns`, which the export calls too, so an example i
 out as the training file laid it out. With no examples the request is byte-identical to the
 zero-shot one, and a test pins that.
 
-**The budget is spent on examples, never on their text.** `parser.fewShotMaxChars` (10,000 by
-default) bounds the examples' combined length. They are taken nearest-first while they fit, and a
+**The budget is spent on examples, never on their text.** `parser.fewShotMaxChars` (6,000 by
+default, the measured budget) bounds the examples' combined length. They are taken nearest-first while they fit, and a
 sample too long for what is left is skipped, not cut. A cut email paired with its full annotation
 teaches the model to report what is not in the text.
 

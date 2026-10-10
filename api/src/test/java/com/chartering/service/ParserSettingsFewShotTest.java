@@ -68,8 +68,8 @@ class ParserSettingsFewShotTest {
     }
 
     @Test
-    void offUntilSomebodyTurnsItOn() {
-        assertThat(settings.fewShot()).isEqualTo(new ParserSettings.FewShot(0, 10_000));
+    void onWithTheMeasuredConfiguration() {
+        assertThat(settings.fewShot()).isEqualTo(new ParserSettings.FewShot(2, 6_000));
         assertThat(ParserSettings.fewShotDefaults()).isEqualTo(settings.fewShot());
     }
 
@@ -101,7 +101,7 @@ class ParserSettingsFewShotTest {
                 .isInstanceOf(IllegalArgumentException.class);
 
         assertThat(table).isEmpty();
-        assertThat(settings.fewShot()).isEqualTo(new ParserSettings.FewShot(0, 10_000));
+        assertThat(settings.fewShot()).isEqualTo(new ParserSettings.FewShot(2, 6_000));
     }
 
     @Test
@@ -118,7 +118,7 @@ class ParserSettingsFewShotTest {
         table.put(ParserSettings.FEW_SHOT_EXAMPLES, "42");
         table.put(ParserSettings.FEW_SHOT_MAX_CHARS, "garbage");
 
-        assertThat(settings.fewShot()).isEqualTo(new ParserSettings.FewShot(0, 10_000));
+        assertThat(settings.fewShot()).isEqualTo(new ParserSettings.FewShot(2, 6_000));
     }
 
     @Test
@@ -128,7 +128,7 @@ class ParserSettingsFewShotTest {
         settings.resetFewShot();
 
         assertThat(table).doesNotContainKeys(ParserSettings.FEW_SHOT_EXAMPLES, ParserSettings.FEW_SHOT_MAX_CHARS);
-        assertThat(settings.fewShot()).isEqualTo(new ParserSettings.FewShot(0, 10_000));
+        assertThat(settings.fewShot()).isEqualTo(new ParserSettings.FewShot(2, 6_000));
     }
 
     @Test

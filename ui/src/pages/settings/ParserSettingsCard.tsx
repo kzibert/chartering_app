@@ -269,7 +269,7 @@ export default function ParserSettingsCard() {
 
         <Divider style={{ marginTop: 0 }} orientation="left" plain>
           <Space size={4} wrap>
-            Retrieved examples (experimental)
+            Retrieved examples
             {settings && settings.fewShotExamples > 0 ? (
               <Tag color="blue">{settings.fewShotExamples} per email</Tag>
             ) : (
@@ -287,9 +287,9 @@ export default function ParserSettingsCard() {
               extra={
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   0 = off. When on, the parser is shown this many of the most similar labelled
-                  emails from the Analysis corpus before each email. The model was trained
-                  without examples — switch this on only after the evaluation harness has scored
-                  it. Default <b>{settings?.defaultFewShotExamples ?? 0}</b>.
+                  emails from the Analysis corpus before each email. Two was scored against none
+                  on held-out emails and read cargoes and unseen senders' vessels better; another
+                  number has not been scored. Default <b>{settings?.defaultFewShotExamples ?? 2}</b>.
                 </Typography.Text>
               }
             >
