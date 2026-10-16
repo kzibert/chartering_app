@@ -1459,3 +1459,13 @@ happen. Follow the density and idiom of the surrounding code.
 Secrets live in `.env` (gitignored) with `.env.example` as the annotated template. Note that
 `.gitignore` covers `.env` but **not** `.env.bak*` — check `git status` before staging, and
 never use `git add -A` in this repo.
+
+## Issue workflow
+- Claude is started by automation when a human labels an issue `status:in-progress`. Do not pick up issues on your own.
+- Read the issue fully, including comments.
+- Create branch `issue-<number>-<short-slug>` from the default branch.
+- Implement until every acceptance criterion is met and the build/tests pass.
+- Open a PR whose body contains "Closes #<number>" and a checklist mapping each acceptance criterion to what was done.
+- Replace the label `status:in-progress` with `status:review`.
+- If blocked or the spec is ambiguous: comment a specific question on the issue, replace the label with `status:blocked`, and stop.
+- Never close issues, never merge PRs, never force-push.
