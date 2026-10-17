@@ -82,7 +82,13 @@ jobs:
       # ended its turn to wait for them, and the run finished in 53 seconds with nothing written,
       # reported as a success. Off, the Agent tool has no `run_in_background` and each call
       # returns the worker's report, which is the only shape a run with nobody watching can use.
+      #
+      # The step's own timeout, five minutes inside the job's. A job that hits `timeout-minutes`
+      # is *cancelled*, which neither `success()` nor `failure()` answers, so both steps below
+      # are skipped and the issue sits at in-progress with nothing saying why. A step that times
+      # out has *failed*, and "Mark blocked on failure" runs. The job's 60 stays as a backstop.
       - uses: anthropics/claude-code-action@v1
+        timeout-minutes: 55
         env:
           CLAUDE_CODE_SUBAGENT_MODEL: claude-haiku-5-5
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
@@ -111,9 +117,15 @@ jobs:
 
             1. Read the issue fully, including comments: `gh issue view ${{ github.event.issue.number }} --comments`.
             2. Follow the "Issue workflow" section in CLAUDE.md.
-            3. Create branch `issue-${{ github.event.issue.number }}-<short-slug>` from the default branch.
+            3. Check for an earlier run's branch: `git branch -r --list 'origin/issue-${{ github.event.issue.number }}-*'`.
+               If one exists, a previous run was cut off: check it out and continue from it. Read
+               `git log origin/main..HEAD` and the issue comments, and do not redo committed work.
+               Otherwise create `issue-${{ github.event.issue.number }}-<short-slug>` from the default branch.
             4. Implement until every acceptance criterion is met and the build/tests pass
                (api: `cd api && mvn -q test`; ui: `cd ui && npm ci && npm run build`).
+               Commit and `git push` each unit as soon as it passes your validation, not only at the
+               end. This run can be stopped by its time or turn limit, and only pushed work survives
+               for the next one.
             5. Push the branch and open a PR whose body contains "Closes #${{ github.event.issue.number }}"
                plus a checklist mapping each acceptance criterion to what was done.
             6. Replace the label: remove `status:in-progress`, add `status:review`.

@@ -1495,8 +1495,12 @@ layer only, and Flyway for every schema change.
 ## Issue workflow
 - Claude is started by automation when a human labels an issue `status:in-progress`. Do not pick up issues on your own.
 - Read the issue fully, including comments.
-- Create branch `issue-<number>-<short-slug>` from the default branch.
-- Implement until every acceptance criterion is met and the build/tests pass.
+- Create branch `issue-<number>-<short-slug>` from the default branch — unless an earlier run's
+  `issue-<number>-*` branch is already on `origin`, in which case that run was cut off by its
+  time or turn limit: continue from it, and do not redo what it committed.
+- Implement until every acceptance criterion is met and the build/tests pass. Commit and push
+  each unit as it passes validation rather than once at the end, because a run that is stopped
+  keeps only what it pushed.
 - Open a PR whose body contains "Closes #<number>" and a checklist mapping each acceptance criterion to what was done.
 - Replace the label `status:in-progress` with `status:review`.
 - If blocked or the spec is ambiguous: comment a specific question on the issue, replace the label with `status:blocked`, and stop.
@@ -1527,7 +1531,8 @@ Opus's context.
    run the build and the relevant tests yourself, and check the change against the issue's
    acceptance criteria and this file, not just against the brief. A small defect is fixed
    directly; a larger one goes back to a worker with a sharper brief; after two failed
-   attempts on one unit, Opus does it. Only then commit, push, open the PR and move the label.
+   attempts on one unit, Opus does it. Only then is that unit committed and pushed; the PR and
+   the label wait for the last one.
 
 The PR body says which units were delegated and what validation found and fixed, so a reviewer
 can tell a checked change from a reported one.
