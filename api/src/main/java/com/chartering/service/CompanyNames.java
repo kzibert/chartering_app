@@ -38,8 +38,8 @@ public final class CompanyNames {
      * what makes "ŞAHİN" and "SAHIN" meet only partway ("ahin" against "sahin") — acceptable
      * for a hint.
      *
-     * <p>A dotted capital İ is not one of those letters, although it looks like the first one
-     * to go. {@code Locale.ROOT} lowercases it to a plain i followed by a combining dot
+     * <p>A dotted capital İ looks like a letter outside a-z, but it is not dropped.
+     * {@code Locale.ROOT} lowercases it to a plain i followed by a combining dot
      * (U+0307), and only the dot falls outside a-z, so the i survives and "DENİZCİLİK" and
      * "DENIZCILIK" collide outright.
      */
