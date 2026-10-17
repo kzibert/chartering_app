@@ -214,7 +214,8 @@ public class CompanyMatcher {
     static String distinctiveKey(String name) {
         if (name == null) return "";
         StringBuilder kept = new StringBuilder();
-        for (String word : name.toLowerCase(Locale.ROOT).replaceAll("\\b[ak]/s\\b", " ")
+        // Folded the way similarityKey folds, or "Şti" would reach it already cut to "ti".
+        for (String word : CompanyNames.foldAccents(name).replaceAll("\\b[ak]/s\\b", " ")
                 .replaceAll("[^a-z0-9\\s]", " ").split("\\s+")) {
             if (word.isEmpty() || TRADE_WORDS.contains(word)) continue;
             kept.append(word).append(' ');

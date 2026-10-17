@@ -1,7 +1,9 @@
 package com.chartering.service;
 
+import java.text.Normalizer;
 import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * How two company names are compared when the question is "might these be one firm".
@@ -29,25 +31,31 @@ public final class CompanyNames {
             "asa", "oy", "ab", "aps", "plc", "pte", "pty", "kg", "sarl", "sl", "sti",
             "ltdsti", "lp", "llp", "group", "holding", "holdings", "shipping");
 
+    private static final Pattern COMBINING_MARKS = Pattern.compile("\\p{M}+");
+
     private CompanyNames() {
     }
 
     /**
      * Comparison key that also drops punctuation and legal-form suffixes, so "Fednav Ltd."
-     * and "FEDNAV" collide. Letters outside a-z are dropped with the punctuation, which is
-     * what makes "ŞAHİN" and "SAHIN" meet only partway ("ahin" against "sahin") — acceptable
-     * for a hint.
+     * and "FEDNAV" collide. Accents are folded off first ({@link #foldAccents}), so "ŞAHİN"
+     * and "SAHIN" collide too; a letter with no plain a-z base is dropped with the punctuation.
      *
-     * <p>A dotted capital İ looks like a letter outside a-z, but it is not dropped.
-     * {@code Locale.ROOT} lowercases it to a plain i followed by a combining dot
-     * (U+0307), and only the dot falls outside a-z, so the i survives and "DENİZCİLİK" and
-     * "DENIZCILIK" collide outright.
+     * <p>Folding is not cosmetic: it is what makes the Turkish legal form strippable at all.
+     * "Ltd. Şti." is how it is written, and while the cedilla was dropped rather than folded
+     * the word reached the suffix list as "ti" — so "sti" on the list never fired for the one
+     * spelling it is there for, and "Kaya Denizcilik Ltd. Şti." missed "Kaya Denizcilik".
+     *
+     * <p>A legal form is dropped wherever it stands, not only at the end: "AS" leads an
+     * Estonian firm's name as "Ltd" ends an English one. A name that is nothing but legal
+     * forms keys to the empty string, as a blank name does, and the empty key means "nothing
+     * to compare" — a caller must not read two of them as one firm.
      */
     public static String similarityKey(String s) {
         if (s == null) return "";
         // "A/S" and "K/S" are legal forms too, but the punctuation pass below would split them
         // into two stray letters that no suffix list can match — so they go first, whole.
-        String[] words = s.toLowerCase(Locale.ROOT)
+        String[] words = foldAccents(s)
                 .replaceAll("\\b[ak]/s\\b", " ")
                 .replaceAll("[^a-z0-9\\s]", " ").split("\\s+");
         StringBuilder out = new StringBuilder();
@@ -56,5 +64,16 @@ public final class CompanyNames {
             out.append(word);
         }
         return out.toString();
+    }
+
+    /**
+     * Lower-cased, with accents taken off their letters: ş to s, ç to c, ğ to g, ö to o, and a
+     * dotted capital İ to i (it decomposes to i and a combining dot). The dotless ı is a letter
+     * of its own with nothing to decompose into, so it is mapped by hand; the Turkish capitals
+     * I and İ both reach i already, so only text typed in lower case carries one.
+     */
+    public static String foldAccents(String s) {
+        String decomposed = Normalizer.normalize(s.toLowerCase(Locale.ROOT), Normalizer.Form.NFD);
+        return COMBINING_MARKS.matcher(decomposed).replaceAll("").replace('ı', 'i');
     }
 }

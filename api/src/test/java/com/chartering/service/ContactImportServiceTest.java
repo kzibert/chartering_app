@@ -175,6 +175,27 @@ class ContactImportServiceTest {
     }
 
     /**
+     * "Shipping Ltd" and "Holding Co" are nothing but legal forms, so both key to nothing — and
+     * two empty keys are two names with nothing in them to compare, not one firm.
+     */
+    @Test
+    void aNameThatIsOnlyALegalFormSuggestsNoCompany() {
+        Company existing = new Company();
+        existing.setId(9L);
+        existing.setName("Holding Co");
+        Mockito.when(companyRepository.findAll()).thenReturn(List.of(existing));
+        String csv = """
+                "Type","Name","Organization"
+                "Organization","Shipping Ltd","Shipping Ltd"
+                """;
+
+        ImportCompany row = company(service.preview(new MockMultipartFile(
+                "file", "contacts.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8))), "Shipping Ltd");
+        assertThat(row.matchType()).isEqualTo("new");
+        assertThat(row.matchedId()).isNull();
+    }
+
+    /**
      * The one thing about a written row that cannot be read back off the file afterwards.
      * Legacy says "carried over from the old database" and the importer sets it false on
      * purpose, so without this flag an export of eighty addresses is indistinguishable from
