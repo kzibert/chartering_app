@@ -35,7 +35,13 @@ public final class CompanyNames {
     /**
      * Comparison key that also drops punctuation and legal-form suffixes, so "Fednav Ltd."
      * and "FEDNAV" collide. Letters outside a-z are dropped with the punctuation, which is
-     * what makes "DENİZCİLİK" and "DENIZCILIK" meet only partway — acceptable for a hint.
+     * what makes "ŞAHİN" and "SAHIN" meet only partway ("ahin" against "sahin") — acceptable
+     * for a hint.
+     *
+     * <p>A dotted capital İ looks like a letter outside a-z, but it is not dropped.
+     * {@code Locale.ROOT} lowercases it to a plain i followed by a combining dot
+     * (U+0307), and only the dot falls outside a-z, so the i survives and "DENİZCİLİK" and
+     * "DENIZCILIK" collide outright.
      */
     public static String similarityKey(String s) {
         if (s == null) return "";
