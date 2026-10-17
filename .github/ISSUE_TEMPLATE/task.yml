@@ -1,0 +1,27 @@
+name: Task
+description: A unit of work Claude can pick up once it is labelled status:in-progress
+labels: ["status:ready"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What and why, in 1–3 sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: A checklist; every item must be testable.
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Out of scope / constraints
+      description: What must not change, or what this task deliberately leaves out.
+    validations:
+      required: false

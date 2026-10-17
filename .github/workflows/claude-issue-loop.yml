@@ -1,0 +1,101 @@
+name: Claude issue loop
+
+on:
+  issues:
+    types: [labeled]
+
+concurrency:
+  group: claude-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  route:
+    # The repository is public: only the owner's own labelling starts a run, because the
+    # local target is a self-hosted runner on a machine holding .env and the database.
+    if: github.event.label.name == 'status:in-progress' && github.event.sender.type != 'Bot' && github.event.sender.login == 'kzibert'
+    runs-on: ubuntu-latest
+    outputs:
+      target: ${{ steps.pick.outputs.target }}
+    steps:
+      - id: pick
+        env:
+          GH_TOKEN: ${{ secrets.RUNNER_CHECK_TOKEN }}
+        run: |
+          online=$(gh api "repos/${{ github.repository }}/actions/runners" \
+            --jq '[.runners[] | select(.status=="online") | select([.labels[].name] | index("claude-local"))] | length' \
+            2>/dev/null || echo 0)
+          if [ "${online:-0}" -gt 0 ]; then target=local; else target=remote; fi
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+          echo "Routing issue #${{ github.event.issue.number }} to: $target"
+
+  work:
+    needs: route
+    runs-on: ${{ needs.route.outputs.target == 'local' && fromJSON('["self-hosted","claude-local"]') || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      id-token: write
+    # The local runner is Windows, where `run` defaults to PowerShell and "$ISSUE" would be a
+    # PowerShell variable rather than the environment's. Git Bash is used there instead.
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE: ${{ github.event.issue.number }}
+    steps:
+      - name: Announce start
+        run: gh issue comment "$ISSUE" --repo "${{ github.repository }}" --body "🤖 Claude picked this up on the **${{ needs.route.outputs.target }}** runner. [Run log](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # api/: Maven (no wrapper), Java 21. ui/: npm, Node 20. The local runner has both installed.
+      - uses: actions/setup-java@v4
+        if: needs.route.outputs.target == 'remote'
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - uses: actions/setup-node@v4
+        if: needs.route.outputs.target == 'remote'
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The job's own token, so the run does not depend on the Claude GitHub App being
+          # installed (a token from `claude setup-token` alone is enough).
+          github_token: ${{ github.token }}
+          claude_args: >-
+            --max-turns 80
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(gh issue view:*),Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(git:*),Bash(mvn:*),Bash(npm:*),Bash(npx tsc:*)"
+          prompt: |
+            You are working GitHub issue #${{ github.event.issue.number }} in ${{ github.repository }}.
+            A human has already labeled it `status:in-progress`.
+
+            1. Read the issue fully, including comments: `gh issue view ${{ github.event.issue.number }} --comments`.
+            2. Follow the "Issue workflow" section in CLAUDE.md.
+            3. Create branch `issue-${{ github.event.issue.number }}-<short-slug>` from the default branch.
+            4. Implement until every acceptance criterion is met and the build/tests pass
+               (api: `cd api && mvn -q test`; ui: `cd ui && npm ci && npm run build`).
+            5. Push the branch and open a PR whose body contains "Closes #${{ github.event.issue.number }}"
+               plus a checklist mapping each acceptance criterion to what was done.
+            6. Replace the label: remove `status:in-progress`, add `status:review`.
+            7. If the spec is ambiguous or you are blocked: comment a specific question on the issue,
+               replace the label with `status:blocked`, and stop.
+
+            Never close issues, never merge PRs, never force-push.
+
+      - name: Mark blocked on failure
+        if: failure()
+        run: |
+          gh issue edit "$ISSUE" --repo "${{ github.repository }}" --remove-label "status:in-progress" --add-label "status:blocked"
+          gh issue comment "$ISSUE" --repo "${{ github.repository }}" --body "⚠️ The Claude run failed. See the [run log](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
