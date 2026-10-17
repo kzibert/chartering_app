@@ -1460,6 +1460,38 @@ Secrets live in `.env` (gitignored) with `.env.example` as the annotated templat
 `.gitignore` covers `.env` but **not** `.env.bak*` — check `git status` before staging, and
 never use `git add -A` in this repo.
 
+### Coding rules
+
+`.claude/rules/java-core.md` and `.claude/rules/java-testing.md` are the owner's general Java
+and testing rules, copied unchanged from their personal `~/.claude/rules/` so that sessions
+without that folder — the issue loop above all — work to the same rules. Claude Code loads each
+when a file its `paths:` names is touched. Keep them byte-identical to the originals and change
+them there first, or the two copies drift and nobody can say which one is the rule.
+
+They are written for projects in general, and **this repository wins where the two differ**:
+this file, then the code around the change, then the rules. They fill gaps — where the codebase
+has no established answer, take theirs. Where it has one, the rules are not a reason to change
+it, and a PR that "brings a file into line" with them is a regression. The known differences,
+each one deliberate:
+
+- **Layered, not hexagonal**: `controller` → `service` → `repository` under `com.chartering`
+  (see Architecture). No `adapter/`/`application/`/`domain/` packages.
+- **No `{Entity}ServiceApi` interfaces**: services are concrete `@Service` classes.
+- **No MapStruct, one mapper**: `mapper/DtoMapper` maps every entity to its DTO by hand. No
+  per-feature `*DtoMapper`/`*BodyMapper`.
+- **Authorization is not `@PreAuthorize`**: roles are URL rules in `config/SecurityConfig`
+  (`requestMatchers(...).hasRole(...)`), and a cross-desk id answers 404 rather than 403 (see
+  Auth). A new admin endpoint gets its matcher there.
+- **Tests are plain JUnit 5 + AssertJ + Mockito `when(...)`**, not BDDMockito, with no
+  `// given / when / then` sections and no `@ActiveProfiles("test")`. Database tests extend
+  `IntegrationTest` (Testcontainers, `pgvector/pgvector:pg16`, an ordinary role so row-level
+  security is exercised) — never H2, which has neither pgvector nor the RLS policies.
+
+What does carry over as written: response records with `@JsonInclude(NON_NULL)`, `ResponseEntity`
+with an explicit status, `/api/v1/...` plural routes, `@Operation`/`@ApiResponse` on endpoints,
+`PageResponse<T>` rather than `Page<T>`, constructor injection, `@Transactional` on the service
+layer only, and Flyway for every schema change.
+
 ## Issue workflow
 - Claude is started by automation when a human labels an issue `status:in-progress`. Do not pick up issues on your own.
 - Read the issue fully, including comments.
@@ -1469,3 +1501,33 @@ never use `git add -A` in this repo.
 - Replace the label `status:in-progress` with `status:review`.
 - If blocked or the spec is ambiguous: comment a specific question on the issue, replace the label with `status:blocked`, and stop.
 - Never close issues, never merge PRs, never force-push.
+
+### Orchestrator and workers
+
+The loop runs on Opus 5.5 (`--model` in `.github/workflows/claude-issue-loop.yml`), and Opus is
+the **orchestrator and final validator only**. The legwork — searching, reading, editing,
+running builds — goes to **Haiku 5.5 subagents** (`CLAUDE_CODE_SUBAGENT_MODEL` in the same
+file). Opus decides what gets done and whether it was done right; Haiku does it. The split is
+cost and attention: Opus tokens go on the judgement, and a worker's file dumps never reach
+Opus's context.
+
+1. **Plan (Opus).** Read the issue and enough of the code to write good briefs — not to do the
+   work while "exploring". Split it into units with one clear outcome, a bounded set of files,
+   and a check that says it is done. Keep the judgement calls: design, trade-offs, which rule
+   applies (see Coding rules), and anything ambiguous enough to be a `status:blocked` question.
+   A unit that is a few tool calls is done inline — a cold worker costs more than it saves.
+2. **Delegate (Haiku).** Agent tool, `model: "haiku"` always; `subagent_type` `Explore` for
+   read-only searches, `general-purpose` for edits and commands; never `fork`, which ignores
+   the model and runs on Opus. A worker starts cold, so its brief stands alone: the goal, exact
+   paths, the sections of this file and `.claude/rules/` that apply, what not to touch, how to
+   verify, and the report wanted back (files changed with a reason each, test output
+   verbatim). Workers never commit, push, comment or change labels — those stay with Opus.
+   Independent units go out in parallel; units touching the same files go in sequence.
+3. **Validate (Opus).** A worker's report is a claim, not a result. Read the actual `git diff`,
+   run the build and the relevant tests yourself, and check the change against the issue's
+   acceptance criteria and this file, not just against the brief. A small defect is fixed
+   directly; a larger one goes back to a worker with a sharper brief; after two failed
+   attempts on one unit, Opus does it. Only then commit, push, open the PR and move the label.
+
+The PR body says which units were delegated and what validation found and fixed, so a reviewer
+can tell a checked change from a reported one.
