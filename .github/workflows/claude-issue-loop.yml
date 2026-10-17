@@ -46,8 +46,13 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       ISSUE: ${{ github.event.issue.number }}
     steps:
+      # `status:ready` is cleared here rather than by Claude: this step runs on every pickup, so
+      # the label goes whether the run ends in review, blocked or a failure. `|| true` because
+      # an issue labelled in-progress without ever being marked ready is a normal start.
       - name: Announce start
-        run: gh issue comment "$ISSUE" --repo "${{ github.repository }}" --body "🤖 Claude picked this up on the **${{ needs.route.outputs.target }}** runner. [Run log](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+        run: |
+          gh issue edit "$ISSUE" --repo "${{ github.repository }}" --remove-label "status:ready" || true
+          gh issue comment "$ISSUE" --repo "${{ github.repository }}" --body "🤖 Claude picked this up on the **${{ needs.route.outputs.target }}** runner. [Run log](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
 
       - uses: actions/checkout@v4
         with:
