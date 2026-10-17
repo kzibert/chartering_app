@@ -36,6 +36,12 @@ class CompanyMatcherTest {
     }
 
     @Test
+    void theTurkishLegalFormWrittenWithItsCedillaIsStillALegalForm() {
+        assertThat(CompanyMatcher.resemblance("Kayaexample Denizcilik Ltd. Şti.", "KAYAEXAMPLE"))
+                .isEqualTo("similar name");
+    }
+
+    @Test
     void phonesCompareOnTheirLastNineDigits() {
         assertThat(CompanyMatcher.tail("+45-00000001")).isEqualTo(CompanyMatcher.tail("0045 0000 0001"));
         assertThat(CompanyMatcher.tail("12345")).isNull();

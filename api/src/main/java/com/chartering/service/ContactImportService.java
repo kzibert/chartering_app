@@ -97,7 +97,11 @@ public class ContactImportService {
         List<Company> allCompanies = groups.isEmpty() ? List.of() : companyRepository.findAll();
         Map<String, Company> bySimilarName = new HashMap<>();
         for (Company c : allCompanies) {
-            bySimilarName.putIfAbsent(similarityKey(c.getName()), c);
+            // A name that is all legal form ("Shipping Ltd") keys to nothing, and nothing is not
+            // a name two firms can share — kept, it would suggest the first such firm on file
+            // for every row whose own name was all legal form too.
+            String key = similarityKey(c.getName());
+            if (!key.isEmpty()) bySimilarName.putIfAbsent(key, c);
         }
 
         // Match every company first, so the person and duplicate lookups can be done for the
