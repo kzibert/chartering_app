@@ -1511,6 +1511,14 @@ layer only, and Flyway for every schema change.
 - If blocked or the spec is ambiguous: comment a specific question on the issue, replace the label with `status:blocked`, and stop.
 - Never close issues, never merge PRs, never force-push.
 
+**Review happens on the PR, by mentioning `@claude`** (`.github/workflows/claude-pr-comments.yml`).
+A PR comment, an inline review comment or a review from the owner that contains `@claude` starts a
+run on the PR's own branch: a change is made, validated, pushed to that branch and reported in a
+PR comment naming each review comment it acted on; a question is answered without touching code;
+an ambiguous request gets a question back. Same models, limits and foreground subagents as the
+issue loop. It refuses PRs from forks, because a comment event runs with this repository's
+secrets whoever wrote the branch, and it never edits the PR's title, description, labels or state.
+
 ### Orchestrator and workers
 
 The loop runs on Opus 5.5 (`--model` in `.github/workflows/claude-issue-loop.yml`), and Opus is
