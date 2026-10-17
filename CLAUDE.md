@@ -23,6 +23,11 @@ Pushing `render` triggers a Render deploy, so treat it as an outward-facing acti
 `render.yaml` pins no `branch:` — which branch each service tracks is set in the Render
 dashboard.
 
+The same merge is a button: Actions › **Deploy to Render** › Run workflow
+(`.github/workflows/deploy-render.yml`), which works from the GitHub app on a phone. It runs only
+for the owner and only from `main`, never force-pushes, and refuses a deploy whose `render.yaml`
+changed unless its box is ticked, for the reason in the next paragraph.
+
 **A deploy that carries a changed `render.yaml` re-syncs the blueprint, and every key the
 file pins a `value:` for is re-asserted over whatever the dashboard holds.** It is not a
 default that a dashboard edit overrides; it is an assertion, reapplied. This has already

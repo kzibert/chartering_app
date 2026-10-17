@@ -1,0 +1,72 @@
+name: Deploy to Render
+
+# "Deploy to render" in CLAUDE.md is "merge main into render", and this is that merge as a button
+# - Actions > Deploy to Render > Run workflow, which the GitHub app and the mobile site both
+# offer, so a deploy does not need the laptop. Pushing `render` is what Render deploys from; this
+# workflow never touches Render itself, and nothing else ever runs it.
+on:
+  workflow_dispatch:
+    inputs:
+      allow_render_yaml_change:
+        description: "render.yaml changed since the last deploy, and I have checked every pinned value: deploy anyway"
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-render
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # The owner only, and only as `main` sees it: a dispatch run from another branch would run
+    # that branch's copy of this file.
+    if: github.actor == 'kzibert' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: render
+          fetch-depth: 0
+
+      - name: Merge main into render
+        env:
+          ALLOW_RENDER_YAML: ${{ inputs.allow_render_yaml_change }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          pending=$(git rev-list --count HEAD..origin/main)
+          if [ "$pending" -eq 0 ]; then
+            echo "render already contains main - nothing to deploy." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # A deploy that carries a changed render.yaml re-syncs the blueprint, and every key it
+          # pins a value for is re-asserted over the dashboard - which is how MAIL_ENABLED was
+          # turned back off once by a commit about something else (CLAUDE.md, Git workflow). So
+          # that deploy is refused unless whoever pressed the button said they read the file.
+          if ! git diff --quiet HEAD origin/main -- render.yaml; then
+            {
+              echo "### render.yaml changes in this deploy"
+              echo '```diff'
+              git diff HEAD origin/main -- render.yaml
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            if [ "$ALLOW_RENDER_YAML" != "true" ]; then
+              echo "::error::render.yaml changed since the last deploy. Check every key it pins a value for, then run again with the render.yaml box ticked."
+              exit 1
+            fi
+          fi
+
+          {
+            echo "### Deploying $pending commit(s) from main"
+            git log --format='- %h %s' HEAD..origin/main --no-merges
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # The same commit `git merge main` on render has always made. No --force anywhere:
+          # if render moved underneath this run, the push fails and nothing is overwritten.
+          git merge --no-ff --no-edit origin/main -m "Merge branch 'main' into render"
+          git push origin HEAD:render
