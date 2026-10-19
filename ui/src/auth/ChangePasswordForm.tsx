@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Alert, Button, Form, Input } from 'antd';
 import { LockOutlined } from '@ant-design/icons';
+import { useQueryClient } from '@tanstack/react-query';
 import { authApi } from '../api/auth';
 import { setToken } from './store';
 
@@ -20,8 +21,15 @@ interface Values {
  * account held, this one included, and hands back a fresh one. Storing it remounts the
  * authenticated app (App.tsx keys it on the token), which is also what lifts the forced
  * change-password screen once the server stops saying one is required.
+ *
+ * The remount alone does not ask again. The session is cached with no expiry and the query
+ * cache is only cleared when the person changes, which a password change is not — so the
+ * remounted app read the old answer, still saying a change was required, and the forced
+ * screen stayed up until a reload. The cached session is dropped first, so the remount asks
+ * the server with the new token.
  */
 export default function ChangePasswordForm({ onDone }: { onDone?: () => void }) {
+  const queryClient = useQueryClient();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,6 +41,7 @@ export default function ChangePasswordForm({ onDone }: { onDone?: () => void }) 
         currentPassword: values.currentPassword,
         newPassword: values.newPassword,
       });
+      queryClient.removeQueries({ queryKey: ['auth', 'me'] });
       setToken(res.token);
       onDone?.();
     } catch (e: any) {
