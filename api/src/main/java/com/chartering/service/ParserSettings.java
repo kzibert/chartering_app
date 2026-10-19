@@ -2,6 +2,7 @@ package com.chartering.service;
 
 import com.chartering.config.ParserProperties;
 import com.chartering.model.AppSetting;
+import com.chartering.security.CredentialCipher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -9,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -73,7 +75,29 @@ public class ParserSettings {
      */
     public static final String FEW_SHOT_MAX_CHARS = "parser.fewShotMaxChars";
 
+    /**
+     * The hosted model under {@code CLOUD}: an address and a name beside the local ones.
+     *
+     * <p>Installation-wide for the reason the local address is: the provider a deployment reads with
+     * is one answer for the whole installation, and changing it is a platform administrator's act.
+     */
+    public static final String CLOUD_URL = "parser.cloudUrl";
+
+    /** The hosted model's name, sent on every request. Absent means {@code PARSER_CLOUD_MODEL}. */
+    public static final String CLOUD_MODEL = "parser.cloudModel";
+
+    /**
+     * The hosted provider's API key, encrypted with {@link CredentialCipher}.
+     *
+     * <p>Never read back to a screen: the settings say only whether one is set and its last four
+     * characters ({@link #cloudApiKeyHint()}). Not removed by {@link #resetCloud()}, because a Reset to
+     * defaults must not silently throw a secret away; clearing it is its own action.
+     */
+    public static final String CLOUD_API_KEY = "parser.cloudApiKey";
+
     private static final List<String> MODEL_KEYS = List.of(MODEL_URL, MODEL_NAME);
+
+    private static final List<String> CLOUD_MODEL_KEYS = List.of(CLOUD_URL, CLOUD_MODEL);
 
     private static final List<String> FEW_SHOT_KEYS = List.of(FEW_SHOT_EXAMPLES, FEW_SHOT_MAX_CHARS);
 
@@ -168,6 +192,7 @@ public class ParserSettings {
 
     private final SettingsStore repository;
     private final ParserProperties props;
+    private final CredentialCipher cipher;
 
     /** The few-shot experiment's two knobs. Zero examples means the feature is off. */
     public record FewShot(int examples, int maxChars) {
@@ -322,6 +347,135 @@ public class ParserSettings {
     public FewShot resetFewShot() {
         repository.deleteByKeyIn(FEW_SHOT_KEYS);
         return fewShot();
+    }
+
+    /**
+     * Which side of {@code PARSER_PROVIDER} this deployment reads with, by name, for the screen.
+     *
+     * <p>Read from the deployment and not stored: it is a fact about the instance, and the office and
+     * the hosted instance share this table and need opposite answers.
+     */
+    public String provider() {
+        return props.getProvider().name();
+    }
+
+    /**
+     * The hosted model's address and name, read as {@link #endpoint()} reads the local one.
+     *
+     * <p>The same stored-equals-configured rule applies, so {@code cloudUrlCustomised} means what it
+     * says. Read per call for the same reason as the local endpoint.
+     */
+    @Transactional(readOnly = true)
+    public ModelEndpoint cloudEndpoint() {
+        Map<String, String> stored = repository.findByKeyIn(CLOUD_MODEL_KEYS).stream()
+                .collect(Collectors.toMap(AppSetting::getKey, AppSetting::getValue));
+        String configuredUrl = blankToEmpty(props.getCloudUrl());
+        String configuredModel = blankToEmpty(props.getCloudModel());
+        return new ModelEndpoint(
+                readText(stored, CLOUD_URL, configuredUrl),
+                readText(stored, CLOUD_MODEL, configuredModel),
+                configuredUrl,
+                configuredModel);
+    }
+
+    /**
+     * The endpoint the parser sends to: the hosted one under {@code CLOUD}, else the local server.
+     *
+     * <p>{@link #endpoint()} stays the local server on its own, because the Feed falls back to it and
+     * that fallback is about the local box whatever this deployment reads with.
+     */
+    @Transactional(readOnly = true)
+    public ModelEndpoint activeEndpoint() {
+        return props.isCloud() ? cloudEndpoint() : endpoint();
+    }
+
+    /**
+     * Saves any of the hosted model's settings. Null leaves one alone, as {@link #updateEndpoint} does.
+     *
+     * <p>The key is written only when non-blank and only through {@link CredentialCipher}: a key that
+     * would sit in the table as plain text is refused rather than stored. {@code clearApiKey} wins over
+     * a key sent in the same request, so the two cannot both be read as having happened.
+     */
+    @Transactional
+    public ModelEndpoint updateCloud(String url, String model, String apiKey, Boolean clearApiKey) {
+        if (url != null) {
+            putOrClear(CLOUD_URL,
+                    url.isBlank() ? "" : ModelEndpoint.requireCompletionsUrl(url),
+                    blankToEmpty(props.getCloudUrl()));
+        }
+        if (model != null) {
+            putOrClear(CLOUD_MODEL, model.strip(), blankToEmpty(props.getCloudModel()));
+        }
+        String keyChange = "unchanged";
+        if (Boolean.TRUE.equals(clearApiKey)) {
+            repository.deleteByKeyIn(List.of(CLOUD_API_KEY));
+            keyChange = "cleared";
+        } else if (apiKey != null && !apiKey.isBlank()) {
+            if (!cipher.isAvailable()) {
+                throw new IllegalArgumentException(
+                        "CREDENTIALS_KEY is not set on this deployment, so an API key cannot be stored.");
+            }
+            put(CLOUD_API_KEY, cipher.encrypt(apiKey.strip()));
+            keyChange = "stored";
+        }
+        ModelEndpoint endpoint = cloudEndpoint();
+        // The key is named by whether it changed, never by its value.
+        log.info("Parser cloud model: {}{}, API key {}", endpoint.url(),
+                endpoint.model().isEmpty() ? "" : " model " + endpoint.model(), keyChange);
+        return endpoint;
+    }
+
+    /** Back to the configured cloud address and model. The API key is deliberately left in place. */
+    @Transactional
+    public void resetCloud() {
+        repository.deleteByKeyIn(CLOUD_MODEL_KEYS);
+    }
+
+    /**
+     * The decrypted API key, or empty when none is stored or the stored one cannot be read.
+     *
+     * <p>Unreadable is empty rather than an error: the one cause that is not a bug is a changed
+     * {@code CREDENTIALS_KEY}, and the answer to that is a key typed again on the screen. The warning
+     * names the setting and never the value.
+     */
+    @Transactional(readOnly = true)
+    public Optional<String> cloudApiKey() {
+        Optional<String> stored = repository.findByKeyIn(List.of(CLOUD_API_KEY)).stream()
+                .map(AppSetting::getValue)
+                .findFirst();
+        if (stored.isEmpty()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(cipher.decrypt(stored.get()));
+        } catch (IllegalStateException e) {
+            log.warn("Setting {} cannot be decrypted and is treated as unset: {}",
+                    CLOUD_API_KEY, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /** Whether a usable key is stored: the same test {@link #cloudApiKey()} applies. */
+    @Transactional(readOnly = true)
+    public boolean cloudApiKeySet() {
+        return cloudApiKey().isPresent();
+    }
+
+    /**
+     * The last four characters of the stored key, so the screen can say which key it is.
+     *
+     * <p>A key of eight characters or fewer gets no tail: four of a short key is most of the key.
+     */
+    @Transactional(readOnly = true)
+    public String cloudApiKeyHint() {
+        return cloudApiKey()
+                .map(k -> k.length() <= 8 ? "…" : "…" + k.substring(k.length() - 4))
+                .orElse(null);
+    }
+
+    /** Whether this deployment can store a key at all, which is whether {@code CREDENTIALS_KEY} is set. */
+    public boolean cloudApiKeyStorable() {
+        return cipher.isAvailable();
     }
 
     /**

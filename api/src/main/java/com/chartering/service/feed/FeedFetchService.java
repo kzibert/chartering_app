@@ -38,7 +38,7 @@ public class FeedFetchService {
     private static final long TICK_MS = 60_000;
 
     private final FeedProperties props;
-    private final com.chartering.config.ParserProperties parser;
+    private final com.chartering.service.parser.ParserAvailability availability;
     private final FeedSettings settings;
     private final FeedSourceRepository sources;
     private final FeedFetchRunner runner;
@@ -88,7 +88,7 @@ public class FeedFetchService {
         if (props.isAnalysisEnabled()) return true;
         // Any desk reading any enabled board into Intake. Asked desk by desk: the timer has no
         // desk of its own, and the subscriptions are each desk's.
-        return parser.isEnabled() && tenants.activeIds().stream()
+        return availability.runsTimers() && tenants.activeIds().stream()
                 .anyMatch(desk -> TenantContext.callAs(desk, sources::existsEnabledReadIntoIntake));
     }
 
@@ -115,10 +115,7 @@ public class FeedFetchService {
      * @param sourceId one board, or null for every enabled one marked to be read in
      */
     public void requestIntakeFetch(Long sourceId) {
-        if (!parser.isEnabled()) {
-            throw new FeatureDisabledException(
-                    "The email parser is not enabled on this deployment (PARSER_ENABLED).");
-        }
+        availability.require();
         // Which boards "every board marked" means is the caller's desk's answer, so it is
         // settled here, on the request, rather than on the worker that has no desk.
         List<Long> boards = sourceId != null ? List.of(sourceId)

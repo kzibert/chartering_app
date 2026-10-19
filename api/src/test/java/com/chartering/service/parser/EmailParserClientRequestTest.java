@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -110,5 +111,55 @@ class EmailParserClientRequestTest {
 
         assertThat(messages.get(5).path("role").asText()).isEqualTo("user");
         assertThat(messages.get(5).path("content").asText()).isEqualTo(question);
+    }
+
+    @Test
+    void cloudRequestAsksForAJsonObjectAndPutsTheShapeInTheSystemPrompt() throws Exception {
+        props.setProvider(ParserProperties.Provider.CLOUD);
+        String user = "Date: 2026-09-05\nSubject: OPEN\n\nMV EXAMPLE open Constanza.";
+
+        JsonNode root = json.readTree(client.cloudRequestBody(List.of(), user, "llama-3.3-70b-versatile"));
+
+        // A hosted endpoint is asked for plain JSON, never for a grammar it may refuse to compile.
+        assertThat(root.path("response_format").path("type").asText()).isEqualTo("json_object");
+        assertThat(root.path("response_format").has("json_schema")).isFalse();
+        assertThat(root.path("model").asText()).isEqualTo("llama-3.3-70b-versatile");
+        assertThat(root.path("max_tokens").asInt()).isEqualTo(props.getCloudMaxTokens());
+        assertThat(root.path("temperature").asInt()).isZero();
+        assertThat(root.path("stream").asBoolean()).isFalse();
+
+        JsonNode messages = root.path("messages");
+        assertThat(messages).hasSize(2);
+        String system = messages.get(0).path("content").asText();
+        assertThat(system).startsWith(AnalysisAnnotationTemplates.SYSTEM_PROMPT);
+        assertThat(system).contains("The JSON object must follow this JSON Schema:\n");
+        try (InputStream in = getClass().getClassLoader().getResourceAsStream("parser/extraction-schema.json")) {
+            assertThat(system).contains(json.readTree(in).toString());
+        }
+        assertThat(messages.get(1).path("content").asText()).isEqualTo(user);
+    }
+
+    @Test
+    void cloudRequestWithNoSchemaOmitsTheAddendum() throws Exception {
+        props.setProvider(ParserProperties.Provider.CLOUD);
+        EmailParserClient unloaded = new EmailParserClient(props, mock(ParserSettings.class), json);
+
+        JsonNode messages = json.readTree(unloaded.cloudRequestBody(List.of(), "question", "m"))
+                .path("messages");
+
+        assertThat(messages.get(0).path("content").asText())
+                .isEqualTo(AnalysisAnnotationTemplates.SYSTEM_PROMPT);
+    }
+
+    @Test
+    void retryAfterReadsSecondsAndIgnoresWhatItCannotRead() {
+        assertThat(EmailParserClient.retryAfterSeconds("7")).hasValue(7.0);
+        assertThat(EmailParserClient.retryAfterSeconds("2.5")).hasValue(2.5);
+        assertThat(EmailParserClient.retryAfterSeconds(" 3 ")).hasValue(3.0);
+        assertThat(EmailParserClient.retryAfterSeconds(null)).isEmpty();
+        assertThat(EmailParserClient.retryAfterSeconds("")).isEmpty();
+        assertThat(EmailParserClient.retryAfterSeconds("soon")).isEmpty();
+        assertThat(EmailParserClient.retryAfterSeconds("-4")).isEmpty();
+        assertThat(EmailParserClient.retryAfterSeconds("Wed, 21 Oct 2026 07:28:00 GMT")).isEmpty();
     }
 }

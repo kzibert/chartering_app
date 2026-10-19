@@ -34,6 +34,54 @@ public class ParserProperties {
     /** Master switch. Off means the feature is not part of this deployment at all. */
     private boolean enabled = false;
 
+    /** Where this deployment's reading is done: the office GPU, or a hosted chat API. */
+    public enum Provider { LOCAL, CLOUD }
+
+    /**
+     * Which model this deployment reads mail with — a fact about the deployment, so it is an
+     * environment variable and not a setting.
+     *
+     * <p>The office instance and the hosted one share one database, so one {@code app_settings}
+     * table, and they need opposite answers: the office has a GPU running the finetune, Render
+     * has neither a GPU nor a route to one. A setting would send both to the same place, which
+     * is the argument {@code MAIL_REPLY_PROVIDER} already made. What the cloud provider needs to
+     * be <em>called</em> — its address, model and API key — is the installation's and lives on
+     * the Settings tab ({@code ParserSettings}), because that is the same answer for both.
+     *
+     * <p>{@code CLOUD} also changes who may spend it and when. A hosted model is billed per
+     * token against a key somebody pays for, and its free tiers are counted in tokens a day, so
+     * a cloud deployment runs no timers of its own (no sweep, no reconcile pass, no board fetch
+     * for Intake) and reads only when an administrator asks — Parse now, Parse everything, or
+     * the messages picked on the Mailbox tab. See {@code ParserAvailability}.
+     */
+    private Provider provider = Provider.LOCAL;
+
+    /**
+     * The hosted chat-completions endpoint used under {@code CLOUD}, the default behind a
+     * Settings-tab override. Groq's OpenAI-compatible API, because that is the key in hand;
+     * anything speaking the same protocol with a Bearer key works the same way.
+     */
+    private String cloudUrl = "https://api.groq.com/openai/v1/chat/completions";
+
+    /** The hosted model's name, the default behind a Settings-tab override. Always sent. */
+    private String cloudModel = "llama-3.3-70b-versatile";
+
+    /**
+     * The answer's token ceiling under {@code CLOUD}, apart from {@link #maxTokens}.
+     *
+     * <p>Lower because a hosted free tier counts the requested ceiling against its tokens a
+     * minute before the model has written anything: Groq's 12,000 a minute for a 70B model,
+     * less a 5,000-token prompt, does not leave room for 6,144 more, and the request is
+     * refused as too large rather than answered short. 4,096 covers all but the longest
+     * position lists in the corpus.
+     */
+    private int cloudMaxTokens = 4_096;
+
+    public boolean isCloud() {
+        return provider == Provider.CLOUD;
+    }
+
+
     /**
      * The chat-completions endpoint.
      *

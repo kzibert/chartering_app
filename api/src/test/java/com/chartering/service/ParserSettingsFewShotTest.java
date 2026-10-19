@@ -2,6 +2,7 @@ package com.chartering.service;
 
 import com.chartering.config.ParserProperties;
 import com.chartering.model.AppSetting;
+import com.chartering.security.CredentialCipher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -57,7 +58,7 @@ class ParserSettingsFewShotTest {
             ((Collection<String>) call.getArgument(0)).forEach(table::remove);
             return null;
         }).when(repository).deleteByKeyIn(anyCollection());
-        settings = new ParserSettings(repository, new ParserProperties());
+        settings = new ParserSettings(repository, new ParserProperties(), new CredentialCipher(""));
     }
 
     private static AppSetting row(String key, String value) {
