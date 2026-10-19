@@ -68,6 +68,7 @@ class IntakeSuggestionsTest {
 
         queries = new IntakeQueryService(
                 props,
+                new ParserAvailability(props),
                 mock(MailboxProperties.class),
                 mock(ParserSettings.class),
                 mock(ParserSweepService.class),

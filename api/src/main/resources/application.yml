@@ -271,6 +271,14 @@ chartering:
   # circular provider there. See ParserSettings.
   parser:
     enabled: ${PARSER_ENABLED:false}
+    # LOCAL (the office GPU at the url below) or CLOUD (a hosted OpenAI-compatible API whose
+    # address, model and key are on the Settings tab). A fact about the deployment, not a
+    # setting: the office and Render share app_settings and need opposite answers. CLOUD runs
+    # no timers and is open to administrators only - see ParserProperties.provider.
+    provider: ${PARSER_PROVIDER:LOCAL}
+    cloud-url: ${PARSER_CLOUD_URL:https://api.groq.com/openai/v1/chat/completions}
+    cloud-model: ${PARSER_CLOUD_MODEL:llama-3.3-70b-versatile}
+    cloud-max-tokens: ${PARSER_CLOUD_MAX_TOKENS:4096}
     url: ${PARSER_URL:http://host.docker.internal:8090/v1/chat/completions}
     # llama-server serves one model and ignores this; Ollama refuses the request without
     # it. Pointing at an Ollama is this and the url, and nothing else - though it scores

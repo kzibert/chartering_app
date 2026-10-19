@@ -1,6 +1,5 @@
 package com.chartering.service.parser;
 
-import com.chartering.config.ParserProperties;
 import com.chartering.config.VesselLookupProperties;
 import com.chartering.tenancy.TenantDirectory;
 import lombok.RequiredArgsConstructor;
@@ -53,7 +52,7 @@ public class IntakeReconcileRunner {
     private static final Duration REWEIGH_EVERY = Duration.ofMinutes(30);
 
     private final IntakeService intake;
-    private final ParserProperties parser;
+    private final ParserAvailability availability;
     private final VesselLookupProperties lookups;
     private final TenantDirectory tenants;
 
@@ -63,7 +62,7 @@ public class IntakeReconcileRunner {
     /** Each desk's queue in turn: a pass reads and writes one desk's items and records. */
     @Scheduled(fixedDelay = TICK_MS, initialDelay = 45_000)
     public void run() {
-        if (!parser.isEnabled()) return;
+        if (!availability.runsTimers()) return;
         Instant now = Instant.now();
         boolean reweigh = !now.isBefore(lastReweigh.plus(REWEIGH_EVERY));
         tenants.forEachActive("Intake reconciliation", tenant -> runForDesk(reweigh));

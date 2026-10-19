@@ -181,8 +181,24 @@ export function useIntakeMutations() {
     onSuccess: () => qc.invalidateQueries(),
   });
 
+  // Explicit `false`/`true` at the call sites: a variable typed boolean | undefined would make
+  // `mutate()` with no argument a type error.
   const startSweep = useMutation({
-    mutationFn: intakeApi.startSweep,
+    mutationFn: (all: boolean) => intakeApi.startSweep(all),
+    onSuccess: invalidate,
+  });
+
+  const stopSweep = useMutation({
+    mutationFn: intakeApi.stopSweep,
+    onSuccess: invalidate,
+  });
+
+  /**
+   * Read the picked mailbox messages now. Starts a sweep, so it invalidates what a sweep
+   * invalidates — the progress the Intake tab shows is the same sweep state.
+   */
+  const parseMessages = useMutation({
+    mutationFn: (mailMessageIds: number[]) => intakeApi.parseMessages({ mailMessageIds }),
     onSuccess: invalidate,
   });
 
@@ -240,6 +256,8 @@ export function useIntakeMutations() {
   return {
     resolve,
     startSweep,
+    stopSweep,
+    parseMessages,
     reopen,
     ignoreParsed,
     updateSettings,

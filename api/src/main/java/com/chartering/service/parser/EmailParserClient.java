@@ -24,6 +24,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
+import java.util.OptionalDouble;
 
 /**
  * The one thing in this application that talks to the model.
@@ -68,6 +70,17 @@ import java.util.List;
 public class EmailParserClient {
 
     private static final String SCHEMA_RESOURCE = "parser/extraction-schema.json";
+
+    /**
+     * The longest a cloud rate limit is waited out inside one email, in seconds.
+     *
+     * <p>Beyond this the wait is the provider's "come back later", and the sweep stops instead of holding
+     * a transaction open for minutes. A minute is what a per-minute token allowance refills in.
+     */
+    private static final int MAX_RATE_LIMIT_WAIT_SECONDS = 60;
+
+    /** How many times one cloud call is retried after a short rate limit before the sweep stops. */
+    private static final int MAX_RATE_LIMIT_RETRIES = 5;
 
     private final ParserProperties props;
     private final ParserSettings settings;
@@ -155,36 +168,28 @@ public class EmailParserClient {
      */
     public Completion complete(String subject, LocalDateTime sentAt, String bodyText,
                                List<FewShotRetriever.Example> examples) {
-        ModelEndpoint endpoint = settings.endpoint();
+        ModelEndpoint endpoint = settings.activeEndpoint();
+        boolean cloud = props.isCloud();
         String user = userTurn(subject, sentAt, bodyText);
-        String payload = requestBody(examples, user, endpoint.model());
-
-        HttpRequest request = HttpRequest.newBuilder(URI.create(endpoint.url()))
-                .header("Content-Type", "application/json")
-                .timeout(Duration.ofMillis(props.getReadTimeoutMs()))
-                .POST(HttpRequest.BodyPublishers.ofString(payload, StandardCharsets.UTF_8))
-                .build();
+        // Checked before anything is built or sent: without a key the cloud call cannot succeed,
+        // and the message is the thing the administrator needs to read.
+        String apiKey = cloud ? requireCloudKey() : null;
+        String payload = cloud
+                ? cloudRequestBody(examples, user, endpoint.model())
+                : requestBody(examples, user, endpoint.model());
 
         long started = System.currentTimeMillis();
-        HttpResponse<String> response;
-        try {
-            response = http.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new ParserUnavailableException("The parse was interrupted.", e);
-        } catch (IOException e) {
-            // The common case by a wide margin, and the message has to name the cure: the
-            // model server is a container on somebody's desk, and the desk gets turned off.
-            lastError = e.getMessage();
-            throw new ParserUnavailableException(
-                    "Could not reach the model at " + endpoint.url() + " — " + e.getMessage()
-                            + ". Start it with: docker compose -f serve/docker-compose.llamacpp.yml"
-                            + " up -d (in the chartering-ml project).", e);
+        HttpResponse<String> response = send(endpoint, payload, apiKey);
+        if (cloud) {
+            response = waitOutRateLimit(endpoint, payload, apiKey, response);
         }
         int durationMs = (int) (System.currentTimeMillis() - started);
 
         if (response.statusCode() / 100 != 2) {
             lastError = "HTTP " + response.statusCode();
+            if (cloud) {
+                throw cloudRefusal(response.statusCode(), response.body());
+            }
             throw new ParserUnavailableException("The model answered HTTP " + response.statusCode()
                     + ": " + abbreviate(response.body()));
         }
@@ -221,6 +226,9 @@ public class EmailParserClient {
      * than two that can point at different servers.
      */
     public boolean isReachable() {
+        if (props.isCloud()) {
+            return cloudReachable();
+        }
         String health = settings.endpoint().base() + "/health";
         try {
             HttpRequest request = HttpRequest.newBuilder(URI.create(health))
@@ -262,16 +270,7 @@ public class EmailParserClient {
         if (!model.isBlank()) {
             root.put("model", model);
         }
-        var messages = root.putArray("messages");
-        messages.addObject().put("role", "system")
-                .put("content", AnalysisAnnotationTemplates.SYSTEM_PROMPT);
-        // The same two strings the export writes for each sample (TrainingTurns), so an example
-        // in a request looks exactly like an example in the file the model was finetuned on.
-        for (FewShotRetriever.Example e : examples) {
-            messages.addObject().put("role", "user").put("content", e.user());
-            messages.addObject().put("role", "assistant").put("content", e.assistant());
-        }
-        messages.addObject().put("role", "user").put("content", user);
+        addMessages(root, AnalysisAnnotationTemplates.SYSTEM_PROMPT, examples, user);
         root.put("temperature", 0);
         // From configuration, not a literal: a request-level max_tokens overrides the
         // server's own num_predict, so a stale number here silently truncates long answers
@@ -286,6 +285,205 @@ public class EmailParserClient {
             named.set("schema", schema);
         }
         return root.toString();
+    }
+
+    /**
+     * The chat request for one question, as a hosted model is sent it.
+     *
+     * <p>The same messages as {@link #requestBody}, with two differences, both because the finetune is
+     * not what answers here. The local model learned the field names in training and has the grammar
+     * enforced by llama.cpp, so a request to it carries no description of the shape. A general hosted
+     * model knows neither, so the schema goes in the system prompt as text. And the format is
+     * {@code json_object}, not {@code json_schema}: that is the one every OpenAI-compatible provider
+     * accepts, where {@code json_schema} is supported only by some hosted models and refused by others
+     * for schemas they cannot compile. The model is always named, because a hosted endpoint serves
+     * many. Package-private for the same reason {@link #requestBody} is.
+     */
+    String cloudRequestBody(List<FewShotRetriever.Example> examples, String user, String model) {
+        ObjectNode root = json.createObjectNode();
+        root.put("model", model);
+        String system = AnalysisAnnotationTemplates.SYSTEM_PROMPT;
+        if (schema != null) {
+            system += "\n\nThe JSON object must follow this JSON Schema:\n" + schema;
+        }
+        addMessages(root, system, examples, user);
+        root.put("temperature", 0);
+        // The cloud's own ceiling, not maxTokens: a hosted free tier counts this figure against its
+        // tokens a minute before anything is written, so the local 6,144 would be refused as too large.
+        root.put("max_tokens", props.getCloudMaxTokens());
+        root.put("stream", false);
+        root.putObject("response_format").put("type", "json_object");
+        return root.toString();
+    }
+
+    /**
+     * The system turn, then the worked examples as user/assistant pairs, then the question.
+     *
+     * <p>Shared by both bodies so that the local request stays exactly the measured one: the field
+     * order and the strings written are the ones it always had.
+     */
+    private void addMessages(ObjectNode root, String system, List<FewShotRetriever.Example> examples,
+                             String user) {
+        var messages = root.putArray("messages");
+        messages.addObject().put("role", "system").put("content", system);
+        // The same two strings the export writes for each sample (TrainingTurns), so an example
+        // in a request looks exactly like an example in the file the model was finetuned on.
+        for (FewShotRetriever.Example e : examples) {
+            messages.addObject().put("role", "user").put("content", e.user());
+            messages.addObject().put("role", "assistant").put("content", e.assistant());
+        }
+        messages.addObject().put("role", "user").put("content", user);
+    }
+
+    /**
+     * One POST to the model. Under the cloud, the Bearer key rides on it; nothing else about the call
+     * changes, and the key is never part of a message.
+     */
+    private HttpResponse<String> send(ModelEndpoint endpoint, String payload, String apiKey) {
+        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(endpoint.url()))
+                .header("Content-Type", "application/json")
+                .timeout(Duration.ofMillis(props.getReadTimeoutMs()))
+                .POST(HttpRequest.BodyPublishers.ofString(payload, StandardCharsets.UTF_8));
+        if (apiKey != null) {
+            request.header("Authorization", "Bearer " + apiKey);
+        }
+        try {
+            return http.send(request.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ParserUnavailableException("The parse was interrupted.", e);
+        } catch (IOException e) {
+            lastError = e.getMessage();
+            if (apiKey != null) {
+                throw new ParserUnavailableException(
+                        "Could not reach the cloud model at " + endpoint.url() + " — " + e.getMessage() + ".", e);
+            }
+            // The common case by a wide margin, and the message has to name the cure: the
+            // model server is a container on somebody's desk, and the desk gets turned off.
+            throw new ParserUnavailableException(
+                    "Could not reach the model at " + endpoint.url() + " — " + e.getMessage()
+                            + ". Start it with: docker compose -f serve/docker-compose.llamacpp.yml"
+                            + " up -d (in the chartering-ml project).", e);
+        }
+    }
+
+    /**
+     * Sleeps out a rate limit the provider says is short, and retries; anything longer is a stop.
+     *
+     * <p>A rate limit is the sweep's stop, not a failure of this email: the next sweep picks it up
+     * where this one stopped, so it is thrown as {@link ParserUnavailableException}. A wait of up to
+     * a minute is absorbed here, because a free tier's window is often a few seconds and stopping the
+     * whole sweep for that would be the wrong size of response. A wait longer than that is the
+     * provider saying "come back later", which is for the administrator to act on.
+     */
+    private HttpResponse<String> waitOutRateLimit(ModelEndpoint endpoint, String payload, String apiKey,
+                                                  HttpResponse<String> first) {
+        HttpResponse<String> response = first;
+        for (int retries = 0; response.statusCode() == 429; retries++) {
+            OptionalDouble wait = retryAfterSeconds(response.headers().firstValue("retry-after").orElse(null));
+            lastError = "HTTP 429";
+            if (wait.isEmpty() || wait.getAsDouble() > MAX_RATE_LIMIT_WAIT_SECONDS
+                    || retries >= MAX_RATE_LIMIT_RETRIES) {
+                throw rateLimited(wait);
+            }
+            // The header's figure plus a second: the header is the provider's own clock, and a retry
+            // that lands a hair early is refused again and costs a whole round of the limit's window.
+            pause((long) Math.ceil(wait.getAsDouble() * 1000) + 1_000);
+            response = send(endpoint, payload, apiKey);
+        }
+        return response;
+    }
+
+    private static ParserUnavailableException rateLimited(OptionalDouble wait) {
+        if (wait.isEmpty()) {
+            return new ParserUnavailableException("The cloud model's rate limit is spent — try again later.");
+        }
+        long minutes = Math.max(1, (long) Math.ceil(wait.getAsDouble() / 60));
+        return new ParserUnavailableException("The cloud model's rate limit is spent — try again in about "
+                + minutes + " minute" + (minutes == 1 ? "" : "s") + ".");
+    }
+
+    private static void pause(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ParserUnavailableException("The parse was interrupted.", e);
+        }
+    }
+
+    /**
+     * What a cloud reply that is not a success means for the sweep.
+     *
+     * <p>Three different answers. A bad key stops everything, since every email would fail the same
+     * way. A refusal of this email (too large, malformed) is an {@link IllegalStateException}, which
+     * the sweep records against that one message and carries on from — a too-large email must not stop
+     * every sweep at the same place. Anything else is unavailable, as the local server's failures are.
+     */
+    private static RuntimeException cloudRefusal(int status, String body) {
+        return switch (status) {
+            case 401, 403 -> new ParserUnavailableException(
+                    "The cloud provider refused the API key (HTTP " + status + ").");
+            case 400, 413, 422 -> new IllegalStateException(
+                    "The cloud model refused this email (HTTP " + status + "): " + abbreviate(body));
+            default -> new ParserUnavailableException(
+                    "The cloud model answered HTTP " + status + ": " + abbreviate(body));
+        };
+    }
+
+    private String requireCloudKey() {
+        return settings.cloudApiKey().orElseThrow(() -> new ParserUnavailableException(
+                "No API key for the cloud model is saved — add one on Settings › Intake parser."));
+    }
+
+    /**
+     * The Retry-After header as seconds: the value when it is a non-negative number, else empty.
+     *
+     * <p>Only the seconds form is read. The HTTP-date form is valid but no provider here sends it,
+     * and an unreadable header is treated as no header, which stops the sweep rather than guessing.
+     */
+    static OptionalDouble retryAfterSeconds(String header) {
+        if (header == null || header.isBlank()) {
+            return OptionalDouble.empty();
+        }
+        try {
+            double seconds = Double.parseDouble(header.strip());
+            return seconds >= 0 && !Double.isNaN(seconds) && !Double.isInfinite(seconds)
+                    ? OptionalDouble.of(seconds)
+                    : OptionalDouble.empty();
+        } catch (NumberFormatException e) {
+            return OptionalDouble.empty();
+        }
+    }
+
+    /**
+     * Whether the cloud answers with the key we hold: GET the model list, which every provider serves
+     * and which costs no tokens. Reachability and authentication are one question here, since a bad key
+     * is the commonest way the cloud is "down".
+     */
+    private boolean cloudReachable() {
+        Optional<String> apiKey = settings.cloudApiKey();
+        if (apiKey.isEmpty()) {
+            lastError = "No API key saved";
+            return false;
+        }
+        String models = settings.cloudEndpoint().base() + "/v1/models";
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(models))
+                    .header("Authorization", "Bearer " + apiKey.get())
+                    .timeout(Duration.ofMillis(props.getConnectTimeoutMs()))
+                    .GET().build();
+            HttpResponse<Void> response = http.send(request, HttpResponse.BodyHandlers.discarding());
+            boolean ok = response.statusCode() / 100 == 2;
+            lastError = ok ? null : "HTTP " + response.statusCode() + " from " + models;
+            return ok;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (Exception e) {
+            lastError = e.getMessage();
+            return false;
+        }
     }
 
     /**

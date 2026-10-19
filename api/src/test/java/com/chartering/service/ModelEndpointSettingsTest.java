@@ -3,6 +3,7 @@ package com.chartering.service;
 import com.chartering.config.FeedProperties;
 import com.chartering.config.ParserProperties;
 import com.chartering.model.AppSetting;
+import com.chartering.security.CredentialCipher;
 import com.chartering.service.feed.FeedSettings;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -83,7 +84,7 @@ class ModelEndpointSettingsTest {
         parserProps.setUrl(PARSER_ENV);
         feedProps = new FeedProperties();
         SettingsStore repository = fakeRepository();
-        parser = new ParserSettings(repository, parserProps);
+        parser = new ParserSettings(repository, parserProps, new CredentialCipher(""));
         feed = new FeedSettings(repository, feedProps, parser);
     }
 

@@ -295,6 +295,10 @@ export interface IntakeStatusResponse {
   nextSweepAt?: string;
   lastSweepSummary?: string;
   warnings?: string[];
+  /** LOCAL reads on the office GPU; CLOUD reads with the hosted model. */
+  provider?: 'LOCAL' | 'CLOUD';
+  /** False where the timer does not run on this deployment (CLOUD): reading is only ever asked for. */
+  scheduled?: boolean;
 }
 
 export interface SweepResponse {
@@ -311,6 +315,16 @@ export interface SweepResponse {
   unreachable?: boolean;
   message?: string;
   finishedAt?: string;
+  /** BATCH is Parse now, ALL is Parse everything, SELECTED is messages picked on the Mailbox tab. */
+  mode?: 'BATCH' | 'ALL' | 'SELECTED';
+  /** Messages handled so far in the running sweep. */
+  progress?: number;
+  /** Only known for SELECTED, where it is the number asked for. */
+  total?: number;
+  /** A stop was asked for and the run has not yet reached it. */
+  stopRequested?: boolean;
+  /** The finished run was stopped by request rather than running out of work. */
+  stopped?: boolean;
 }
 
 export interface ParserSettingsResponse {
@@ -337,6 +351,20 @@ export interface ParserSettingsResponse {
   fewShotMaxChars: number;
   defaultFewShotExamples: number;
   defaultFewShotMaxChars: number;
+  /** Which model reads the mail on this deployment — PARSER_PROVIDER. */
+  provider: 'LOCAL' | 'CLOUD';
+  /** The hosted model's endpoint and name in force, installation-wide. */
+  cloudUrl: string;
+  cloudModel: string;
+  cloudUrlCustomised: boolean;
+  cloudModelCustomised: boolean;
+  defaultCloudUrl: string;
+  defaultCloudModel: string;
+  cloudApiKeySet: boolean;
+  /** The last few characters of the stored key, e.g. "…a1B2". Absent when no key is saved. */
+  cloudApiKeyHint?: string;
+  /** False when CREDENTIALS_KEY is unset on the server, so a key cannot be saved. */
+  cloudApiKeyStorable: boolean;
 }
 
 export interface ParserSettingsRequest {
@@ -352,6 +380,19 @@ export interface ParserSettingsRequest {
   fewShotExamples?: number;
   /** 1000..60000. */
   fewShotMaxChars?: number;
+  /** Blank restores the default cloud address. */
+  cloudUrl?: string;
+  /** Blank restores the default cloud model name. */
+  cloudModel?: string;
+  /** Non-blank replaces the stored key. The key is never sent back. */
+  cloudApiKey?: string;
+  clearCloudApiKey?: boolean;
+}
+
+/** Messages picked on the Mailbox tab to be read now, whatever the lookback says. */
+export interface ParseMessagesRequest {
+  /** 1..200 mailbox message ids. */
+  mailMessageIds: number[];
 }
 
 /** Who has told us about a cargo — one row per arrival, kept through a merge. */
@@ -602,8 +643,26 @@ export const intakeApi = {
   linkSender: (id: number, body: LinkSenderRequest) =>
     client.post<IntakeItemResponse>(`/intake/items/${id}/link-sender`, body).then((r) => r.data),
 
-  /** Starts a sweep and returns at once — a sweep is minutes of GPU. Poll `sweep`. */
-  startSweep: () => client.post<SweepResponse>('/intake/sweep').then((r) => r.data),
+  /**
+   * Starts a sweep and returns at once — a sweep is minutes of GPU. Poll `sweep`.
+   *
+   * `all` keeps reading batches until the queue is empty (within the lookback) or stopped;
+   * without it, one batch. Parse everything is the one that spends a cloud model's allowance.
+   */
+  startSweep: (all = false) =>
+    client
+      .post<SweepResponse>('/intake/sweep', undefined, { params: all ? { all: true } : undefined })
+      .then((r) => r.data),
+
+  /**
+   * Read exactly these mailbox messages now, whatever the lookback says. 409 while a sweep is
+   * already running — quiet, so the caller can say so in its own words.
+   */
+  parseMessages: (body: ParseMessagesRequest) =>
+    client.post<SweepResponse>('/intake/parse', body, { quiet: true }).then((r) => r.data),
+
+  /** Asks the running sweep to stop after the message it is on. 204. */
+  stopSweep: () => client.post<void>('/intake/sweep/stop').then((r) => r.data),
 
   sweep: () => client.get<SweepResponse>('/intake/sweep').then((r) => r.data),
 

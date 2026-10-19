@@ -157,6 +157,12 @@ services:
       # How often it sweeps and how many messages it takes are NOT here: they are runtime
       # settings on the Settings tab, because they are knobs turned while watching the queue.
       PARSER_ENABLED: ${PARSER_ENABLED:-true}
+      # LOCAL reads with the server below; CLOUD with the hosted model whose address, model and
+      # API key are on the Settings tab (no timers, administrators only). See .env.example.
+      PARSER_PROVIDER: ${PARSER_PROVIDER:-LOCAL}
+      PARSER_CLOUD_URL: ${PARSER_CLOUD_URL:-https://api.groq.com/openai/v1/chat/completions}
+      PARSER_CLOUD_MODEL: ${PARSER_CLOUD_MODEL:-llama-3.3-70b-versatile}
+      PARSER_CLOUD_MAX_TOKENS: ${PARSER_CLOUD_MAX_TOKENS:-4096}
       PARSER_URL: ${PARSER_URL:-http://host.docker.internal:8090/v1/chat/completions}
       PARSER_MODEL: ${PARSER_MODEL:-}
       PARSER_READ_TIMEOUT_MS: ${PARSER_READ_TIMEOUT_MS:-180000}
