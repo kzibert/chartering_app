@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   Col,
+  Popconfirm,
   Row,
   Segmented,
   Select,
@@ -18,6 +19,7 @@ import {
   InboxOutlined,
   ReloadOutlined,
   SnippetsOutlined,
+  StopOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
@@ -49,6 +51,7 @@ import type {
   IntakeItemStatus,
   ParseStatus,
   ParsedEmailResponse,
+  SweepResponse,
 } from '../../api/intake';
 
 /**
@@ -103,7 +106,7 @@ export default function IntakePage() {
     enabled && view === 'log',
   );
   const sweep = useSweep(enabled);
-  const { startSweep } = useIntakeMutations();
+  const { startSweep, stopSweep } = useIntakeMutations();
 
   if (status.isLoading) return null;
 
@@ -144,13 +147,18 @@ export default function IntakePage() {
         reachable={status.data?.reachable === true}
         modelUrl={status.data?.modelUrl}
         intervalMinutes={status.data?.sweepIntervalMinutes ?? 0}
+        scheduled={status.data?.scheduled !== false}
+        cloud={status.data?.provider === 'CLOUD'}
         maxAgeDays={status.data?.sweepMaxAgeDays ?? 0}
         nextSweepAt={status.data?.nextSweepAt}
         lastSweepAt={status.data?.lastSweepAt}
         lastSummary={sweep.data?.message ?? status.data?.lastSweepSummary}
         warnings={status.data?.warnings ?? []}
         running={running}
-        onSweep={() => startSweep.mutate()}
+        sweep={sweep.data}
+        onSweep={() => startSweep.mutate(false)}
+        onSweepAll={() => startSweep.mutate(true)}
+        onStop={() => stopSweep.mutate()}
         onPaste={() => setPasteOpen(true)}
         onShowFailed={() => {
           setView('log');
@@ -278,13 +286,18 @@ function IntakeHeader({
   reachable,
   modelUrl,
   intervalMinutes,
+  scheduled,
+  cloud,
   maxAgeDays,
   nextSweepAt,
   lastSweepAt,
   lastSummary,
   warnings,
   running,
+  sweep,
   onSweep,
+  onSweepAll,
+  onStop,
   onPaste,
   onShowFailed,
 }: {
@@ -296,23 +309,38 @@ function IntakeHeader({
   reachable: boolean;
   modelUrl?: string;
   intervalMinutes: number;
+  /** False on a deployment whose timer does not run: it reads only when asked. */
+  scheduled: boolean;
+  /** Reading goes to the hosted model, which spends a token allowance. */
+  cloud: boolean;
   maxAgeDays: number;
   nextSweepAt?: string;
   lastSweepAt?: string;
   lastSummary?: string;
   warnings: string[];
   running: boolean;
+  sweep?: SweepResponse;
   onSweep: () => void;
+  onSweepAll: () => void;
+  onStop: () => void;
   /** Read text pasted by hand rather than mail from the mailbox. */
   onPaste: () => void;
   /** The way from the count to the emails it counts. */
   onShowFailed: () => void;
 }) {
-  const schedule =
-    intervalMinutes === 0
+  const schedule = !scheduled
+    ? 'Reads only when asked'
+    : intervalMinutes === 0
       ? 'Timer off — Parse now is the only way in'
       : `Every ${intervalMinutes} min` +
         (nextSweepAt ? `, next about ${dayjs(nextSweepAt).format('HH:mm')}` : '');
+
+  // A sweep reports how far it has got; `total` is only known for a selected set of messages,
+  // so a Parse everything run is counted up rather than towards anything.
+  const progress =
+    sweep?.total != null
+      ? `${sweep.progress ?? 0} / ${sweep.total}`
+      : `Reading… ${sweep?.progress ?? 0} done`;
 
   return (
     <Card size="small" style={{ marginBottom: 16 }}>
@@ -400,6 +428,38 @@ function IntakeHeader({
               >
                 {running ? 'Reading…' : 'Parse now'}
               </Button>
+              {/* Reads until nothing is left, which on the hosted model is a bill: the confirm
+                  says so, because the button alone looks the same as Parse now. */}
+              <Popconfirm
+                title="Read everything waiting?"
+                description={
+                  cloud
+                    ? 'Every unread message in the lookback is sent to the cloud model and counts against its token allowance. It keeps going until nothing is left, the model stops answering, or you press Stop.'
+                    : 'It keeps reading batches until nothing is left in the lookback, the model stops answering, or you press Stop.'
+                }
+                okText="Read everything"
+                onConfirm={onSweepAll}
+              >
+                <Button icon={<ThunderboltOutlined />} disabled={running || !reachable}>
+                  Parse everything
+                </Button>
+              </Popconfirm>
+              {running && (
+                <>
+                  <Typography.Text strong style={{ fontSize: 12 }}>
+                    {progress}
+                  </Typography.Text>
+                  <Button
+                    size="small"
+                    danger
+                    icon={<StopOutlined />}
+                    onClick={onStop}
+                    disabled={sweep?.stopRequested === true}
+                  >
+                    {sweep?.stopRequested ? 'Stopping…' : 'Stop'}
+                  </Button>
+                </>
+              )}
               {/* Not gated on the model being up: the company block is read without it, and
                   the dialog says what is missing rather than the button refusing to open. */}
               <Tooltip title="Paste a cargo offer, a position, a vessel description or a company's full style, and review what was read before anything is saved">

@@ -43,5 +43,25 @@ public record ParserSettingsResponse(
         /** The character budget for those examples. */
         int fewShotMaxChars,
         int defaultFewShotExamples,
-        int defaultFewShotMaxChars) {
+        int defaultFewShotMaxChars,
+        /** "LOCAL" or "CLOUD": which side {@code PARSER_PROVIDER} puts this deployment on. */
+        String provider,
+        /** The hosted endpoint in force. Only meaningful to the screen under CLOUD. */
+        String cloudUrl,
+        String cloudModel,
+        boolean cloudUrlCustomised,
+        boolean cloudModelCustomised,
+        /** {@code PARSER_CLOUD_URL}, which is what clearing the field restores. */
+        String defaultCloudUrl,
+        /** {@code PARSER_CLOUD_MODEL}. */
+        String defaultCloudModel,
+        /**
+         * True when a usable key is stored: present and decryptable, the same test the parser applies.
+         * A key that cannot be read reads as not set, so the screen asks for it again.
+         */
+        boolean cloudApiKeySet,
+        /** The last four characters of the stored key, for recognising it. Never the key. */
+        String cloudApiKeyHint,
+        /** Whether this deployment can store a key at all, which is whether CREDENTIALS_KEY is set. */
+        boolean cloudApiKeyStorable) {
 }

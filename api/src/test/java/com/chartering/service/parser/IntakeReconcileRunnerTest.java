@@ -35,7 +35,7 @@ class IntakeReconcileRunnerTest {
             return null;
         }).when(tenants).forEachActive(anyString(), any());
 
-        IntakeReconcileRunner runner = new IntakeReconcileRunner(intake, parser, lookups, tenants);
+        IntakeReconcileRunner runner = new IntakeReconcileRunner(intake, new ParserAvailability(parser), lookups, tenants);
         runner.run();
         runner.run();
 

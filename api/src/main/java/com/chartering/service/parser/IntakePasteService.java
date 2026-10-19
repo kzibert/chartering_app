@@ -1,7 +1,6 @@
 package com.chartering.service.parser;
 
 import com.chartering.audit.ChangeContext;
-import com.chartering.config.ParserProperties;
 import com.chartering.dto.CargoRequest;
 import com.chartering.dto.CompanyRequest;
 import com.chartering.dto.ContactRequest;
@@ -18,7 +17,6 @@ import com.chartering.dto.IntakePasteRequest;
 import com.chartering.dto.PersonRequest;
 import com.chartering.dto.VesselPositionRequest;
 import com.chartering.dto.VesselRequest;
-import com.chartering.exception.FeatureDisabledException;
 import com.chartering.exception.ResourceNotFoundException;
 import com.chartering.model.Cargo;
 import com.chartering.model.Company;
@@ -74,7 +72,7 @@ import java.util.Set;
 @Slf4j
 public class IntakePasteService {
 
-    private final ParserProperties props;
+    private final ParserAvailability availability;
     private final EmailParserClient client;
     private final IntakeResolver resolver;
     private final CompanyMatcher companyMatcher;
@@ -597,10 +595,7 @@ public class IntakePasteService {
     }
 
     private void requireEnabled() {
-        if (!props.isEnabled()) {
-            throw new FeatureDisabledException(
-                    "The email parser is not enabled on this deployment (PARSER_ENABLED).");
-        }
+        availability.require();
     }
 
     private static <T> List<T> nullToEmpty(List<T> list) {

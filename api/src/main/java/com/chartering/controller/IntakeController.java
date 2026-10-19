@@ -14,6 +14,7 @@ import com.chartering.dto.IntakePasteRequest;
 import com.chartering.dto.IntakeResolveRequest;
 import com.chartering.dto.IntakeStatusResponse;
 import com.chartering.dto.PageResponse;
+import com.chartering.dto.ParseMessagesRequest;
 import com.chartering.dto.ParsedEmailResponse;
 import com.chartering.dto.ParserSettingsRequest;
 import com.chartering.dto.ParserSettingsResponse;
@@ -132,15 +133,43 @@ public class IntakeController {
     // ------------------------------------------------------------------ sweeping
 
     @PostMapping("/sweep")
-    @Operation(summary = "Read the mail now",
+    @Operation(summary = "Read the mail now, one batch or everything",
             description = "Returns immediately: a sweep is minutes of somebody else's GPU, so "
                     + "holding an HTTP request open for it would be its own bug report. Poll "
                     + "GET /sweep and watch `running`. Works whatever the interval is set to, "
                     + "including 0 — off means the timer does not run it, not that it cannot "
-                    + "be run.")
-    public ResponseEntity<SweepResponse> sweep() {
-        sweeps.requestSweep();
+                    + "be run. With all=true the run keeps going batch after batch until the "
+                    + "unread mail is used up, the model server stops answering, or a stop is "
+                    + "asked for; it is refused with 409 while another run is going, because "
+                    + "a second run queued behind it would only find what the first left.")
+    public ResponseEntity<SweepResponse> sweep(
+            @Parameter(description = "true for Parse everything; false (the default) for one batch")
+            @RequestParam(name = "all", defaultValue = "false") boolean all) {
+        sweeps.requestSweep(all);
         return ResponseEntity.accepted().body(currentSweep());
+    }
+
+    @PostMapping("/parse")
+    @Operation(summary = "Read the messages picked on the Mailbox tab",
+            description = "Reads exactly the messages named, whatever their age: a person chose "
+                    + "them, so the lookback does not apply. Messages already read are counted "
+                    + "as skipped rather than read again, and an id not on this desk is treated "
+                    + "the same way. Returns immediately, like the sweep; poll GET /sweep. "
+                    + "Refused with 409 while another run is going.")
+    public ResponseEntity<SweepResponse> parse(@Valid @RequestBody ParseMessagesRequest req) {
+        sweeps.requestParse(req.getMailMessageIds());
+        return ResponseEntity.accepted().body(currentSweep());
+    }
+
+    @PostMapping("/sweep/stop")
+    @Operation(summary = "Stop the run going on this desk",
+            description = "Asks the run to stop before its next message. The message being read "
+                    + "is not abandoned: a model call in flight finishes and is recorded, which "
+                    + "is minutes of work that cannot be cut off cleanly. A no-op when this desk "
+                    + "has no run going, and cannot stop another desk's run.")
+    public ResponseEntity<Void> stopSweep() {
+        sweeps.requestStop();
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/sweep")
@@ -149,15 +178,28 @@ public class IntakeController {
         return ResponseEntity.ok(currentSweep());
     }
 
+    /**
+     * The sweep as this caller's desk may see it.
+     *
+     * <p>{@code running} is installation-wide, as it always was: the buttons have to be disabled
+     * while any run is going, since only one can. What the run is doing (its mode, progress and
+     * stop state) is answered for the caller's own desk only, and the last report is the desk's
+     * own, so another desk's run shows as running with nothing about it.
+     */
     private SweepResponse currentSweep() {
+        ParserSweepService.Progress p = sweeps.progress();
         ParserSweepService.SweepReport r = sweeps.lastReport();
+        String mode = p != null ? p.mode() : r != null ? r.mode() : null;
+        Integer progress = p != null ? p.handled() : null;
+        Integer total = p != null ? p.total() : null;
+        Boolean stopRequested = p != null ? p.stopRequested() : null;
         if (r == null) {
             return new SweepResponse(sweeps.isRunning(), null, null, null, null, null, null,
-                    null, null, null);
+                    null, null, null, mode, progress, total, stopRequested, null);
         }
         return new SweepResponse(sweeps.isRunning(), r.read(), r.failed(), r.skipped(),
                 r.positions(), r.cargoes(), r.items(), r.unreachable(), r.message(),
-                r.finishedAt());
+                r.finishedAt(), mode, progress, total, stopRequested, r.stopped());
     }
 
     // ------------------------------------------------------------------ the queue
@@ -433,13 +475,16 @@ public class IntakeController {
     }
 
     @PutMapping("/settings")
-    @Operation(summary = "Change the sweep interval, batch size, model address or few-shot examples",
+    @Operation(summary = "Change the sweep interval, batch size, model address, few-shot examples or the cloud model",
             description = "An interval of 0 turns the timer off; Parse now still works. A "
                     + "lookback of 0 removes the age limit, so a sweep will reach back through "
                     + "the whole mailbox. A blank model address or name restores PARSER_URL / "
                     + "PARSER_MODEL. The few-shot examples (0 to 8, 0 is off) and their character "
-                    + "budget are installation-wide and need a platform administrator. Every field "
-                    + "is optional, so the form can send one without holding the others.")
+                    + "budget are installation-wide and need a platform administrator. The cloud "
+                    + "model (PARSER_PROVIDER=CLOUD) has an address, a name and an API key, all "
+                    + "installation-wide. The key is written only, encrypted, and is never returned: "
+                    + "the response carries its last four characters as a hint, and clearCloudApiKey "
+                    + "removes it. Every field is optional, so the form can send one without holding the others.")
     public ResponseEntity<ParserSettingsResponse> updateSettings(
             @Valid @RequestBody ParserSettingsRequest req) {
         // The address is its own write because it is its own question, and because a form that
@@ -450,6 +495,11 @@ public class IntakeController {
         if (req.getFewShotExamples() != null || req.getFewShotMaxChars() != null) {
             settings.updateFewShot(req.getFewShotExamples(), req.getFewShotMaxChars());
         }
+        if (req.getCloudUrl() != null || req.getCloudModel() != null
+                || req.getCloudApiKey() != null || req.getClearCloudApiKey() != null) {
+            settings.updateCloud(req.getCloudUrl(), req.getCloudModel(),
+                    req.getCloudApiKey(), req.getClearCloudApiKey());
+        }
         return ResponseEntity.ok(toResponse(
                 settings.update(req.getSweepIntervalMinutes(), req.getSweepBatchSize(),
                         req.getSweepMaxAgeDays())));
@@ -457,13 +507,15 @@ public class IntakeController {
 
     @DeleteMapping("/settings")
     @Operation(summary = "Back to the configured defaults",
-            description = "The pacing, the model address and the few-shot experiment together — they "
-                    + "are one card, and a Reset that left any of them behind would leave the screen "
-                    + "saying it is using defaults while it is not.")
+            description = "The pacing, the model addresses and names (local and cloud) and the few-shot "
+                    + "experiment together — they are one card, and a Reset that left any of them behind "
+                    + "would leave the screen saying it is using defaults while it is not. The stored cloud "
+                    + "API key is kept: removing it is its own action, PUT with clearCloudApiKey true.")
     @ResponseStatus(HttpStatus.OK)
     public ResponseEntity<ParserSettingsResponse> resetSettings() {
         settings.resetEndpoint();
         settings.resetFewShot();
+        settings.resetCloud();
         return ResponseEntity.ok(toResponse(settings.reset()));
     }
 
@@ -472,6 +524,7 @@ public class IntakeController {
         com.chartering.service.ModelEndpoint endpoint = settings.endpoint();
         ParserSettings.FewShot fewShot = settings.fewShot();
         ParserSettings.FewShot fewShotDefaults = ParserSettings.fewShotDefaults();
+        com.chartering.service.ModelEndpoint cloud = settings.cloudEndpoint();
         return new ParserSettingsResponse(
                 v.sweepIntervalMinutes(), v.sweepBatchSize(), v.sweepMaxAgeDays(),
                 defaults.sweepIntervalMinutes(), defaults.sweepBatchSize(),
@@ -480,7 +533,13 @@ public class IntakeController {
                 endpoint.urlCustomised(), endpoint.modelCustomised(),
                 endpoint.configuredUrl(), endpoint.configuredModel(),
                 fewShot.examples(), fewShot.maxChars(),
-                fewShotDefaults.examples(), fewShotDefaults.maxChars());
+                fewShotDefaults.examples(), fewShotDefaults.maxChars(),
+                settings.provider(),
+                cloud.url(), cloud.model(),
+                cloud.urlCustomised(), cloud.modelCustomised(),
+                cloud.configuredUrl(), cloud.configuredModel(),
+                settings.cloudApiKeySet(), settings.cloudApiKeyHint(),
+                settings.cloudApiKeyStorable());
     }
 
     private static String currentUser() {

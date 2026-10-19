@@ -9,7 +9,6 @@ import com.chartering.dto.IntakeStatusResponse;
 import com.chartering.dto.IntakeSuggestionResponse;
 import com.chartering.dto.PageResponse;
 import com.chartering.dto.ParsedEmailResponse;
-import com.chartering.exception.FeatureDisabledException;
 import com.chartering.exception.ResourceNotFoundException;
 import com.chartering.mapper.DtoMapper;
 import com.chartering.model.IntakeItem;
@@ -64,6 +63,7 @@ import java.util.stream.Collectors;
 public class IntakeQueryService {
 
     private final ParserProperties props;
+    private final ParserAvailability availability;
     private final MailboxProperties mailboxProps;
     private final ParserSettings settings;
     private final ParserSweepService sweeps;
@@ -99,7 +99,7 @@ public class IntakeQueryService {
      */
     @Transactional(readOnly = true)
     public IntakeStatusResponse status() {
-        if (!props.isEnabled()) return IntakeStatusResponse.disabled();
+        if (!availability.isAvailable()) return IntakeStatusResponse.disabled();
 
         boolean reachable = client.isReachable();
         ParserSettings.Values values = settings.values();
@@ -113,11 +113,18 @@ public class IntakeQueryService {
         // Each one is the next thing to do rather than an error, because every one of them is
         // an ordinary state of a feature being set up.
         List<String> warnings = new ArrayList<>();
-        ModelEndpoint endpoint = settings.endpoint();
+        // The address the sweep will actually call: the cloud one under CLOUD, else the office
+        // server. Asking the local endpoint here would describe a server nothing reads from.
+        ModelEndpoint endpoint = settings.activeEndpoint();
         if (!reachable) {
-            warnings.add("The model server at " + endpoint.url() + " is not answering. Start it "
-                    + "with: docker compose -f serve/docker-compose.llamacpp.yml up -d "
-                    + "(in the chartering-ml project).");
+            // The docker command is a cure for the office server only. Under CLOUD the cure is
+            // the address or the key, which is what the Settings tab is for.
+            warnings.add(props.isCloud()
+                    ? "The cloud model at " + endpoint.url() + " is not answering. Check its "
+                        + "address and API key on the Settings tab."
+                    : "The model server at " + endpoint.url() + " is not answering. Start it "
+                        + "with: docker compose -f serve/docker-compose.llamacpp.yml up -d "
+                        + "(in the chartering-ml project).");
         }
         if (!mailboxProps.isEnabled()) {
             warnings.add("The mailbox is not being synced (IMAP_ENABLED), so no mail is "
@@ -143,7 +150,13 @@ public class IntakeQueryService {
                     + " days is read. There is older unread mail — widen the lookback on the "
                     + "Settings tab to reach it.");
         }
-        if (values.sweepIntervalMinutes() == 0) {
+        if (!availability.runsTimers()) {
+            // Only under CLOUD: a local deployment with the switch on runs its timer, and the
+            // interval below says whether it is off. Said here because a cloud deployment
+            // with an interval set would otherwise look as if the timer had been forgotten.
+            warnings.add("This deployment reads mail only when an administrator presses Parse now "
+                    + "— the cloud model is billed per read, so nothing runs on a timer.");
+        } else if (values.sweepIntervalMinutes() == 0) {
             warnings.add("The timer is off. Mail is only read when you press Parse now.");
         }
 
@@ -165,7 +178,9 @@ public class IntakeQueryService {
                 sweeps.lastSweepAt(),
                 sweeps.nextSweepAt(),
                 last == null ? null : last.message(),
-                warnings);
+                warnings,
+                props.isCloud() ? "CLOUD" : "LOCAL",
+                availability.runsTimers());
     }
 
     // ------------------------------------------------------------------ the queue
@@ -537,9 +552,6 @@ public class IntakeQueryService {
     }
 
     private void requireEnabled() {
-        if (!props.isEnabled()) {
-            throw new FeatureDisabledException(
-                    "The email parser is not enabled on this deployment (PARSER_ENABLED).");
-        }
+        availability.require();
     }
 }

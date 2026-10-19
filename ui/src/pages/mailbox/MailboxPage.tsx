@@ -35,6 +35,7 @@ import {
   SettingOutlined,
   StopOutlined,
   SyncOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { DataNode } from 'antd/es/tree';
@@ -47,6 +48,7 @@ import {
   useMailboxStatus,
   useMailboxSync,
 } from '../../mailbox/store';
+import { useIntakeMutations, useIntakeStatus } from '../../intake/store';
 import { useQuery } from '@tanstack/react-query';
 import { circulationsApi } from '../../api/circulations';
 import { SendingTodayTags } from '../../components/SendingToday';
@@ -147,6 +149,11 @@ export default function MailboxPage() {
   const status = useMailboxStatus();
   const sync = useMailboxSync();
   const { setReadBulk, markAllRead, moveBulk } = useMailMessageMutations();
+  // Shared with the Intake tab and the shell, so the button appears with the tab and not
+  // before. Absent on a deployment without the parser, where it is simply not offered.
+  const intakeStatus = useIntakeStatus();
+  const intakeOn = intakeStatus.data?.enabled === true;
+  const { parseMessages } = useIntakeMutations();
   // The same key the Circulars and Settings tabs read the day's volume from, so a reply
   // sent here moves the number there without either tab counting anything itself.
   const todayQ = useQuery({ queryKey: ['circulations', 'today'], queryFn: circulationsApi.today });
@@ -288,6 +295,25 @@ export default function MailboxPage() {
         },
       },
     );
+
+  // The server takes at most 200 in one call; past that the button says so rather than failing.
+  const READ_LIMIT = 200;
+  const readPicked = () =>
+    parseMessages.mutate(picked, {
+      onSuccess: () => {
+        message.success(
+          `Reading ${picked.length} message${picked.length === 1 ? '' : 's'} — results appear on the Intake tab`,
+        );
+        setPicked([]);
+      },
+      // The server's own words: a 409 here means a sweep is already running, which is worth
+      // saying as such rather than as a failure.
+      onError: (e: unknown) => {
+        const detail = (e as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message;
+        message.error(detail || 'These messages could not be queued for reading.');
+      },
+    });
 
   const columns: ColumnsType<MailMessage> = [
     {
@@ -624,6 +650,29 @@ export default function MailboxPage() {
                     Move to…
                   </Button>
                 </Dropdown>
+                {intakeOn && (
+                  // The span keeps the tooltip alive while the button is disabled, which
+                  // swallows the pointer events a tooltip needs.
+                  <Tooltip
+                    title={
+                      picked.length > READ_LIMIT
+                        ? `Pick at most ${READ_LIMIT} at a time — this is ${picked.length}`
+                        : 'Read these messages into Intake now, whatever the lookback says'
+                    }
+                  >
+                    <span>
+                      <Button
+                        size="small"
+                        icon={<ThunderboltOutlined />}
+                        loading={parseMessages.isPending}
+                        disabled={picked.length > READ_LIMIT}
+                        onClick={readPicked}
+                      >
+                        Read into Intake
+                      </Button>
+                    </span>
+                  </Tooltip>
+                )}
                 <Button size="small" type="text" onClick={() => setPicked([])}>
                   Clear
                 </Button>

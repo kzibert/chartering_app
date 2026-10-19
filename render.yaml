@@ -196,28 +196,35 @@ services:
       - key: ANALYSIS_ENABLED
         value: true
 
-      # Reading incoming mail with the local model - the Intake tab. Pinned false, and this
-      # is not the borderline call ANALYSIS_ENABLED was. The model is llama.cpp on a GPU in
-      # the office (the sibling chartering-ml project, on :8090); this instance has no GPU
-      # and no route to a home network, so with this on every sweep would spend a request
-      # proving it and every status call would wait out a connect timeout to say so.
+      # Reading incoming mail - the Intake tab - with a hosted cloud model rather than the
+      # office one. The office model is llama.cpp on a GPU (the sibling chartering-ml project,
+      # on :8090) and this instance has no GPU and no route to a home network, which is why
+      # this was pinned false until the cloud provider existed. There is still no PARSER_URL
+      # here, because there is still no address of the office server that would work.
       #
-      # A value pinned here is re-asserted over the dashboard on every blueprint sync, which
-      # is right for this one: it is a fact about what this deployment can reach, not a
-      # preference somebody might reasonably flip in the UI. The pieces it would need are
-      # deliberately absent rather than merely off - there is no PARSER_URL here, because
-      # there is no address that would work.
+      # PARSER_PROVIDER=CLOUD is what makes it possible, and it is pinned for the reason
+      # MAIL_REPLY_PROVIDER is: the office and this instance share one database and so one
+      # app_settings table, and need opposite answers. What the cloud model is called - its
+      # address, model and API key - is the installation's and lives on the Settings tab;
+      # the key is encrypted under CREDENTIALS_KEY, so it decrypts here only while that key
+      # is the same as the office's.
+      #
+      # CLOUD also means no timers on this instance - no sweep, no reconcile pass, no board
+      # fetch for Intake - and the tab is an administrator's: the tokens are billed against a
+      # key somebody pays for, and the office instance already runs the timed passes. An
+      # administrator reads mail here when asked: Parse now, Parse everything, or the
+      # messages picked on the Mailbox tab.
       #
       # The tables (parsed_emails, intake_items, cargo_sources) exist here regardless:
-      # Flyway builds one schema, not one per environment. cargo_sources is read on the
-      # Cargoes tab whatever this says, so a cargo merged in the office still shows its
-      # senders here.
+      # Flyway builds one schema, not one per environment.
       - key: PARSER_ENABLED
-        value: false
+        value: true
+      - key: PARSER_PROVIDER
+        value: CLOUD
 
       # Reading a public ship database for a hull's IMO. Pinned false for the reason above
-      # and one of its own: this instance has no Intake tab, so there would be no review
-      # queue to look anything up for - and an unattended process on a hosted box reading
+      # and one of its own: the review queue here is worked by hand on the cloud model, and the
+      # office instance already looks its hulls up - and an unattended process on a hosted box reading
       # somebody else's site on terms they did not offer is not a thing to leave to a
       # default. The office instance decides for itself.
       - key: LOOKUP_ENABLED

@@ -960,8 +960,8 @@ lasted.
 **The model is not in this application and not in this repository.** It is an HTTP endpoint:
 the sibling `chartering-ml` project serving a finetuned Qwen3-4B through llama.cpp behind a
 JSON schema (`make serve-docker`, port 8090). `PARSER_ENABLED` is the switch, true in compose
-and pinned **false** in `render.yaml` — that instance has no GPU and no route to one, which is
-a harder fact than the one behind `ANALYSIS_ENABLED`. Off, the tab is absent and every
+and in `render.yaml`. That instance has no GPU and no route to one, so it reads with the cloud
+model instead (`PARSER_PROVIDER=CLOUD`, below). Off, the tab is absent and every
 endpoint answers 404 except `GET /intake/status`, which the UI asks first.
 
 **Whether the feature exists is a deployment fact; which server answers it is not.**
@@ -973,9 +973,9 @@ changes inside a working day. `ModelEndpoint` holds the rule and the URL check; 
 equal to the configured one is **deleted rather than kept**, the way an unedited feed prompt has
 no row, so `.env` stays the baseline and "customised" means something. The timeouts stay in
 `ParserProperties`, because how long to wait is a fact about a deployment. Both instances share
-`app_settings` and that is safe here for the reason it is not for `MAIL_REPLY_PROVIDER`: with
-`PARSER_ENABLED` and `FEED_ANALYSIS_ENABLED` false, the hosted instance never reads the address
-at all.
+`app_settings` and that is safe here for the reason it is not for `MAIL_REPLY_PROVIDER`: the
+hosted instance is `PARSER_PROVIDER=CLOUD` with `FEED_ANALYSIS_ENABLED` false, so it never reads
+the local address at all.
 
 `EmailParserClient` sends `AnalysisAnnotationTemplates.SYSTEM_PROMPT` — the constant, not a
 copy — the same Date/Subject/blank/body user turn `AnalysisExportService` builds, and
@@ -983,6 +983,35 @@ copy — the same Date/Subject/blank/body user turn `AnalysisExportService` buil
 under; a prompt or a layout that drifts from the corpus loses accuracy while every test still
 passes. The schema is a copy of chartering-ml's `serve/schema.json`; regenerate it there
 (`make schema`) and copy it back if the templates grow a field.
+
+**The model can also be a hosted one, and which is a deployment fact (`PARSER_PROVIDER`).**
+`LOCAL` is everything above. `CLOUD` sends the same system prompt, user turn and few-shot turns
+to an OpenAI-compatible chat API (Groq by default) with a Bearer key. It is an environment
+variable rather than a setting for `MAIL_REPLY_PROVIDER`'s reason: the office and Render share
+one database and need opposite answers. What the cloud model is *called* is the installation's
+and lives on the Settings tab (`ParserSettings.cloudEndpoint`, `parser.cloudUrl`/`cloudModel`,
+platform keys). The key is in `parser.cloudApiKey`, AES-GCM under `CREDENTIALS_KEY`, so it
+decrypts only where that key matches. It is never returned, only a four-character hint, and
+Reset keeps it. Two things differ in the request, both because a general model is not the
+finetune. The schema goes into the system prompt as text, and the format is `json_object`
+rather than `json_schema`, which only some hosted models accept. The answer ceiling is
+`PARSER_CLOUD_MAX_TOKENS` (4,096), because a free tier counts the requested ceiling against
+its tokens a minute before anything is written. A 429 with a `retry-after` up to a minute is
+waited out. A longer one, or a refused key, stops the run (`ParserUnavailableException`). A
+400/413/422 fails that one email only. The local request is byte-identical to before, and
+`EmailParserClientRequestTest` pins it.
+
+**`CLOUD` runs no timers and is an administrator's** (`ParserAvailability`). The tokens are
+billed against somebody's key, and the office instance already runs the timed passes on the
+same rows. So there is no sweep tick, no reconcile pass and no board fetch for Intake.
+`isAvailable()` is false for anyone below `TENANT_ADMIN`, who gets `enabled: false` on status
+and 404 everywhere else, the "not part of this deployment" answer. Reading happens when asked.
+*Parse now* reads one batch. *Parse everything* (`POST /intake/sweep?all=true`) reads batches
+until one reads nothing, the model stops answering, Stop is pressed
+(`POST /intake/sweep/stop`) or 5,000 messages have been read. *Read into Intake* on the Mailbox
+tab (`POST /intake/parse`, at most 200 ids) reads the picked messages, ignoring the lookback.
+It skips those already parsed or skipped and re-reads failed and ignored ones. These modes
+exist under `LOCAL` too. Render pins `PARSER_ENABLED=true` and `PARSER_PROVIDER=CLOUD`.
 
 **What lands unwatched and what waits is the whole design.** A parse may write anything that
 only *adds*: a position for a hull already on file, a cargo nothing else looks like, a
@@ -1301,10 +1330,10 @@ source that refuses that is dropped, not worked around.
   to produce nothing. It is separate from `enabled`, which is whether the page is fetched at
   all. One fetch, one stored copy of each post, two readers of it: a second source at the same
   address would read somebody else's server twice for the same bytes. It also means the fetch
-  timer runs when `FEED_ANALYSIS_ENABLED` is off but `PARSER_ENABLED` is on and a source is
-  marked — otherwise the Intake queue would be permanently empty with nothing on screen saying
-  why. Both switches are false on the hosted instance, so the condition is an or of two falses
-  there. Deleting a source that still has unanswered Intake questions is refused, because the
+  timer runs when `FEED_ANALYSIS_ENABLED` is off but the parser's timers run
+  (`ParserAvailability.runsTimers`: enabled and `LOCAL`) and a source is marked — otherwise the
+  Intake queue would be permanently empty with nothing on screen saying why. On the hosted
+  instance the feed switch is false and the parser is `CLOUD`, so neither half holds there. Deleting a source that still has unanswered Intake questions is refused, because the
   delete cascades through its posts to the parse records and the items behind them; disabling
   is the reversible way to stop a board.
 - **The tab is on every deployment; only the analysis is switched.** Sources, topics, the prompts

@@ -57,11 +57,22 @@ public record IntakeStatusResponse(
         OffsetDateTime nextSweepAt,
         String lastSweepSummary,
         /** Things the user has to fix before this can do anything, worded as the next step. */
-        List<String> warnings) {
+        List<String> warnings,
+        /**
+         * Which model this deployment reads with: "LOCAL" (the office GPU) or "CLOUD" (a hosted
+         * chat API). The screen words its warnings and its Settings card by it.
+         */
+        String provider,
+        /**
+         * Whether this deployment runs the sweep, reconcile and board timers itself. False under
+         * CLOUD — nothing is read until an administrator asks — so the screen can say so rather
+         * than show a next sweep time that will never come.
+         */
+        Boolean scheduled) {
 
     /** Off: nothing counted, nothing claimed. */
     public static IntakeStatusResponse disabled() {
         return new IntakeStatusResponse(false, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null);
     }
 }

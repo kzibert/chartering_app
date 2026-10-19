@@ -1,7 +1,8 @@
 package com.chartering.service.parser;
 
 import com.chartering.config.ParserProperties;
-import com.chartering.exception.FeatureDisabledException;
+import com.chartering.model.ParseStatus;
+import com.chartering.model.ParsedEmail;
 import com.chartering.repository.ParsedEmailRepository;
 import com.chartering.service.ParserSettings;
 import com.chartering.tenancy.TenantContext;
@@ -15,12 +16,14 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Reading the mailbox on a timer, and on demand.
@@ -45,6 +48,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * can hold a backlog of thousands, so the other order would starve the boards for as long as
  * the backlog lasted, and a position list is worth least on the day after it stops being true.
  *
+ * <h2>Three ways in</h2>
+ * <p>A <b>batch</b> is one bounded pass: the timer's, and Parse now's. <b>Everything</b> keeps
+ * running batches until one reads and fails nothing, so a backlog is worked through in one
+ * press rather than by pressing again every batch-size messages. <b>Selected</b> reads the
+ * messages a person picked on the Mailbox tab, and ignores the lookback, because a person chose
+ * them. Only the batch is on the timer, and only the batch runs on a cloud deployment's own
+ * account without being asked: see {@link ParserAvailability}.
+ *
  * <h2>Why parsing is not part of the mail sync</h2>
  * <p>The sync is a network read against an IMAP server that must finish; parsing is minutes of
  * somebody else's GPU. Chaining them would mean a mailbox that stops updating because a
@@ -52,10 +63,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * They share nothing but a table, which is the right amount.
  *
  * <h2>One at a time, whoever asked</h2>
- * <p>The timer and the Parse now button share one flag and one worker thread, for the reason
- * the mailbox sync does: two sweeps would take the same unparsed rows, spend the model's time
- * twice on them, and race on the unique index that prevents the second from being stored.
- * The button therefore returns immediately and the tab watches {@link #isRunning()}.
+ * <p>The timer and the buttons share one flag and one worker thread, for the reason the mailbox
+ * sync does: two sweeps would take the same unparsed rows, spend the model's time twice on
+ * them, and race on the unique index that prevents the second from being stored. The batch
+ * button returns immediately and the tab watches {@link #isRunning()}. A press that asks for
+ * more than one batch while a run is already going is refused rather than queued, because a
+ * queued "everything" would start after the run it was meant to follow had already read what
+ * it was asked for.
  */
 @Service
 @RequiredArgsConstructor
@@ -69,6 +83,20 @@ public class ParserSweepService {
      */
     private static final long TICK_MS = 60_000;
 
+    /**
+     * The most messages one "Parse everything" run takes.
+     *
+     * <p>A safety stop, not a budget: a run that has not finished by this many has most likely
+     * met a backlog it cannot clear in one sitting, and the report says so by stopping rather
+     * than by running for an afternoon with the button apparently still working. Pressing again
+     * continues from what is still unread.
+     */
+    private static final int RUN_CAP = 5_000;
+
+    /** What a run was asked to do. Named in the report, so the screen can say which it was. */
+    public enum Mode { BATCH, ALL, SELECTED }
+
+    private final ParserAvailability availability;
     private final ParserProperties props;
     private final ParserSettings settings;
     private final ParsedEmailRepository parsedEmails;
@@ -83,6 +111,28 @@ public class ParserSweepService {
      * wait on the other's requests.
      */
     private final AtomicBoolean running = new AtomicBoolean(false);
+
+    /**
+     * The desk the current run is for, or null when idle. Kept so the progress and the stop
+     * button answer only for the desk that is running — another desk's run is not shown with
+     * its subject or its counts. Written only by the worker.
+     */
+    private volatile Long runningDesk;
+
+    /** The mode of the current run, for {@link #progress()}. */
+    private volatile Mode runMode = Mode.BATCH;
+
+    /** Messages handled so far in the current desk's run. */
+    private final AtomicInteger handled = new AtomicInteger();
+
+    /** How many a SELECTED run was asked for; null for the other modes, whose length is unknown. */
+    private volatile Integer runTotal;
+
+    /**
+     * Set by the stop button, read between jobs. Reset when a run starts, so a stop pressed
+     * after a run has finished is not carried into the next one.
+     */
+    private volatile boolean stopRequested;
 
     /**
      * Seeded at boot so the first sweep is an interval away rather than immediate. In memory
@@ -108,10 +158,20 @@ public class ParserSweepService {
      * @param unreachable true when the model server did not answer at all — the difference
      *                    between "nothing to read" and "could not read", which are the two
      *                    outcomes a user most needs told apart
+     * @param mode        BATCH, ALL or SELECTED — the run this report is of
+     * @param stopped     true when the run ended early because a stop was asked for
      */
     public record SweepReport(int read, int failed, int skipped, int positions, int cargoes,
                               int items, int posts, boolean unreachable, String message,
-                              OffsetDateTime finishedAt) {
+                              OffsetDateTime finishedAt, String mode, boolean stopped) {
+    }
+
+    /**
+     * A run in progress, as the caller's desk sees it.
+     *
+     * @param total known only for SELECTED — the others have no length to report against
+     */
+    public record Progress(String mode, int handled, Integer total, boolean stopRequested) {
     }
 
     // ---------------------------------------------------------------- entry points
@@ -119,36 +179,72 @@ public class ParserSweepService {
     /** The timer. Quiet when the feature is off, and quiet when the interval is set to 0. */
     @Scheduled(fixedDelay = TICK_MS, initialDelay = TICK_MS)
     public void tick() {
-        if (!props.isEnabled()) return;
+        if (!availability.runsTimers()) return;
         int minutes = settings.sweepIntervalMinutes();
         if (minutes <= 0) return;
         if (Duration.between(lastSweep, OffsetDateTime.now()).toMinutes() < minutes) return;
-        submit(null);
+        submit(null, Mode.BATCH, null);
     }
 
     /**
-     * The Parse now button.
+     * The Parse now button, and Parse everything when {@code all} is set.
      *
      * <p>Works whatever the interval is set to, including 0 — "off" means the timer does not
-     * run it, not that it cannot be run. Refused only when the feature itself is off, which
-     * is a 404 rather than a 400: the endpoint is not part of that deployment. Sweeps the
-     * caller's desk only; the timer sweeps them all.
+     * run it, not that it cannot be run. Refused only when the feature itself is off, or is
+     * open to administrators and the caller is not one, which is a 404 rather than a 400: the
+     * endpoint is not part of that deployment for them. Sweeps the caller's desk only; the
+     * timer sweeps them all.
+     *
+     * <p>A single batch while a run is going is skipped silently, as it always was. Everything
+     * while a run is going is refused, because it cannot be queued behind it meaningfully.
      */
-    public void requestSweep() {
-        requireEnabled();
-        submit(TenantContext.require());
+    public void requestSweep(boolean all) {
+        availability.require();
+        submit(TenantContext.require(), all ? Mode.ALL : Mode.BATCH, null);
+    }
+
+    /**
+     * Parse selected: the messages a person picked on the Mailbox tab, read now.
+     *
+     * <p>Ids are de-duplicated and kept in the order given. What is already read is counted as
+     * skipped rather than read again, and an id this desk does not hold is not found and is
+     * counted the same way. The lookback does not apply: somebody chose these.
+     */
+    public void requestParse(List<Long> mailMessageIds) {
+        availability.require();
+        List<Long> distinct = List.copyOf(new LinkedHashSet<>(mailMessageIds));
+        submit(TenantContext.require(), Mode.SELECTED, distinct);
+    }
+
+    /**
+     * The stop button.
+     *
+     * <p>Sets a flag the worker reads between jobs; it does not interrupt a model call in flight,
+     * which is minutes of work that cannot be abandoned cleanly — the job finishes and is
+     * recorded, and the run stops before the next. A no-op unless the caller's own desk is the
+     * one running, so one desk cannot stop another's run.
+     */
+    public void requestStop() {
+        availability.require();
+        Long desk = TenantContext.require();
+        if (running.get() && desk.equals(runningDesk)) {
+            stopRequested = true;
+        }
     }
 
     /** @param onlyTenant one desk, or null for every active desk */
-    private void submit(Long onlyTenant) {
+    private void submit(Long onlyTenant, Mode mode, List<Long> mailMessageIds) {
         // Checked before submitting as well as inside, so a click during a running sweep is
         // not queued behind it - the queue is the unparsed rows, and by the time this one
         // finished the second run would have nothing to do anyway.
         if (running.get()) {
-            log.debug("A parser sweep is already running; this request is skipped");
-            return;
+            if (mode == Mode.BATCH) {
+                log.debug("A parser sweep is already running; this request is skipped");
+                return;
+            }
+            throw new IllegalStateException("A sweep is already running.");
         }
-        worker.submit(() -> sweepIfIdle(onlyTenant));
+        worker.submit(() -> sweepIfIdle(onlyTenant, mode, mailMessageIds));
     }
 
     public boolean isRunning() {
@@ -164,22 +260,40 @@ public class ParserSweepService {
         return lastReports.get(TenantContext.require());
     }
 
+    /**
+     * What the caller's desk's run is doing right now, or null when it is not running.
+     *
+     * <p>Null for every other desk, including while another desk's run is going: its subject,
+     * its progress and its stop state belong to that desk.
+     */
+    public Progress progress() {
+        Long desk = TenantContext.require();
+        if (!running.get() || !desk.equals(runningDesk)) return null;
+        return new Progress(runMode.name(), handled.get(), runTotal, stopRequested);
+    }
+
     /** When the timer will next look, or null when nothing is scheduled. */
     public OffsetDateTime nextSweepAt() {
         int minutes = settings.sweepIntervalMinutes();
-        if (!props.isEnabled() || minutes <= 0) return null;
+        if (!availability.runsTimers() || minutes <= 0) return null;
         return lastSweep.plusMinutes(minutes);
     }
 
     // ---------------------------------------------------------------- the sweep
 
-    private void sweepIfIdle(Long onlyTenant) {
+    private void sweepIfIdle(Long onlyTenant, Mode mode, List<Long> mailMessageIds) {
         if (!running.compareAndSet(false, true)) return;
+        runMode = mode;
+        runTotal = mailMessageIds == null ? null : mailMessageIds.size();
+        stopRequested = false;
         boolean raised = false;
         try {
             List<Long> desks = onlyTenant != null ? List.of(onlyTenant) : tenants.activeIds();
             for (Long desk : desks) {
-                SweepReport report = TenantContext.callAs(desk, this::sweepOneDesk);
+                handled.set(0);
+                runningDesk = desk;
+                SweepReport report = TenantContext.callAs(desk,
+                        () -> sweepOneDesk(mode, mailMessageIds));
                 lastReports.put(desk, report);
                 raised |= report.items() > 0;
                 // The model server being down is down for every desk; asking it again for
@@ -187,6 +301,7 @@ public class ParserSweepService {
                 if (report.unreachable()) break;
             }
         } finally {
+            runningDesk = null;
             lastSweep = OffsetDateTime.now();
             running.set(false);
         }
@@ -200,17 +315,149 @@ public class ParserSweepService {
         }
     }
 
+    /** Running totals for one run, summed across its batches. */
+    private static final class Tally {
+        int read;
+        int failed;
+        int skipped;
+        int positions;
+        int cargoes;
+        int items;
+        int posts;
+        boolean unreachable;
+        boolean stopped;
+
+        int handled() {
+            return read + failed + skipped;
+        }
+
+        void add(Tally other) {
+            read += other.read;
+            failed += other.failed;
+            skipped += other.skipped;
+            positions += other.positions;
+            cargoes += other.cargoes;
+            items += other.items;
+            posts += other.posts;
+            unreachable |= other.unreachable;
+            stopped |= other.stopped;
+        }
+
+        SweepReport toReport(Mode mode, String message) {
+            return new SweepReport(read, failed, skipped, positions, cargoes, items, posts,
+                    unreachable, message, OffsetDateTime.now(), mode.name(), stopped);
+        }
+    }
+
     /** One desk's sweep, inside that desk's binding. Never throws. */
-    private SweepReport sweepOneDesk() {
+    private SweepReport sweepOneDesk(Mode mode, List<Long> mailMessageIds) {
         try {
-            return sweep();
+            // Read once and used throughout: the batch size and the lookback have to come from
+            // the same snapshot, or a save landing mid-sweep would page one against the other.
+            ParserSettings.Values values = settings.values();
+            Tally tally = switch (mode) {
+                case BATCH -> batch(values);
+                case ALL -> everything(values);
+                case SELECTED -> selected(mailMessageIds);
+            };
+            String summary = summaryFor(mode, tally, values);
+            log.info("Parser sweep ({}): {} positions {} cargoes {} items {}",
+                    mode, summary, tally.positions, tally.cargoes, tally.items);
+            return tally.toReport(mode, summary);
         } catch (Exception e) {
             // Nothing above this catches. The worker thread dying would stop the mailbox
             // being read for the life of the process, silently.
             log.error("Parser sweep failed for tenant {}", TenantContext.current().orElse(null), e);
             return new SweepReport(0, 0, 0, 0, 0, 0, 0, false,
-                    "The sweep failed: " + e.getMessage(), OffsetDateTime.now());
+                    "The sweep failed: " + e.getMessage(), OffsetDateTime.now(), mode.name(), false);
         }
+    }
+
+    /**
+     * What the screen says about a finished run.
+     *
+     * <p>The batch keeps its wording exactly: the tab and its history were written against it.
+     * The other two name themselves, because a figure of 212 under "Parse everything" and under
+     * a plain Parse now would otherwise look like the same kind of answer.
+     */
+    private String summaryFor(Mode mode, Tally t, ParserSettings.Values values) {
+        if (t.stopped) return "Stopped on request after %d.".formatted(t.handled());
+        if (t.unreachable) return "Stopped: the model server did not answer.";
+        if (t.handled() == 0 && mode != Mode.SELECTED) {
+            // Named rather than a bare "nothing": with a lookback set, "nothing new" and
+            // "nothing new inside the window" are different situations and only one of them
+            // is fixed by widening it.
+            return values.sweepMaxAgeDays() > 0
+                    ? "Nothing new to read in the last " + values.sweepMaxAgeDays() + " days."
+                    : "Nothing new to read.";
+        }
+        String counts = "%d (%d off the web), %d failed, %d skipped."
+                .formatted(t.read, t.posts, t.failed, t.skipped);
+        return switch (mode) {
+            case BATCH -> "Read " + counts;
+            case ALL -> "Read everything: " + counts;
+            case SELECTED -> "Read selected: " + counts;
+        };
+    }
+
+    /**
+     * Parse everything: batches until a batch reads and fails nothing, the model server stops
+     * answering, a stop is asked for, or {@link #RUN_CAP} is reached.
+     *
+     * <p>"Reads and fails nothing" is the end of the work the lookback allows: what is left is
+     * either outside the window or was skipped as already read, and the next batch would only
+     * return the same answer. The cap is checked between batches, so a run can overshoot it by
+     * at most one batch.
+     */
+    private Tally everything(ParserSettings.Values values) {
+        Tally run = new Tally();
+        while (true) {
+            if (stopRequested) {
+                run.stopped = true;
+                break;
+            }
+            if (handled.get() >= RUN_CAP) break;
+            Tally batch = batch(values);
+            run.add(batch);
+            // An empty batch is the end, not a batch of skips: a message with no body is
+            // written as a SKIPPED row and never queued again, so a run of them is progress.
+            // What could repeat without a row (a message deleted under the sweep) is bounded
+            // by the cap above.
+            if (batch.unreachable || batch.handled() == 0) break;
+        }
+        return run;
+    }
+
+    /**
+     * Parse selected: the picked messages, in the order picked.
+     *
+     * <p>A message already read is skipped without a model call. Anything else goes through the
+     * same job path the batch uses — the picked list is a different queue, not a different
+     * parser — so a failure is recorded and an unreachable server stops it the same way.
+     */
+    private Tally selected(List<Long> mailMessageIds) {
+        Tally t = new Tally();
+        for (Long id : mailMessageIds) {
+            if (stopRequested) {
+                t.stopped = true;
+                break;
+            }
+            if (alreadyRead(id)) {
+                handled.incrementAndGet();
+                t.skipped++;
+                continue;
+            }
+            if (!readOne(Job.mail(id), t)) break;
+        }
+        return t;
+    }
+
+    /** A row already PARSED or SKIPPED is not worth a model call. An id not on this desk has no row. */
+    private boolean alreadyRead(Long mailMessageId) {
+        return parsedEmails.findByMailMessageId(mailMessageId)
+                .map(ParsedEmail::getStatus)
+                .map(status -> status == ParseStatus.PARSED || status == ParseStatus.SKIPPED)
+                .orElse(false);
     }
 
     /**
@@ -235,19 +482,16 @@ public class ParserSweepService {
             return feedItemId != null;
         }
 
-        Long id() {
-            return isPost() ? feedItemId : mailMessageId;
-        }
-
         String describe() {
             return isPost() ? "Post " + feedItemId : "Message " + mailMessageId;
         }
     }
 
-    private SweepReport sweep() {
-        // Read once and used throughout: the batch size and the lookback have to come from
-        // the same snapshot, or a save landing mid-sweep would page one against the other.
-        ParserSettings.Values values = settings.values();
+    /**
+     * One batch: the boards first, then mail, then what failed before — each bounded by what is
+     * left of the batch size.
+     */
+    private Tally batch(ParserSettings.Values values) {
         int batch = values.sweepBatchSize();
         List<Job> queue = new ArrayList<>();
 
@@ -274,89 +518,67 @@ public class ParserSweepService {
                             : Job.post(p.getFeedItem().getId())));
         }
 
-        if (queue.isEmpty()) {
-            // Named rather than a bare "nothing": with a lookback set, "nothing new" and
-            // "nothing new inside the window" are different situations and only one of them
-            // is fixed by widening it.
-            String nothing = values.sweepMaxAgeDays() > 0
-                    ? "Nothing new to read in the last " + values.sweepMaxAgeDays() + " days."
-                    : "Nothing new to read.";
-            return new SweepReport(0, 0, 0, 0, 0, 0, 0, false, nothing, OffsetDateTime.now());
-        }
-
-        int read = 0;
-        int failed = 0;
-        int skipped = 0;
-        int positions = 0;
-        int cargoes = 0;
-        int items = 0;
-        int posts = 0;
-        boolean unreachable = false;
-
+        Tally t = new Tally();
         for (Job job : queue) {
-            try {
-                IntakeService.ApplyOutcome outcome = job.isPost()
-                        ? runner.parsePost(job.feedItemId())
-                        : runner.parseOne(job.mailMessageId());
-                if (outcome == null) {
-                    skipped++;
-                } else {
-                    read++;
-                    if (job.isPost()) posts++;
-                    positions += outcome.positionsApplied();
-                    cargoes += outcome.cargoesApplied();
-                    items += outcome.itemsRaised();
-                }
-            } catch (EmailParserClient.ParserUnavailableException e) {
-                failed++;
-                // The server being down is not forty separate failures, it is one. Stopping
-                // saves forty timeouts - three minutes each - and leaves the rest of the
-                // queue untouched for the next sweep, which is where they belong anyway.
-                unreachable = true;
-                log.warn("Stopping the sweep: {}", e.getMessage());
+            if (stopRequested) {
+                t.stopped = true;
                 break;
-            } catch (Exception e) {
-                failed++;
-                log.warn("{} could not be read: {}", job.describe(), e.toString());
-                // Recorded here rather than inside the runner, and that is the whole point:
-                // a parse is one transaction, so whatever threw took the row that would
-                // have recorded it down with the rollback - and where the cause is a
-                // database error the connection is already refusing statements. The arrival
-                // was left with no row at all, which is exactly the shape the sweep's queue
-                // treats as "never read": it came back every sweep, spent a model call every
-                // time, never showed up under the Log's FAILED filter and never reached the
-                // attempt ceiling. This is its own transaction, after the failed one is done
-                // with.
-                try {
-                    if (job.isPost()) runner.recordPostFailure(job.feedItemId(), e.toString());
-                    else runner.recordFailure(job.mailMessageId(), e.toString());
-                } catch (Exception recording) {
-                    // A failure to record a failure is not a reason to abandon the sweep,
-                    // but it is the one that leaves no trace anywhere else.
-                    log.error("Could not record the failure of {}", job.describe(), recording);
-                }
             }
+            if (!readOne(job, t)) break;
         }
-
-        String summary = unreachable
-                ? "Stopped: the model server did not answer."
-                : "Read %d (%d off the web), %d failed, %d skipped."
-                        .formatted(read, posts, failed, skipped);
-        log.info("Parser sweep: {} positions {} cargoes {} items {}",
-                summary, positions, cargoes, items);
-        return new SweepReport(read, failed, skipped, positions, cargoes, items, posts,
-                unreachable, summary, OffsetDateTime.now());
+        return t;
     }
 
-    private void requireEnabled() {
-        if (!props.isEnabled()) {
-            throw new FeatureDisabledException(
-                    "The email parser is not enabled on this deployment (PARSER_ENABLED).");
+    /**
+     * One job: read it, and count what came of it.
+     *
+     * @return false when the model server did not answer, which stops the batch; true otherwise
+     */
+    private boolean readOne(Job job, Tally t) {
+        handled.incrementAndGet();
+        try {
+            IntakeService.ApplyOutcome outcome = job.isPost()
+                    ? runner.parsePost(job.feedItemId())
+                    : runner.parseOne(job.mailMessageId());
+            if (outcome == null) {
+                t.skipped++;
+            } else {
+                t.read++;
+                if (job.isPost()) t.posts++;
+                t.positions += outcome.positionsApplied();
+                t.cargoes += outcome.cargoesApplied();
+                t.items += outcome.itemsRaised();
+            }
+            return true;
+        } catch (EmailParserClient.ParserUnavailableException e) {
+            t.failed++;
+            // The server being down is not forty separate failures, it is one. Stopping
+            // saves forty timeouts - three minutes each - and leaves the rest of the
+            // queue untouched for the next sweep, which is where they belong anyway.
+            t.unreachable = true;
+            log.warn("Stopping the sweep: {}", e.getMessage());
+            return false;
+        } catch (Exception e) {
+            t.failed++;
+            log.warn("{} could not be read: {}", job.describe(), e.toString());
+            // Recorded here rather than inside the runner, and that is the whole point:
+            // a parse is one transaction, so whatever threw took the row that would
+            // have recorded it down with the rollback - and where the cause is a
+            // database error the connection is already refusing statements. The arrival
+            // was left with no row at all, which is exactly the shape the sweep's queue
+            // treats as "never read": it came back every sweep, spent a model call every
+            // time, never showed up under the Log's FAILED filter and never reached the
+            // attempt ceiling. This is its own transaction, after the failed one is done
+            // with.
+            try {
+                if (job.isPost()) runner.recordPostFailure(job.feedItemId(), e.toString());
+                else runner.recordFailure(job.mailMessageId(), e.toString());
+            } catch (Exception recording) {
+                // A failure to record a failure is not a reason to abandon the sweep,
+                // but it is the one that leaves no trace anywhere else.
+                log.error("Could not record the failure of {}", job.describe(), recording);
+            }
+            return true;
         }
-    }
-
-    private static String truncate(String s, int max) {
-        if (s == null) return null;
-        return s.length() <= max ? s : s.substring(0, max);
     }
 }

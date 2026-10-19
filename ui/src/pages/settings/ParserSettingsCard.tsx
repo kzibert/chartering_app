@@ -15,7 +15,12 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { SaveOutlined, ThunderboltOutlined, UndoOutlined } from '@ant-design/icons';
+import {
+  DeleteOutlined,
+  SaveOutlined,
+  ThunderboltOutlined,
+  UndoOutlined,
+} from '@ant-design/icons';
 import dayjs from 'dayjs';
 import {
   useIntakeMutations,
@@ -30,6 +35,10 @@ interface FormValues {
   sweepMaxAgeDays: number;
   modelUrl: string;
   modelName: string;
+  cloudUrl: string;
+  cloudModel: string;
+  /** Typed here and never loaded from the server: the stored key is not sent back. */
+  cloudApiKey?: string;
   fewShotExamples: number;
   fewShotMaxChars: number;
 }
@@ -67,6 +76,9 @@ export default function ParserSettingsCard() {
   const { updateSettings, resetSettings, startSweep } = useIntakeMutations();
 
   const settings = query.data;
+  // Which model reads the mail is an install-time fact; the cloud section is editable either
+  // way so a key can be prepared before the switch is flipped.
+  const cloud = settings?.provider === 'CLOUD';
 
   // Reset from the server's answer so a save or a reset leaves the fields showing what is
   // actually stored, not what was typed.
@@ -81,6 +93,8 @@ export default function ParserSettingsCard() {
         // configured one is deleted, which leaves .env still owning it.
         modelUrl: settings.modelUrl,
         modelName: settings.modelName,
+        cloudUrl: settings.cloudUrl,
+        cloudModel: settings.cloudModel,
         fewShotExamples: settings.fewShotExamples,
         fewShotMaxChars: settings.fewShotMaxChars,
       });
@@ -97,7 +111,9 @@ export default function ParserSettingsCard() {
       settings.fewShotExamples !== settings.defaultFewShotExamples ||
       settings.fewShotMaxChars !== settings.defaultFewShotMaxChars ||
       settings.modelUrlCustomised ||
-      settings.modelNameCustomised);
+      settings.modelNameCustomised ||
+      settings.cloudUrlCustomised ||
+      settings.cloudModelCustomised);
   const running = sweep.data?.running === true;
   const reachable = status.data?.reachable === true;
 
@@ -121,7 +137,9 @@ export default function ParserSettingsCard() {
               settings?.defaultSweepBatchSize ?? 20
             } messages a sweep, mail from the last ${
               settings?.defaultSweepMaxAgeDays ?? 30
-            } days, the model at ${settings?.defaultModelUrl ?? 'the configured address'}, and no retrieved examples.`}
+            } days, the model at ${settings?.defaultModelUrl ?? 'the configured address'}, the cloud model at ${
+              settings?.defaultCloudUrl ?? 'its default address'
+            } (the saved key stays), and no retrieved examples.`}
             onConfirm={() => resetSettings.mutate(undefined, {
               onSuccess: () => toast.success('Back to the defaults'),
             })}
@@ -147,17 +165,33 @@ export default function ParserSettingsCard() {
           type="warning"
           showIcon
           style={{ marginBottom: 16 }}
-          message={`The model is not answering at ${status.data?.modelUrl ?? 'the configured address'}.`}
-          description="Start it in the chartering-ml project: make serve-docker. Until then a sweep will stop at the first message and record why."
+          message={
+            cloud
+              ? 'The cloud model is not answering.'
+              : `The model is not answering at ${status.data?.modelUrl ?? 'the configured address'}.`
+          }
+          description={
+            cloud
+              ? 'Check the cloud address, model name and key below.'
+              : 'Start it in the chartering-ml project: make serve-docker. Until then a sweep will stop at the first message and record why.'
+          }
         />
       )}
 
       <Form<FormValues>
         form={form}
         layout="vertical"
-        onFinish={(v) =>
-          updateSettings.mutate(v, { onSuccess: () => toast.success('Saved') })
-        }
+        onFinish={({ cloudApiKey, ...v }) => {
+          // Only a typed key is sent: the field is empty on load, and an empty one must not
+          // clear or replace the stored key. The field is cleared once the save has taken.
+          const key = cloudApiKey?.trim();
+          updateSettings.mutate(key ? { ...v, cloudApiKey: key } : v, {
+            onSuccess: () => {
+              toast.success('Saved');
+              form.setFieldValue('cloudApiKey', undefined);
+            },
+          });
+        }}
       >
         <Row gutter={16}>
           <Col xs={24} md={10}>
@@ -166,10 +200,19 @@ export default function ParserSettingsCard() {
               label="Read the mail every"
               rules={[{ required: true, message: 'A number of minutes is required' }]}
               extra={
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  Minutes. <b>0 turns the timer off</b> — nothing is read until you press
-                  Parse now, which is a fine way to run it.
-                </Typography.Text>
+                cloud ? (
+                  // Still shown and still saved: the office deployment reads on this same
+                  // setting, and the two share one row.
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    Not used on this deployment. This deployment reads only when asked — Parse
+                    now, Parse everything, or messages picked on the Mailbox tab.
+                  </Typography.Text>
+                ) : (
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    Minutes. <b>0 turns the timer off</b> — nothing is read until you press
+                    Parse now, which is a fine way to run it.
+                  </Typography.Text>
+                )
               }
             >
               <InputNumber min={0} max={1440} step={5} addonAfter="min" style={{ width: '100%' }} />
@@ -269,6 +312,125 @@ export default function ParserSettingsCard() {
 
         <Divider style={{ marginTop: 0 }} orientation="left" plain>
           <Space size={4} wrap>
+            Cloud model
+            {cloud ? <Tag color="blue">reads the mail</Tag> : <Tag>not used here</Tag>}
+          </Space>
+        </Divider>
+
+        <Typography.Paragraph type="secondary" style={{ marginTop: -8, marginBottom: 16 }}>
+          {cloud
+            ? 'This deployment reads with the cloud model below (PARSER_PROVIDER=CLOUD).'
+            : 'This deployment reads with the office model (PARSER_PROVIDER=LOCAL). The cloud model is set up here ahead of time and takes over when PARSER_PROVIDER is switched to CLOUD.'}
+        </Typography.Paragraph>
+
+        <Row gutter={16}>
+          <Col xs={24} md={12}>
+            <Form.Item
+              name="cloudUrl"
+              label="Cloud address"
+              rules={[
+                {
+                  validator: (_, value: string) =>
+                    !value || /^https?:\/\/\S+$/.test(value.trim())
+                      ? Promise.resolve()
+                      : Promise.reject(new Error('An http:// or https:// address, or empty for the default one')),
+                },
+              ]}
+              extra={
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  An OpenAI-compatible chat-completions endpoint. <b>Clear it</b> to go back to{' '}
+                  <code>{settings?.defaultCloudUrl}</code>.
+                </Typography.Text>
+              }
+            >
+              <Input
+                placeholder={settings?.defaultCloudUrl}
+                allowClear
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </Form.Item>
+          </Col>
+          <Col xs={24} md={12}>
+            <Form.Item
+              name="cloudModel"
+              label="Cloud model name"
+              extra={
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Sent with every request. <b>Clear it</b> to go back to{' '}
+                  <code>{settings?.defaultCloudModel}</code>.
+                </Typography.Text>
+              }
+            >
+              <Input
+                placeholder={settings?.defaultCloudModel}
+                allowClear
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </Form.Item>
+          </Col>
+        </Row>
+
+        <Form.Item
+          name="cloudApiKey"
+          label="API key"
+          extra={
+            <Space size={8} wrap>
+              {settings?.cloudApiKeySet ? (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Saved key{settings.cloudApiKeyHint ? ` ${settings.cloudApiKeyHint}` : ''} — type a
+                  new one to replace it.
+                </Typography.Text>
+              ) : (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  No key saved.
+                </Typography.Text>
+              )}
+              {settings?.cloudApiKeySet && (
+                <Popconfirm
+                  title="Remove the saved key?"
+                  description="A cloud read will fail until a new key is saved."
+                  okText="Remove"
+                  okButtonProps={{ danger: true }}
+                  onConfirm={() =>
+                    updateSettings.mutate(
+                      { clearCloudApiKey: true },
+                      { onSuccess: () => toast.success('Key removed') },
+                    )
+                  }
+                >
+                  <Button
+                    size="small"
+                    danger
+                    icon={<DeleteOutlined />}
+                    loading={updateSettings.isPending}
+                  >
+                    Remove key
+                  </Button>
+                </Popconfirm>
+              )}
+            </Space>
+          }
+        >
+          {settings?.cloudApiKeyStorable === false && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 8 }}
+              message="A key cannot be saved on this server"
+              description="CREDENTIALS_KEY is not set in the server's environment, so a key cannot be stored. Set it and restart the api."
+            />
+          )}
+          <Input.Password
+            placeholder={settings?.cloudApiKeySet ? 'Leave empty to keep the saved key' : 'Paste the API key'}
+            autoComplete="new-password"
+            disabled={settings?.cloudApiKeyStorable === false}
+          />
+        </Form.Item>
+
+        <Divider style={{ marginTop: 0 }} orientation="left" plain>
+          <Space size={4} wrap>
             Retrieved examples
             {settings && settings.fewShotExamples > 0 ? (
               <Tag color="blue">{settings.fewShotExamples} per email</Tag>
@@ -319,7 +481,7 @@ export default function ParserSettingsCard() {
           icon={<ThunderboltOutlined />}
           loading={running || startSweep.isPending}
           disabled={running || !reachable}
-          onClick={() => startSweep.mutate()}
+          onClick={() => startSweep.mutate(false)}
         >
           {running ? 'Reading…' : 'Parse now'}
         </Button>
