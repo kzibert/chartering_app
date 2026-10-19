@@ -76,9 +76,15 @@ public interface CargoRepository extends JpaRepository<Cargo, Long>, JpaSpecific
 
     long countByStatus(CargoStatus status);
 
-    /** The same for cargoes: arrived by mail or off a board, with nobody on it as the broker. */
-    @Query("select c from Cargo c left join fetch c.sourceMailMessage left join fetch c.sourceFeedItem "
-            + "where c.brokerCompany is null "
-            + "and (c.sourceMailMessage is not null or c.sourceFeedItem is not null)")
-    List<Cargo> findUnbrokeredWithSource();
+    /**
+     * The same for cargoes arrived by mail with nobody on them as the broker, restricted to
+     * messages the mailbox now places on file (see {@code VesselPositionRepository.findUnreportedFromMail}).
+     */
+    @Query("select c from Cargo c join fetch c.sourceMailMessage m "
+            + "where c.brokerCompany is null and m.company is not null")
+    List<Cargo> findUnbrokeredFromMail();
+
+    /** The same for cargoes read off a board post; re-read only when the directory has changed. */
+    @Query("select c from Cargo c join fetch c.sourceFeedItem where c.brokerCompany is null")
+    List<Cargo> findUnbrokeredFromPost();
 }

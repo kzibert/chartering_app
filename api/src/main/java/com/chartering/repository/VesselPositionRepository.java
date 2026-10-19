@@ -63,12 +63,24 @@ public interface VesselPositionRepository
     long countByStatus(PositionStatus status);
 
     /**
-     * Positions read out of an email or a post whose sender could not be named at the time.
-     * See {@code IntakeService.attributeUnreported}: the firm is often on file a day later.
+     * Positions read out of a mailed email whose sender could not be named when they were filed,
+     * and whose message the mailbox now places on file. See {@code IntakeService.attributeUnreported}.
+     *
+     * <p>Only the rows a message can name: {@code Arrival.of(MailMessage)} takes the sender from
+     * the message's company and nothing else, so a null company names nothing and the row is
+     * left out here rather than loaded (with its body) every tick to be skipped. A join fetch
+     * rather than a left join, because the condition on the message is what selects the rows.
      */
-    @Query("select p from VesselPosition p left join fetch p.sourceMailMessage "
-            + "left join fetch p.sourceFeedItem left join fetch p.vessel "
-            + "where p.reportedByCompany is null "
-            + "and (p.sourceMailMessage is not null or p.sourceFeedItem is not null)")
-    List<VesselPosition> findUnreportedWithSource();
+    @Query("select p from VesselPosition p join fetch p.sourceMailMessage m left join fetch p.vessel "
+            + "where p.reportedByCompany is null and m.company is not null")
+    List<VesselPosition> findUnreportedFromMail();
+
+    /**
+     * The same for positions read off a board post. Kept as its own query so the reconcile pass
+     * can leave it alone while the desk's directory has not changed: a post's signature can only
+     * start naming a firm when a company, a person or an address changes.
+     */
+    @Query("select p from VesselPosition p join fetch p.sourceFeedItem left join fetch p.vessel "
+            + "where p.reportedByCompany is null")
+    List<VesselPosition> findUnreportedFromPost();
 }

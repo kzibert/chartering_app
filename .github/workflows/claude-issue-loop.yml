@@ -1,0 +1,152 @@
+name: Claude issue loop
+
+on:
+  issues:
+    types: [labeled]
+
+concurrency:
+  group: claude-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  route:
+    # The repository is public: only the owner's own labelling starts a run, because the
+    # local target is a self-hosted runner on a machine holding .env and the database.
+    if: github.event.label.name == 'status:in-progress' && github.event.sender.type != 'Bot' && github.event.sender.login == 'kzibert'
+    runs-on: ubuntu-latest
+    outputs:
+      target: ${{ steps.pick.outputs.target }}
+    steps:
+      - id: pick
+        env:
+          GH_TOKEN: ${{ secrets.RUNNER_CHECK_TOKEN }}
+        run: |
+          online=$(gh api "repos/${{ github.repository }}/actions/runners" \
+            --jq '[.runners[] | select(.status=="online") | select([.labels[].name] | index("claude-local"))] | length' \
+            2>/dev/null || echo 0)
+          if [ "${online:-0}" -gt 0 ]; then target=local; else target=remote; fi
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+          echo "Routing issue #${{ github.event.issue.number }} to: $target"
+
+  work:
+    needs: route
+    runs-on: ${{ needs.route.outputs.target == 'local' && fromJSON('["self-hosted","claude-local"]') || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      id-token: write
+    # The local runner is Windows, where `run` defaults to PowerShell and "$ISSUE" would be a
+    # PowerShell variable rather than the environment's. Git Bash is used there instead.
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE: ${{ github.event.issue.number }}
+    steps:
+      # `status:ready` is cleared here rather than by Claude: this step runs on every pickup, so
+      # the label goes whether the run ends in review, blocked or a failure. `|| true` because
+      # an issue labelled in-progress without ever being marked ready is a normal start.
+      - name: Announce start
+        run: |
+          gh issue edit "$ISSUE" --repo "${{ github.repository }}" --remove-label "status:ready" || true
+          gh issue comment "$ISSUE" --repo "${{ github.repository }}" --body "🤖 Claude picked this up on the **${{ needs.route.outputs.target }}** runner. [Run log](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # api/: Maven (no wrapper), Java 21. ui/: npm, Node 20. The local runner has both installed.
+      - uses: actions/setup-java@v6
+        if: needs.route.outputs.target == 'remote'
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - uses: actions/setup-node@v7
+        if: needs.route.outputs.target == 'remote'
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      # Opus orchestrates and validates, Haiku does the legwork ("Orchestrator and workers" in
+      # CLAUDE.md). `--model` pins the main session; this pins every subagent it starts, so a
+      # brief that forgets `model: "haiku"` still lands on Haiku rather than on Opus.
+      #
+      # Background tasks are off because a headless session ends the moment Claude ends a turn.
+      # Subagents launch in the background by default, so on issue #9 Opus briefed two workers,
+      # ended its turn to wait for them, and the run finished in 53 seconds with nothing written,
+      # reported as a success. Off, the Agent tool has no `run_in_background` and each call
+      # returns the worker's report, which is the only shape a run with nobody watching can use.
+      #
+      # The step's own timeout, five minutes inside the job's. A job that hits `timeout-minutes`
+      # is *cancelled*, which neither `success()` nor `failure()` answers, so both steps below
+      # are skipped and the issue sits at in-progress with nothing saying why. A step that times
+      # out has *failed*, and "Mark blocked on failure" runs. The job's 60 stays as a backstop.
+      - uses: anthropics/claude-code-action@v1
+        timeout-minutes: 55
+        env:
+          CLAUDE_CODE_SUBAGENT_MODEL: claude-haiku-5-5
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The job's own token, so the run does not depend on the Claude GitHub App being
+          # installed (a token from `claude setup-token` alone is enough).
+          github_token: ${{ github.token }}
+          claude_args: >-
+            --model claude-opus-5-5
+            --max-turns 80
+            --allowedTools "Agent,Read,Edit,Write,Glob,Grep,Bash(gh issue view:*),Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(git:*),Bash(mvn:*),Bash(npm:*),Bash(npx tsc:*)"
+          prompt: |
+            You are working GitHub issue #${{ github.event.issue.number }} in ${{ github.repository }}.
+            A human has already labeled it `status:in-progress`.
+
+            You are the orchestrator and final validator, not the worker: plan, hand the searching,
+            reading, editing and running to Haiku subagents (Agent tool, `model: "haiku"`), then check
+            their work yourself — read the diff, run the tests — before anything is committed. The
+            "Orchestrator and workers" section of CLAUDE.md is how. Code follows CLAUDE.md first, then
+            the surrounding code, then `.claude/rules/` ("Coding rules" in CLAUDE.md).
+
+            Nobody is watching this run: it ends the moment you end a turn. Never end one to wait
+            for a worker or for anything else — finish with the PR and the label, or with the
+            blocked question and the label.
+
+            1. Read the issue fully, including comments: `gh issue view ${{ github.event.issue.number }} --comments`.
+            2. Follow the "Issue workflow" section in CLAUDE.md.
+            3. Check for an earlier run's branch: `git branch -r --list 'origin/issue-${{ github.event.issue.number }}-*'`.
+               If one exists, a previous run was cut off: check it out and continue from it. Read
+               `git log origin/main..HEAD` and the issue comments, and do not redo committed work.
+               Otherwise create `issue-${{ github.event.issue.number }}-<short-slug>` from the default branch.
+            4. Implement until every acceptance criterion is met and the build/tests pass
+               (api: `cd api && mvn -q test`; ui: `cd ui && npm ci && npm run build`).
+               Commit and `git push` each unit as soon as it passes your validation, not only at the
+               end. This run can be stopped by its time or turn limit, and only pushed work survives
+               for the next one.
+            5. Push the branch and open a PR whose body contains "Closes #${{ github.event.issue.number }}"
+               plus a checklist mapping each acceptance criterion to what was done.
+            6. Replace the label: remove `status:in-progress`, add `status:review`.
+            7. If the spec is ambiguous or you are blocked: comment a specific question on the issue,
+               replace the label with `status:blocked`, and stop.
+
+            Never close issues, never merge PRs, never force-push.
+
+      # A run that ends without doing either thing it is told to end with still reports success —
+      # issue #9 sat at in-progress behind a green tick. Every finish moves the label off
+      # in-progress, so one still on it is a run that stopped early, and is marked as such.
+      - name: Mark blocked if Claude stopped early
+        if: success()
+        run: |
+          if gh issue view "$ISSUE" --repo "${{ github.repository }}" --json labels --jq '.labels[].name' | grep -qx 'status:in-progress'; then
+            gh issue edit "$ISSUE" --repo "${{ github.repository }}" --remove-label "status:in-progress" --add-label "status:blocked"
+            gh issue comment "$ISSUE" --repo "${{ github.repository }}" --body "⚠️ Claude ended without opening a PR or asking a question. See the [run log](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+          fi
+
+      - name: Mark blocked on failure
+        if: failure()
+        run: |
+          gh issue edit "$ISSUE" --repo "${{ github.repository }}" --remove-label "status:in-progress" --add-label "status:blocked"
+          gh issue comment "$ISSUE" --repo "${{ github.repository }}" --body "⚠️ The Claude run failed. See the [run log](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."

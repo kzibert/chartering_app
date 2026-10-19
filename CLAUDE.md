@@ -23,6 +23,11 @@ Pushing `render` triggers a Render deploy, so treat it as an outward-facing acti
 `render.yaml` pins no `branch:` — which branch each service tracks is set in the Render
 dashboard.
 
+The same merge is a button: Actions › **Deploy to Render** › Run workflow
+(`.github/workflows/deploy-render.yml`), which works from the GitHub app on a phone. It runs only
+for the owner and only from `main`, never force-pushes, and refuses a deploy whose `render.yaml`
+changed unless its box is ticked, for the reason in the next paragraph.
+
 **A deploy that carries a changed `render.yaml` re-syncs the blueprint, and every key the
 file pins a `value:` for is re-asserted over whatever the dashboard holds.** It is not a
 default that a dashboard edit overrides; it is an assertion, reapplied. This has already
@@ -70,6 +75,16 @@ so the browser is always same-origin and CORS is irrelevant behind it.
 hosted Postgres. A sibling project `../chartering-db` provides a local one on port 5433 for
 working offline and for trying a migration somewhere harmless. Nothing in this project holds
 state, which is why compose has no `db` service, no volume, and no `down -v`.
+
+**Database transfer.** Neon's free plan allows 5 GB a month of data *sent from* the database, and
+it stops answering everyone — Render included — once that is spent. It was, on 2026-10-10, by
+a timer: the intake reconcile pass loaded every company and every phone for each unattributed
+board post, 6.6 MB every 150 seconds from the office api. So a timer that runs whether or not
+anything changed must read nothing in proportion to a table: select the columns it compares
+rather than whole entities (a `MailMessage` brings both bodies), filter in SQL, skip work
+whose inputs have not moved (`CompanyDirectoryVersion`), and run at the pace the answer
+actually drifts. `local/neon-resync/PLAN.md` has the measurement method
+(`pg_stat_statements` and the database container's transmit bytes, against a local copy).
 
 API layering is plain and deliberately thin: `controller` → `service` → `repository`, with
 one shared `mapper/DtoMapper` doing all entity→DTO mapping (services stay thin, mapping stays
@@ -528,11 +543,15 @@ user/assistant turns between the system prompt and the email, nearest last, so t
 example sits beside the question. `EMBEDDING_URL` is the switch for the embeddings: blank, nothing
 is embedded and nothing is retrieved, and the rest of the app is unaffected.
 
-**Off by default, and per installation.** `parser.fewShotExamples` is 0 until the finetuned model
-has been measured with examples in front of it. It was trained and scored under a system prompt
-and one user turn, so showing it examples changes what it is asked, and that is an experiment to
-win on held-out emails, not a setting to flip. The chartering-ml harness scores retrieved examples
-against fixed few-shot and against the finetune alone. `POST /analysis/few-shot` returns exactly
+**On by default since it was measured, and per installation.** `parser.fewShotExamples` defaults to
+2. The finetune was trained and scored under a system prompt and one user turn, so showing it
+examples changes what it is asked, and that had to win on held-out emails before it became a
+default. The chartering-ml harness (`tools/fewshot_eval.sh`, 2026-10-10) scored it on both frozen
+held-out sets: two retrieved examples raised cargo F1 on every set (0.477 to 0.619 on the anchor,
+0.589 to 0.625 on unseen senders) and vessel F1 on unseen senders (0.759 to 0.824) at the same
+time per email; two *fixed* examples did worse than none. The cost is five or six points of email
+type, which is only recorded on the parse row. Another `k` or a larger budget is unmeasured, and
+the harness is the place to try it. `POST /analysis/few-shot` returns exactly
 the turns the parser would insert, from the same `FewShotRetriever`, so the score measures what
 production would send. `minDistance` keeps a re-sent copy of the scored circular out of its own
 examples, and `excludeSampleIds` keeps the sample itself out. The switch is installation-wide for
@@ -542,8 +561,8 @@ The turns come from `TrainingTurns`, which the export calls too, so an example i
 out as the training file laid it out. With no examples the request is byte-identical to the
 zero-shot one, and a test pins that.
 
-**The budget is spent on examples, never on their text.** `parser.fewShotMaxChars` (10,000 by
-default) bounds the examples' combined length. They are taken nearest-first while they fit, and a
+**The budget is spent on examples, never on their text.** `parser.fewShotMaxChars` (6,000 by
+default, the measured budget) bounds the examples' combined length. They are taken nearest-first while they fit, and a
 sample too long for what is left is skipped, not cut. A cut email paired with its full annotation
 teaches the model to report what is not in the text.
 
@@ -1051,9 +1070,10 @@ So three things stop and become `intake_items`:
   are always asked. Nothing is dropped by weighing: an item whose rows are all minor is
   `intake_items.minor` and waits on the Intake tab's **Minor updates** sub-tab, off the
   Needs review count, with minor rows starting unticked and their reason printed beside them.
-  The flag is recomputed when another arrival merges in and by a timed pass
+  The flag is recomputed when another arrival merges in and by a timed pass every half hour
   (`IntakeService.reweighPending`, from `IntakeReconcileRunner`), because the record moves on
-  its own.
+  its own. Not every tick: the pass reads in proportion to the queue, and on Neon that read is
+  billed as network transfer (see "Database transfer" below).
 - **`COMPANY_DETAILS`** — the firm that signed it, against the firm on file. Every circular
   ends in a full style, and it is the one part of the mail that is *about the sender* rather
   than about the market; the contacts database goes stale in exactly that place while the market
@@ -1444,3 +1464,88 @@ happen. Follow the density and idiom of the surrounding code.
 Secrets live in `.env` (gitignored) with `.env.example` as the annotated template. Note that
 `.gitignore` covers `.env` but **not** `.env.bak*` — check `git status` before staging, and
 never use `git add -A` in this repo.
+
+### Coding rules
+
+`.claude/rules/java-core.md` and `.claude/rules/java-testing.md` are the owner's general Java
+and testing rules, copied unchanged from their personal `~/.claude/rules/` so that sessions
+without that folder — the issue loop above all — work to the same rules. Claude Code loads each
+when a file its `paths:` names is touched. Keep them byte-identical to the originals and change
+them there first, or the two copies drift and nobody can say which one is the rule.
+
+They are written for projects in general, and **this repository wins where the two differ**:
+this file, then the code around the change, then the rules. They fill gaps — where the codebase
+has no established answer, take theirs. Where it has one, the rules are not a reason to change
+it, and a PR that "brings a file into line" with them is a regression. The known differences,
+each one deliberate:
+
+- **Layered, not hexagonal**: `controller` → `service` → `repository` under `com.chartering`
+  (see Architecture). No `adapter/`/`application/`/`domain/` packages.
+- **No `{Entity}ServiceApi` interfaces**: services are concrete `@Service` classes.
+- **No MapStruct, one mapper**: `mapper/DtoMapper` maps every entity to its DTO by hand. No
+  per-feature `*DtoMapper`/`*BodyMapper`.
+- **Authorization is not `@PreAuthorize`**: roles are URL rules in `config/SecurityConfig`
+  (`requestMatchers(...).hasRole(...)`), and a cross-desk id answers 404 rather than 403 (see
+  Auth). A new admin endpoint gets its matcher there.
+- **Tests are plain JUnit 5 + AssertJ + Mockito `when(...)`**, not BDDMockito, with no
+  `// given / when / then` sections and no `@ActiveProfiles("test")`. Database tests extend
+  `IntegrationTest` (Testcontainers, `pgvector/pgvector:pg16`, an ordinary role so row-level
+  security is exercised) — never H2, which has neither pgvector nor the RLS policies.
+
+What does carry over as written: response records with `@JsonInclude(NON_NULL)`, `ResponseEntity`
+with an explicit status, `/api/v1/...` plural routes, `@Operation`/`@ApiResponse` on endpoints,
+`PageResponse<T>` rather than `Page<T>`, constructor injection, `@Transactional` on the service
+layer only, and Flyway for every schema change.
+
+## Issue workflow
+- Claude is started by automation when a human labels an issue `status:in-progress`. Do not pick up issues on your own.
+- Read the issue fully, including comments.
+- Create branch `issue-<number>-<short-slug>` from the default branch — unless an earlier run's
+  `issue-<number>-*` branch is already on `origin`, in which case that run was cut off by its
+  time or turn limit: continue from it, and do not redo what it committed.
+- Implement until every acceptance criterion is met and the build/tests pass. Commit and push
+  each unit as it passes validation rather than once at the end, because a run that is stopped
+  keeps only what it pushed.
+- Open a PR whose body contains "Closes #<number>" and a checklist mapping each acceptance criterion to what was done.
+- Replace the label `status:in-progress` with `status:review`.
+- If blocked or the spec is ambiguous: comment a specific question on the issue, replace the label with `status:blocked`, and stop.
+- Never close issues, never merge PRs, never force-push.
+
+**Review happens on the PR, by mentioning `@claude`** (`.github/workflows/claude-pr-comments.yml`).
+A PR comment, an inline review comment or a review from the owner that contains `@claude` starts a
+run on the PR's own branch: a change is made, validated, pushed to that branch and reported in a
+PR comment naming each review comment it acted on; a question is answered without touching code;
+an ambiguous request gets a question back. Same models, limits and foreground subagents as the
+issue loop. It refuses PRs from forks, because a comment event runs with this repository's
+secrets whoever wrote the branch, and it never edits the PR's title, description, labels or state.
+
+### Orchestrator and workers
+
+The loop runs on Opus 5.5 (`--model` in `.github/workflows/claude-issue-loop.yml`), and Opus is
+the **orchestrator and final validator only**. The legwork — searching, reading, editing,
+running builds — goes to **Haiku 5.5 subagents** (`CLAUDE_CODE_SUBAGENT_MODEL` in the same
+file). Opus decides what gets done and whether it was done right; Haiku does it. The split is
+cost and attention: Opus tokens go on the judgement, and a worker's file dumps never reach
+Opus's context.
+
+1. **Plan (Opus).** Read the issue and enough of the code to write good briefs — not to do the
+   work while "exploring". Split it into units with one clear outcome, a bounded set of files,
+   and a check that says it is done. Keep the judgement calls: design, trade-offs, which rule
+   applies (see Coding rules), and anything ambiguous enough to be a `status:blocked` question.
+   A unit that is a few tool calls is done inline — a cold worker costs more than it saves.
+2. **Delegate (Haiku).** Agent tool, `model: "haiku"` always; `subagent_type` `Explore` for
+   read-only searches, `general-purpose` for edits and commands; never `fork`, which ignores
+   the model and runs on Opus. A worker starts cold, so its brief stands alone: the goal, exact
+   paths, the sections of this file and `.claude/rules/` that apply, what not to touch, how to
+   verify, and the report wanted back (files changed with a reason each, test output
+   verbatim). Workers never commit, push, comment or change labels — those stay with Opus.
+   Independent units go out in parallel; units touching the same files go in sequence.
+3. **Validate (Opus).** A worker's report is a claim, not a result. Read the actual `git diff`,
+   run the build and the relevant tests yourself, and check the change against the issue's
+   acceptance criteria and this file, not just against the brief. A small defect is fixed
+   directly; a larger one goes back to a worker with a sharper brief; after two failed
+   attempts on one unit, Opus does it. Only then is that unit committed and pushed; the PR and
+   the label wait for the last one.
+
+The PR body says which units were delegated and what validation found and fixed, so a reviewer
+can tell a checked change from a reported one.

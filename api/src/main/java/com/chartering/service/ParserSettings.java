@@ -61,8 +61,8 @@ public class ParserSettings {
      * Worked examples shown to the model before each email. 0 is off.
      *
      * <p>An installation setting, like the model address: the examples change what the one served
-     * model is asked, so a desk switching them on would change the parser for every desk. Off until
-     * the harness has scored the retrieved examples against held-out emails.
+     * model is asked, so a desk switching them on would change the parser for every desk. On by
+     * default since the harness scored them (see {@link #DEFAULT_FEW_SHOT_EXAMPLES}).
      */
     public static final String FEW_SHOT_EXAMPLES = "parser.fewShotExamples";
 
@@ -77,17 +77,31 @@ public class ParserSettings {
 
     private static final List<String> FEW_SHOT_KEYS = List.of(FEW_SHOT_EXAMPLES, FEW_SHOT_MAX_CHARS);
 
-    /** Off. The experiment is opt-in per installation. */
-    public static final int DEFAULT_FEW_SHOT_EXAMPLES = 0;
+    /**
+     * Two, the configuration that was measured and won.
+     *
+     * <p>The chartering-ml harness (2026-10-10, {@code tools/fewshot_eval.sh}) scored the served V3
+     * model on both frozen held-out sets with the examples this retriever returns, against the
+     * same model with none. With two, cargo F1 rose on every set (0.477 to 0.619 on the 49-email
+     * anchor, 0.589 to 0.625 on the 62 unseen-sender emails) and vessel F1 rose on unseen senders
+     * (0.759 to 0.824), at no cost in time per email. Two fixed examples did worse than none, so
+     * it is the nearness that helps, not the format. What it costs is five or six points of the
+     * email's type, mostly real circulars called "other" - and the type is only recorded on the
+     * parse row; what is filed comes from the vessels and cargoes read, whatever the type says.
+     * 0 turns it off, and with no embedding server ({@code EMBEDDING_URL} blank) nothing is
+     * retrieved whatever this says.
+     */
+    public static final int DEFAULT_FEW_SHOT_EXAMPLES = 2;
 
     /**
-     * Ten thousand characters, about two and a half thousand tokens.
+     * Six thousand characters, which is what was measured.
      *
-     * <p>Sized so that a few typical examples fit beside a long question inside the 8,192-token
-     * window the served model is run with, leaving room for the answer. Raise it only together with
-     * the server's context size.
+     * <p>With it the prompts ran at about 2,500 tokens and never above 4,800, inside the 12,288-token
+     * window V3 is served with alongside the 6,144 reserved for the answer. A larger budget admits
+     * longer examples nobody has scored. Raise it only together with the server's context size,
+     * and score it first.
      */
-    public static final int DEFAULT_FEW_SHOT_MAX_CHARS = 10_000;
+    public static final int DEFAULT_FEW_SHOT_MAX_CHARS = 6_000;
 
     /** Eight is where a context window stops being the limit and the model starts to be confused. */
     private static final int MAX_FEW_SHOT_EXAMPLES = 8;

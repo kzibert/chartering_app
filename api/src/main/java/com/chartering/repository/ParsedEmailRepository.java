@@ -1,5 +1,6 @@
 package com.chartering.repository;
 
+import com.chartering.model.Company;
 import com.chartering.model.MailMessage;
 import com.chartering.model.ParseStatus;
 import com.chartering.model.ParsedEmail;
@@ -71,6 +72,18 @@ public interface ParsedEmailRepository extends JpaRepository<ParsedEmail, Long> 
 
     @EntityGraph(attributePaths = {"mailMessage", "feedItem", "feedItem.source"})
     Optional<ParsedEmail> findWithMessageById(Long id);
+
+    /**
+     * The firm a parse's mail was sent by, without loading the mail.
+     *
+     * <p>For the sender of an item that has no sources of its own, which the timed re-weigh asks
+     * for on every tick. Loading the message to read one foreign key would pull its body across
+     * on each of those ticks; this selects the company alone. Empty where the parse came from a
+     * board (no message) or where the sync could not place the sender - both answer "nobody",
+     * the same as a null company always has.
+     */
+    @Query("select m.company from ParsedEmail p join p.mailMessage m where p.id = ?1")
+    Optional<Company> senderOf(Long parsedEmailId);
 
     Optional<ParsedEmail> findByMailMessageId(Long mailMessageId);
 

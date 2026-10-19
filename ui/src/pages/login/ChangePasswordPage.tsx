@@ -1,5 +1,6 @@
 import { Button, Card, Typography } from 'antd';
 import { useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import ChangePasswordForm from '../../auth/ChangePasswordForm';
 import { clearToken } from '../../auth/store';
 
@@ -10,6 +11,7 @@ import { clearToken } from '../../auth/store';
  */
 export default function ChangePasswordPage({ username }: { username: string }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   return (
     <div
       style={{
@@ -31,7 +33,9 @@ export default function ChangePasswordPage({ username }: { username: string }) {
             only you know to continue.
           </Typography.Text>
         </div>
-        <ChangePasswordForm />
+        {/* To the dashboard rather than wherever the login landed: a first login is arriving,
+            not resuming, and this screen stood in for whatever page the address named. */}
+        <ChangePasswordForm onDone={() => navigate('/', { replace: true })} />
         <Button
           type="link"
           block

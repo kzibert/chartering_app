@@ -96,15 +96,19 @@ public class CompanyMatcher {
             }
         }
         if (!phoneTails.isEmpty()) {
+            // The comparison is made in the database, so only the hits come back. Loading every
+            // phone on file here cost about 2 MB per signature read, and the late-attribution
+            // pass reads signatures every few minutes: that was the hosted database's egress.
+            // The SQL is tail() written out: the last nine digits, non-digits removed. A value
+            // with fewer than nine digits yields fewer than nine characters, which can never
+            // equal a nine-digit tail, so it matches nothing, as before.
             List<Contact> phones = em.createQuery("""
                     select c from Contact c join fetch c.company
                     where c.contactKind = 'phone'
-                    """, Contact.class).getResultList();
+                    and right(function('regexp_replace', c.contactValue, '[^0-9]', '', 'g'), 9) in :tails
+                    """, Contact.class).setParameter("tails", new ArrayList<>(phoneTails)).getResultList();
             for (Contact c : phones) {
-                String tail = tail(c.getContactValue());
-                if (tail != null && phoneTails.contains(tail)) {
-                    add(found, c.getCompany(), "phone", "has phone " + c.getContactValue().strip());
-                }
+                add(found, c.getCompany(), "phone", "has phone " + c.getContactValue().strip());
             }
         }
 
@@ -122,10 +126,26 @@ public class CompanyMatcher {
         }
 
         if (distinctiveKey(name).length() >= 4) {
-            List<Company> all = em.createQuery("select c from Company c", Company.class).getResultList();
-            for (Company c : all) {
-                String reason = resemblance(name, c.getName());
-                if (reason != null) add(found, c, "similar", reason);
+            // Only the id and the name of every firm come back to be compared; the full rows are
+            // loaded for the handful that resemble. Same egress reason as the phones above, and
+            // the same order: the reasons are kept in scan order so ranking is unchanged.
+            Map<Long, String> similar = new LinkedHashMap<>();
+            for (Object[] row : em.createQuery("select c.id, c.name from Company c", Object[].class)
+                    .getResultList()) {
+                String reason = resemblance(name, (String) row[1]);
+                if (reason != null) similar.put((Long) row[0], reason);
+            }
+            if (!similar.isEmpty()) {
+                Map<Long, Company> byId = new LinkedHashMap<>();
+                for (Company c : em.createQuery("select c from Company c where c.id in :ids", Company.class)
+                        .setParameter("ids", similar.keySet()).getResultList()) {
+                    byId.put(c.getId(), c);
+                }
+                for (Map.Entry<Long, String> e : similar.entrySet()) {
+                    // Absent only if the firm was deleted between the two reads.
+                    Company c = byId.get(e.getKey());
+                    if (c != null) add(found, c, "similar", e.getValue());
+                }
             }
         }
 

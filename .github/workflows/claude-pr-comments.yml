@@ -1,0 +1,163 @@
+name: Claude on PR comments
+
+# The second half of the issue loop. That one turns a labelled issue into a PR; this one answers
+# the review: a comment, an inline review comment or a review that mentions @claude makes Claude
+# change the same branch (or answer the question) and reply on the PR. Together they make the
+# whole cycle - issue, label, review, "@claude rename this", merge - work from the GitHub app.
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+concurrency:
+  group: claude-pr-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  work:
+    # The owner's own words only, for the reason the issue loop gives: the repository is public
+    # and this job holds the Claude token. A bot's comment never starts it, so Claude's replies
+    # cannot set it off again. issue_comment fires for issues too; only a PR's conversation counts.
+    if: >-
+      github.event.sender.login == 'kzibert' &&
+      contains(github.event.comment.body || github.event.review.body || '', '@claude') &&
+      (github.event_name != 'issue_comment' || github.event.issue.pull_request)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      id-token: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.issue.number || github.event.pull_request.number }}
+    steps:
+      # issue_comment runs in this repository's context with its secrets whatever branch the PR
+      # comes from, so a fork's PR is refused here rather than checked out: an owner's "@claude
+      # look at this" on a stranger's PR must not run the stranger's code next to the token.
+      - name: Resolve the PR
+        id: pr
+        run: |
+          # Captured first so a failing `gh` fails the step; read from a process substitution, it
+          # would leave the fields empty and be reported as "not an open PR".
+          info=$(gh pr view "$PR" --repo "${{ github.repository }}" \
+            --json headRefName,isCrossRepository,state --jq '"\(.headRefName) \(.isCrossRepository) \(.state)"')
+          read -r head cross state <<< "$info"
+          if [ "$cross" = "true" ] || [ "$state" != "OPEN" ]; then
+            gh pr comment "$PR" --repo "${{ github.repository }}" --body "🤖 Not picked up: Claude only works on open PRs from branches in this repository."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          gh pr comment "$PR" --repo "${{ github.repository }}" --body "🤖 Claude is on it. [Run log](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+
+      - uses: actions/checkout@v7
+        if: steps.pr.outputs.skip != 'true'
+        with:
+          ref: ${{ steps.pr.outputs.head }}
+          fetch-depth: 0
+
+      # Everything said on the PR, gathered here rather than by Claude: reading inline review
+      # comments takes `gh api`, and `gh api` with this job's token could also merge the PR, so
+      # Claude is not given it. The triggering comment goes in through env, never into the script.
+      - name: Gather the conversation
+        if: steps.pr.outputs.skip != 'true'
+        env:
+          TRIGGER_PATH: ${{ github.event.comment.path }}
+          TRIGGER_LINE: ${{ github.event.comment.line || github.event.comment.original_line }}
+          TRIGGER_HUNK: ${{ github.event.comment.diff_hunk }}
+        run: |
+          {
+            if [ -n "$TRIGGER_PATH" ]; then
+              echo "# The request was an inline comment on $TRIGGER_PATH, line $TRIGGER_LINE"
+              echo '```diff'
+              echo "$TRIGGER_HUNK"
+              echo '```'
+              echo
+            fi
+            # Two calls: with --comments, `gh pr view` prints the conversation and drops the description.
+            echo "# PR #$PR - description"
+            gh pr view "$PR" --repo "${{ github.repository }}"
+            echo
+            echo "# Conversation and reviews"
+            gh pr view "$PR" --repo "${{ github.repository }}" --comments
+            echo
+            echo "# Inline review comments"
+            gh api "repos/${{ github.repository }}/pulls/$PR/comments" --paginate \
+              --jq '.[] | "## \(.path):\(.line // .original_line) - \(.user.login)\n\(.body)\n"'
+          } > "$RUNNER_TEMP/pr-context.md"
+
+      - uses: actions/setup-java@v6
+        if: steps.pr.outputs.skip != 'true'
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - uses: actions/setup-node@v7
+        if: steps.pr.outputs.skip != 'true'
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      # The issue loop's model split, limits and foreground subagents, for that file's reasons.
+      - uses: anthropics/claude-code-action@v1
+        if: steps.pr.outputs.skip != 'true'
+        timeout-minutes: 55
+        env:
+          CLAUDE_CODE_SUBAGENT_MODEL: claude-haiku-5-5
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          claude_args: >-
+            --model claude-opus-5-5
+            --max-turns 60
+            --allowedTools "Agent,Read,Edit,Write,Glob,Grep,Bash(gh issue view:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(git:*),Bash(mvn:*),Bash(npm:*),Bash(npx tsc:*)"
+          prompt: |
+            You are answering a request on pull request #${{ env.PR }} in ${{ github.repository }}.
+            Its branch, `${{ steps.pr.outputs.head }}`, is checked out. The owner wrote, mentioning @claude:
+
+            <request>
+            ${{ github.event.comment.body || github.event.review.body }}
+            </request>
+
+            Read `${{ runner.temp }}/pr-context.md` first. It holds where the request was written
+            (file, line and diff for an inline comment), the PR description, the whole conversation
+            and every inline review comment. Where the PR closes an issue, `gh issue view` gives
+            its acceptance criteria.
+
+            You are the orchestrator and final validator, not the worker: hand the searching,
+            reading, editing and running to Haiku subagents (Agent tool, `model: "haiku"`), then
+            check their work yourself before anything is committed. The "Orchestrator and workers"
+            section of CLAUDE.md is how. Code follows CLAUDE.md first, then the surrounding code,
+            then `.claude/rules/`.
+
+            Nobody is watching this run: it ends the moment you end a turn. Never end one to wait
+            for a worker or for anything else. Finish with your reply on the PR.
+
+            Do what the request asks:
+            - A change: make it on this branch and validate it (read the diff; api: `cd api && mvn -q test`;
+              ui: `cd ui && npm ci && npm run build`). Commit and `git push origin HEAD:${{ steps.pr.outputs.head }}`,
+              never with force and never to another branch. Then reply with
+              `gh pr comment ${{ env.PR }} --body ...`: what changed and in which commit, naming the file
+              and line of each review comment you acted on.
+            - A question: answer it with `gh pr comment` and change nothing.
+            - Ambiguous, or against the linked issue's acceptance criteria or CLAUDE.md: ask with
+              `gh pr comment` and stop.
+
+            Leave the PR's title, description, labels and state alone. Never merge, never close,
+            never force-push.
+
+      - name: Report failure on the PR
+        if: failure()
+        run: |
+          gh pr comment "$PR" --repo "${{ github.repository }}" --body "⚠️ The Claude run failed. See the [run log](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."

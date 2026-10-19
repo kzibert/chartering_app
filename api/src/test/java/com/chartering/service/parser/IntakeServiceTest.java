@@ -5,6 +5,7 @@ import com.chartering.repository.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import com.chartering.tenancy.TenantContext;
 import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
@@ -21,6 +22,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -46,6 +48,7 @@ class IntakeServiceTest {
     private VesselPositionRepository positions;
     private IntakeResolver resolver;
     private com.chartering.repository.IntakeItemSourceRepository itemSources;
+    private ParsedEmailRepository parsedEmails;
     private CompanyStyleIntake styles;
     private com.chartering.service.SettingsService settingsService;
     private com.chartering.service.lookup.VesselLookupService lookupService;
@@ -59,6 +62,7 @@ class IntakeServiceTest {
     private com.chartering.repository.IntakeFieldDecisionRepository decisions;
     private com.chartering.repository.IntakeVesselAliasRepository aliases;
     private VesselFieldReportRepository fieldReports;
+    private CompanyDirectoryVersion directory;
 
     @BeforeEach
     void setUp() {
@@ -70,6 +74,7 @@ class IntakeServiceTest {
         positions = mock(VesselPositionRepository.class);
         resolver = mock(IntakeResolver.class);
         itemSources = mock(com.chartering.repository.IntakeItemSourceRepository.class);
+        parsedEmails = mock(ParsedEmailRepository.class);
         lookupService = mock(com.chartering.service.lookup.VesselLookupService.class);
         decisions = mock(com.chartering.repository.IntakeFieldDecisionRepository.class);
         aliases = mock(com.chartering.repository.IntakeVesselAliasRepository.class);
@@ -79,8 +84,10 @@ class IntakeServiceTest {
         styles = mock(CompanyStyleIntake.class);
         when(styles.aggregate(any(), any())).thenAnswer(i -> i.getArgument(1));
         settingsService = mock(com.chartering.service.SettingsService.class);
+        directory = mock(CompanyDirectoryVersion.class);
+        when(directory.current()).thenReturn(new CompanyDirectoryVersion.Version(0, 0, 0, 0, 0));
         service = new IntakeService(items, cargoSources, cargoes, vessels, exNames, itemSources,
-                decisions, aliases, fieldReports, positions, resolver,
+                parsedEmails, decisions, aliases, fieldReports, positions, resolver,
                 styles,
                 new com.chartering.config.ParserProperties(),
                 mock(com.chartering.repository.CompanyRepository.class),
@@ -88,7 +95,8 @@ class IntakeServiceTest {
                 mock(com.chartering.repository.PersonRepository.class),
                 settingsService,
                 lookupService,
-                mock(com.chartering.service.VesselService.class), new ObjectMapper());
+                mock(com.chartering.service.VesselService.class), new ObjectMapper(),
+                directory);
         // The item is saved and then a source row is attached to it, so the mock has to hand
         // the entity back rather than null.
         when(items.save(any(IntakeItem.class))).thenAnswer(i -> i.getArgument(0));
@@ -122,6 +130,38 @@ class IntakeServiceTest {
         when(items.pendingForCompany(anyLong())).thenReturn(List.of());
         when(items.pendingNewCompany(any())).thenReturn(List.of());
         when(settingsService.ownAddresses()).thenReturn(java.util.Set.of());
+    }
+
+    /**
+     * A waiting particulars question is weighed on each re-weigh pass against the firm that sent
+     * it, and that firm comes from the lean projection rather than from the parse's message.
+     *
+     * <p>The timer asks this of every waiting item every few minutes, so loading the message to
+     * read one company would pull its body across each time. The parse is a mock that must not
+     * be asked for its message at all.
+     */
+    @Test
+    void weighsAWaitingQuestionAgainstItsSenderWithoutLoadingTheMessage() throws Exception {
+        pacificDawn.setDeadweightTonnage(new BigDecimal("28500"));
+        when(vessels.findById(42L)).thenReturn(java.util.Optional.of(pacificDawn));
+
+        ParsedEmail lean = mock(ParsedEmail.class);
+        when(lean.getId()).thenReturn(9L);
+
+        IntakeItem waiting = new IntakeItem();
+        waiting.setId(11L);
+        waiting.setKind(IntakeItemKind.VESSEL_FIELDS);
+        waiting.setVesselId(42L);
+        waiting.setParsedEmail(lean);
+        waiting.setPayload(new ObjectMapper().writeValueAsString(new IntakePayloads.VesselFields(
+                42L, "PACIFIC DAWN", null, disagreeing(), List.of(), List.of())));
+        when(items.pendingOfKind(IntakeItemKind.VESSEL_FIELDS)).thenReturn(List.of(waiting));
+        when(parsedEmails.senderOf(9L)).thenReturn(java.util.Optional.of(interscan));
+
+        service.reweighPending();
+
+        verify(parsedEmails).senderOf(9L);
+        verify(lean, never()).getMailMessage();
     }
 
     // ---------------------------------------------------------- a cargo sent again
@@ -569,7 +609,7 @@ class IntakeServiceTest {
         newVessel.setPayload("""
                 {"vessel":{"name":"LIUDMILA","flag":"PANAMA","openArea":"MARMARA"},
                  "searchedBy":"LIUDMILA","suggestions":[]}""");
-        when(items.pendingByKind(IntakeItemKind.NEW_VESSEL)).thenReturn(List.of(newVessel));
+        when(items.pendingOfKind(IntakeItemKind.NEW_VESSEL)).thenReturn(List.of(newVessel));
 
         VesselLookup row = new VesselLookup();
         row.setStatus(VesselLookup.STATUS_OK);
@@ -601,7 +641,7 @@ class IntakeServiceTest {
         newVessel.setParsedEmail(parsed);
         newVessel.setPayload("""
                 {"vessel":{"name":"UNKNOWN TRADER"},"searchedBy":"UNKNOWN TRADER","suggestions":[]}""");
-        when(items.pendingByKind(IntakeItemKind.NEW_VESSEL)).thenReturn(List.of(newVessel));
+        when(items.pendingOfKind(IntakeItemKind.NEW_VESSEL)).thenReturn(List.of(newVessel));
 
         VesselLookup row = new VesselLookup();
         row.setStatus(VesselLookup.STATUS_OK);
@@ -623,7 +663,7 @@ class IntakeServiceTest {
         newVessel.setParsedEmail(parsed);
         newVessel.setPayload("""
                 {"vessel":{"name":"UNKNOWN TRADER"},"searchedBy":"UNKNOWN TRADER","suggestions":[]}""");
-        when(items.pendingByKind(IntakeItemKind.NEW_VESSEL)).thenReturn(List.of(newVessel));
+        when(items.pendingOfKind(IntakeItemKind.NEW_VESSEL)).thenReturn(List.of(newVessel));
         when(lookupService.forItem(8L)).thenReturn(java.util.Optional.empty());
 
         assertThat(service.reconcileIdentifiedHulls()).isZero();
@@ -741,7 +781,7 @@ class IntakeServiceTest {
         VesselPosition earlier = position(400L, interscan, OffsetDateTime.parse("2026-09-10T08:00:00Z"));
         onFile.add(filed);
         onFile.add(earlier);
-        when(positions.findUnreportedWithSource()).thenReturn(List.of(filed));
+        when(positions.findUnreportedFromMail()).thenReturn(List.of(filed));
 
         int named = service.attributeUnreported();
 
@@ -760,10 +800,37 @@ class IntakeServiceTest {
         Cargo cargo = new Cargo();
         cargo.setId(8L);
         cargo.setSourceFeedItem(post);
-        when(cargoes.findUnbrokeredWithSource()).thenReturn(List.of(cargo));
+        when(cargoes.findUnbrokeredFromPost()).thenReturn(List.of(cargo));
 
         assertThat(service.attributeUnreported()).isZero();
         assertThat(cargo.getBrokerCompany()).isNull();
+    }
+
+    @Test
+    void aBoardPostIsNotReadAgainWhileTheDeskDirectoryIsUnchanged() {
+        // A post whose firm is not on file: its signature is read on every pass that reads posts.
+        FeedItem post = new FeedItem();
+        post.setId(301L);
+        post.setText("MV AGN LAGERTHA /27-29 SEPT MARMARA\n\nSomebody\nA Firm Not On File");
+        when(styles.read(any(), any())).thenReturn(new CompanyStyleIntake.Reading(null, List.of(), null));
+        Cargo cargo = new Cargo();
+        cargo.setId(9L);
+        cargo.setSourceFeedItem(post);
+        when(cargoes.findUnbrokeredFromPost()).thenReturn(List.of(cargo));
+        when(directory.current()).thenReturn(new CompanyDirectoryVersion.Version(4, 40, 3, 5, 12));
+
+        TenantContext.runAs(1L, () -> {
+            service.attributeUnreported();
+            service.attributeUnreported();
+        });
+        // Read once, on the first pass; the second found the directory where the first left it.
+        verify(styles, times(1)).read(any(), any());
+
+        // A company, a person or an address was added: the directory moved, so the post is asked
+        // again - and this time the firm is there to name.
+        when(directory.current()).thenReturn(new CompanyDirectoryVersion.Version(5, 41, 4, 5, 12));
+        TenantContext.runAs(1L, () -> service.attributeUnreported());
+        verify(styles, times(2)).read(any(), any());
     }
 
     private VesselPosition position(Long id, Company reporter, OffsetDateTime reportedAt) {
