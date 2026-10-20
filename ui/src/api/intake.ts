@@ -395,6 +395,36 @@ export interface ParseMessagesRequest {
   mailMessageIds: number[];
 }
 
+/**
+ * One arrival the sweep has not been given yet. `id` is the mail message id for MAIL and the
+ * feed item id for WEB — the two are not the same kind of number, which is why the source
+ * travels with it everywhere it is used.
+ */
+export interface WaitingArrivalResponse {
+  source: 'MAIL' | 'WEB';
+  id: number;
+  receivedAt?: string;
+  fromName?: string;
+  fromAddress?: string;
+  companyName?: string;
+  subject?: string;
+  /** Mail snippet, or the first part of a post. */
+  preview?: string;
+  /** WEB only: the board the post was read from. */
+  boardName?: string;
+}
+
+/** Ids for one source at a time; the server caps each list at 500. */
+export interface LeaveOutRequest {
+  mailMessageIds?: number[];
+  feedItemIds?: number[];
+  note?: string;
+}
+
+export interface LeaveOutResponse {
+  leftOut: number;
+}
+
 /** Who has told us about a cargo — one row per arrival, kept through a merge. */
 export interface CargoSourceResponse {
   id: number;
@@ -682,6 +712,22 @@ export const intakeApi = {
     client
       .post<void>(`/intake/parsed/${parsedEmailId}/ignore`, { note })
       .then((r) => r.data),
+
+  /**
+   * What the next sweep would read, newest first for mail and boards first. Paged, because a
+   * mailbox backlog can run to thousands and the drawer only ever shows one page.
+   */
+  waiting: (params: { source: 'MAIL' | 'WEB'; page?: number; size?: number }) =>
+    client
+      .get<PageResponse<WaitingArrivalResponse>>('/intake/waiting', { params: cleanParams(params) })
+      .then((r) => r.data),
+
+  /**
+   * Take arrivals out of the queue. Each is filed as IGNORED on the log, so Reopen there puts
+   * it back — nothing is deleted.
+   */
+  leaveOut: (body: LeaveOutRequest) =>
+    client.post<LeaveOutResponse>('/intake/waiting/leave-out', body).then((r) => r.data),
 
   /** The boards read into this queue — feed sources with one flag set. */
   sources: () => client.get<FeedSource[]>('/intake/sources').then((r) => r.data),

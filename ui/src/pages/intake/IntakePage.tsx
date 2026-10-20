@@ -36,6 +36,7 @@ import {
 import IntakeItemDrawer from './IntakeItemDrawer';
 import ParsedEmailDrawer from './ParsedEmailDrawer';
 import PasteModal from './PasteModal';
+import WaitingDrawer from './WaitingDrawer';
 import WebSources from './WebSources';
 import {
   EMAIL_TYPES,
@@ -89,6 +90,7 @@ export default function IntakePage() {
   const [openItem, setOpenItem] = useState<number>();
   const [openParsed, setOpenParsed] = useState<number>();
   const [pasteOpen, setPasteOpen] = useState(false);
+  const [waitingOpen, setWaitingOpen] = useState(false);
 
   const enabled = status.data?.enabled === true;
   const tc = useTableControls({ size: 25 }, 'intake');
@@ -165,6 +167,7 @@ export default function IntakePage() {
           setParseStatus('FAILED');
           logTc.resetPage();
         }}
+        onShowWaiting={() => setWaitingOpen(true)}
       />
 
       <WebSources waiting={status.data?.unparsedPosts ?? 0} />
@@ -266,6 +269,14 @@ export default function IntakePage() {
         modelUp={status.data?.reachable === true}
         onClose={() => setPasteOpen(false)}
       />
+      <WaitingDrawer
+        open={waitingOpen}
+        onClose={() => setWaitingOpen(false)}
+        mailCount={status.data?.unparsed ?? 0}
+        webCount={status.data?.unparsedPosts ?? 0}
+        running={running}
+        modelUp={status.data?.reachable === true}
+      />
     </>
   );
 }
@@ -300,6 +311,7 @@ function IntakeHeader({
   onStop,
   onPaste,
   onShowFailed,
+  onShowWaiting,
 }: {
   pending: number;
   unparsed: number;
@@ -327,6 +339,8 @@ function IntakeHeader({
   onPaste: () => void;
   /** The way from the count to the emails it counts. */
   onShowFailed: () => void;
+  /** The list behind the waiting count, to take things out of it before they are read. */
+  onShowWaiting: () => void;
 }) {
   const schedule = !scheduled
     ? 'Reads only when asked'
@@ -381,6 +395,18 @@ function IntakeHeader({
               ) : undefined
             }
           />
+          {/* Without a way in, the count is a number to read and nothing to do about. Off when
+              there is nothing to review, since an empty list is one click of nothing. */}
+          {unparsed + unparsedPosts > 0 && (
+            <Button
+              type="link"
+              size="small"
+              style={{ paddingInline: 0, marginTop: 2 }}
+              onClick={onShowWaiting}
+            >
+              Review list
+            </Button>
+          )}
         </Col>
         <Col xs={24} md={14}>
           <Space direction="vertical" size={6} style={{ width: '100%' }}>
