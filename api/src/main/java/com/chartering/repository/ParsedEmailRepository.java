@@ -1,5 +1,6 @@
 package com.chartering.repository;
 
+import com.chartering.dto.WaitingArrivalResponse;
 import com.chartering.model.Company;
 import com.chartering.model.MailMessage;
 import com.chartering.model.ParseStatus;
@@ -51,6 +52,36 @@ public interface ParsedEmailRepository extends JpaRepository<ParsedEmail, Long> 
             order by m.receivedAt desc
             """)
     List<MailMessage> unparsed(@Param("since") LocalDateTime since, Pageable pageable);
+
+    /**
+     * The mail half of the Intake tab's "waiting" list: the same rows {@link #unparsed} hands the
+     * sweep, in the same order, as the columns a list row prints.
+     *
+     * <p>A projection rather than entities, and that is the point. A {@code MailMessage} carries
+     * both bodies, and a page of twenty of them would pull the whole of their text across the
+     * wire to print a sender, a subject and a line of preview. {@code snippet} is the preview
+     * the sync already stores, which is the one part of the body a list needs.
+     *
+     * <p>The predicate is copied from {@link #unparsed} rather than shared, because JPQL has no
+     * way to share a {@code where} clause; the {@code countQuery} must stay in step with it, and
+     * the integration test checks the two agree.
+     */
+    @Query(value = """
+            select new com.chartering.dto.WaitingArrivalResponse(
+                'MAIL', m.id, m.receivedAt, m.fromName, m.fromAddress, c.name, m.subject, m.snippet)
+            from MailMessage m left join m.company c
+            where m.bodyText is not null and m.bodyText <> ''
+              and m.receivedAt >= :since
+              and not exists (select 1 from ParsedEmail p where p.mailMessage = m)
+            order by m.receivedAt desc
+            """,
+            countQuery = """
+            select count(m) from MailMessage m
+            where m.bodyText is not null and m.bodyText <> ''
+              and m.receivedAt >= :since
+              and not exists (select 1 from ParsedEmail p where p.mailMessage = m)
+            """)
+    Page<WaitingArrivalResponse> waiting(@Param("since") LocalDateTime since, Pageable pageable);
 
     /**
      * Failures worth another go, oldest first.

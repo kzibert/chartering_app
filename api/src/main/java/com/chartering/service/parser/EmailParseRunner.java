@@ -290,6 +290,80 @@ public class EmailParseRunner {
     }
 
     /**
+     * Take arrivals off the waiting list before the sweep reads them.
+     *
+     * <p>The same judgement {@link #ignore} makes, but made before the model has been asked
+     * rather than after it failed: a circular a person can see is a newsletter, a forwarded
+     * thread, a delivery notice, goes out of the queue now instead of costing a model call to
+     * learn it. It is written as an {@code IGNORED} row for the reason {@code ignore} is: the
+     * row is what stops the sweep finding the arrival again, and the Log's existing Reopen puts
+     * it back. No new status and no deletion, so there is no new state to learn; a deleted row
+     * would be found and read again by tomorrow's sweep.
+     *
+     * <p>An arrival that already has a row of any status is left alone and not counted: it is no
+     * longer waiting, and overwriting its verdict with "left out" would be rewriting what the
+     * model or a person already decided. An id not on this desk is skipped the same way, so the
+     * count is of rows created and says nothing about ids that were not this desk's.
+     *
+     * <p>Each id is loaded, not referenced, although the row only needs to point at it: a
+     * reference to an id a caller sent skips the load that would have found it is another desk's,
+     * and the foreign key does not look at desks ({@code TenantScopeTest} holds that line). It
+     * costs the bodies of the messages picked, which is a person's selection on one button press
+     * and not a timer re-reading a table - the case the transfer budget is about.
+     *
+     * @return how many rows were created
+     */
+    @Transactional
+    public int leaveOut(List<Long> mailMessageIds, List<Long> feedItemIds, String note) {
+        String reason = storable(note);
+        String error = reason == null || reason.isBlank()
+                ? "Left out of the queue — not to be read."
+                : "Left out of the queue — " + truncate(reason, 3900);
+
+        int created = 0;
+        if (mailMessageIds != null) {
+            for (Long id : mailMessageIds) {
+                if (id == null || parsedEmails.findByMailMessageId(id).isPresent()) continue;
+                MailMessage message = messages.findById(id).orElse(null);
+                if (message == null) continue;
+                ParsedEmail row = leftOutRow(error);
+                row.setMailMessage(message);
+                parsedEmails.save(row);
+                created++;
+            }
+        }
+        if (feedItemIds != null) {
+            for (Long id : feedItemIds) {
+                if (id == null || parsedEmails.findByFeedItemId(id).isPresent()) continue;
+                FeedItem post = feedItems.findById(id).orElse(null);
+                if (post == null) continue;
+                ParsedEmail row = leftOutRow(error);
+                row.setFeedItem(post);
+                parsedEmails.save(row);
+                created++;
+            }
+        }
+        return created;
+    }
+
+    /**
+     * The row shared by both doors. Only the parse state is set here: the counters default to
+     * zero, the tenant and timestamps are stamped by Hibernate, and exactly one of the message
+     * and the post is set by the caller, which is what the table's check constraint requires.
+     *
+     * <p>{@code attempts} is zero rather than the entity's default of one: nothing was attempted,
+     * and a row that claimed an attempt would be one the Log counts against the retry ceiling.
+     */
+    private static ParsedEmail leftOutRow(String error) {
+        ParsedEmail row = new ParsedEmail();
+        row.setStatus(ParseStatus.IGNORED);
+        row.setAttempts(0);
+        row.setParsedAt(OffsetDateTime.now());
+        row.setError(error);
+        return row;
+    }
+
+    /**
      * Put a message back in the queue — the "read it again" on a failed row.
      *
      * <p>Resetting the attempt count is what makes it useful. A message that hit the ceiling

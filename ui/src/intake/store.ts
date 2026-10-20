@@ -4,6 +4,7 @@ import type {
   ApplyLookupRequest,
   IntakeItemFilter,
   IntakeResolveRequest,
+  LeaveOutRequest,
   LinkSenderRequest,
   ParseStatus,
   ParserSettingsRequest,
@@ -25,6 +26,8 @@ export const intakeKeys = {
   item: (id: number) => [...KEY, 'item', id] as const,
   parsed: (status?: ParseStatus, page?: number) => [...KEY, 'parsed', status, page] as const,
   parsedDetail: (id: number) => [...KEY, 'parsed', 'detail', id] as const,
+  waiting: (source: 'MAIL' | 'WEB', page?: number, size?: number) =>
+    [...KEY, 'waiting', source, page, size] as const,
   sweep: [...KEY, 'sweep'] as const,
   settings: [...KEY, 'settings'] as const,
   vesselFields: [...KEY, 'vessel-fields'] as const,
@@ -86,6 +89,24 @@ export const useParsedEmails = (
   useQuery({
     queryKey: intakeKeys.parsed(params.status, params.page),
     queryFn: () => intakeApi.parsed(params),
+    enabled,
+    placeholderData: (prev) => prev,
+  });
+
+/**
+ * The arrivals the next sweep has not been given, one page of one source.
+ *
+ * Not under its own key apart from the intake prefix: reading or leaving out one of them moves
+ * the header counts too, so every write here invalidates the whole prefix and this list goes
+ * with it.
+ */
+export const useWaiting = (
+  params: { source: 'MAIL' | 'WEB'; page?: number; size?: number },
+  enabled: boolean,
+) =>
+  useQuery({
+    queryKey: intakeKeys.waiting(params.source, params.page, params.size),
+    queryFn: () => intakeApi.waiting(params),
     enabled,
     placeholderData: (prev) => prev,
   });
@@ -243,6 +264,15 @@ export function useIntakeMutations() {
     onSuccess: invalidate,
   });
 
+  /**
+   * Take arrivals out of the queue. Filed as IGNORED on the log, so this is a write to the
+   * same log Reopen reads from, and the header counts move with it.
+   */
+  const leaveOut = useMutation({
+    mutationFn: (body: LeaveOutRequest) => intakeApi.leaveOut(body),
+    onSuccess: invalidate,
+  });
+
   const updateSettings = useMutation({
     mutationFn: (body: ParserSettingsRequest) => intakeApi.updateSettings(body),
     onSuccess: invalidate,
@@ -260,6 +290,7 @@ export function useIntakeMutations() {
     parseMessages,
     reopen,
     ignoreParsed,
+    leaveOut,
     updateSettings,
     resetSettings,
     lookup,
