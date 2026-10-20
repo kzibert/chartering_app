@@ -45,7 +45,7 @@ class EmailParseRunnerQueueTest {
         when(messages.findById(7L)).thenReturn(Optional.of(messageWithBody(7L)));
         when(parsedEmails.findByMailMessageId(7L)).thenReturn(Optional.empty());
 
-        EmailParseRunner.QueueOutcome outcome = runner.queue(List.of(7L, 7L));
+        EmailParseRunner.QueueOutcome outcome = runner.queue(List.of(7L, 7L), false);
 
         assertThat(outcome.queued()).isEqualTo(1);
         assertThat(outcome.skipped()).isZero();
@@ -59,7 +59,7 @@ class EmailParseRunnerQueueTest {
         when(messages.findById(7L)).thenReturn(Optional.of(messageWithBody(7L)));
         when(parsedEmails.findByMailMessageId(7L)).thenReturn(Optional.empty());
 
-        runner.queue(List.of(7L));
+        runner.queue(List.of(7L), false);
 
         ParsedEmail row = savedRow();
         assertThat(row.getStatus()).isEqualTo(ParseStatus.QUEUED);
@@ -76,7 +76,7 @@ class EmailParseRunnerQueueTest {
         queued.setAttempts(0);
         when(parsedEmails.findByMailMessageId(7L)).thenReturn(Optional.of(queued));
 
-        EmailParseRunner.QueueOutcome outcome = runner.queue(List.of(7L));
+        EmailParseRunner.QueueOutcome outcome = runner.queue(List.of(7L), false);
 
         assertThat(outcome.queued()).isEqualTo(1);
         assertThat(outcome.skipped()).isZero();
@@ -99,7 +99,7 @@ class EmailParseRunnerQueueTest {
         when(parsedEmails.findByMailMessageId(7L)).thenReturn(Optional.of(parsed));
         when(parsedEmails.findByMailMessageId(8L)).thenReturn(Optional.of(skipped));
 
-        EmailParseRunner.QueueOutcome outcome = runner.queue(List.of(7L, 8L));
+        EmailParseRunner.QueueOutcome outcome = runner.queue(List.of(7L, 8L), false);
 
         assertThat(outcome.queued()).isZero();
         assertThat(outcome.skipped()).isEqualTo(2);
@@ -124,7 +124,7 @@ class EmailParseRunnerQueueTest {
         blank.setBodyText("   ");
         when(messages.findById(8L)).thenReturn(Optional.of(blank));
 
-        EmailParseRunner.QueueOutcome outcome = runner.queue(List.of(7L, 8L));
+        EmailParseRunner.QueueOutcome outcome = runner.queue(List.of(7L, 8L), false);
 
         assertThat(outcome.queued()).isZero();
         assertThat(outcome.skipped()).isEqualTo(2);
@@ -138,7 +138,7 @@ class EmailParseRunnerQueueTest {
 
     @Test
     void aNullIdIsNotFound() {
-        EmailParseRunner.QueueOutcome outcome = runner.queue(Arrays.asList((Long) null));
+        EmailParseRunner.QueueOutcome outcome = runner.queue(Arrays.asList((Long) null), false);
 
         assertThat(outcome.skipped()).isEqualTo(1);
         assertThat(outcome.items()).containsExactly(
@@ -171,7 +171,7 @@ class EmailParseRunnerQueueTest {
         parsed.setParsedAt(readAt);
         when(parsedEmails.findByMailMessageId(4L)).thenReturn(Optional.of(parsed));
 
-        EmailParseRunner.QueueOutcome outcome = runner.queue(List.of(6L, 4L, 1L, 5L, 2L, 3L, 4L));
+        EmailParseRunner.QueueOutcome outcome = runner.queue(List.of(6L, 4L, 1L, 5L, 2L, 3L, 4L), false);
 
         assertThat(outcome.queued()).isEqualTo(3);
         assertThat(outcome.skipped()).isEqualTo(3);
@@ -197,6 +197,66 @@ class EmailParseRunnerQueueTest {
         assertThat(failed.getStatus()).isEqualTo(ParseStatus.QUEUED);
         assertThat(failed.getAttempts()).isZero();
         assertThat(failed.getError()).isNull();
+    }
+
+    @Test
+    void aRereadTurnsAReadRowBackToQueuedAsAFirstAttemptAndKeepsItsOldReading() {
+        when(messages.findById(7L)).thenReturn(Optional.of(messageWithBody(7L)));
+        when(messages.findById(8L)).thenReturn(Optional.of(messageWithBody(8L)));
+        OffsetDateTime readAt = OffsetDateTime.parse("2026-10-01T09:30:00+01:00");
+        ParsedEmail parsed = new ParsedEmail();
+        parsed.setStatus(ParseStatus.PARSED);
+        parsed.setAttempts(1);
+        parsed.setParsedAt(readAt);
+        parsed.setRawJson("{\"old\":true}");
+        ParsedEmail skipped = new ParsedEmail();
+        skipped.setStatus(ParseStatus.SKIPPED);
+        skipped.setAttempts(1);
+        skipped.setError("Not a circular");
+        skipped.setParsedAt(readAt);
+        when(parsedEmails.findByMailMessageId(7L)).thenReturn(Optional.of(parsed));
+        when(parsedEmails.findByMailMessageId(8L)).thenReturn(Optional.of(skipped));
+
+        EmailParseRunner.QueueOutcome outcome = runner.queue(List.of(7L, 8L), true);
+
+        assertThat(outcome.queued()).isEqualTo(2);
+        assertThat(outcome.skipped()).isZero();
+        assertThat(outcome.items()).extracting(
+                        EmailParseRunner.QueueOutcome.Item::mailMessageId,
+                        EmailParseRunner.QueueOutcome.Item::result,
+                        EmailParseRunner.QueueOutcome.Item::parseStatus,
+                        EmailParseRunner.QueueOutcome.Item::parsedAt)
+                .containsExactly(
+                        tuple(7L, EmailParseRunner.QueueOutcome.Result.REREAD, null, null),
+                        tuple(8L, EmailParseRunner.QueueOutcome.Result.REREAD, null, null));
+        assertThat(parsed.getStatus()).isEqualTo(ParseStatus.QUEUED);
+        assertThat(parsed.getAttempts()).isZero();
+        assertThat(parsed.getError()).isNull();
+        assertThat(parsed.getParsedAt()).isAfter(readAt);
+        // The reading fields are not cleared here: the sweep overwrites them when it reads the row.
+        assertThat(parsed.getRawJson()).isEqualTo("{\"old\":true}");
+        assertThat(skipped.getStatus()).isEqualTo(ParseStatus.QUEUED);
+        assertThat(skipped.getAttempts()).isZero();
+        assertThat(skipped.getError()).isNull();
+        verify(parsedEmails, times(2)).save(any());
+    }
+
+    @Test
+    void aRereadOfAMessageWithNoTextIsStillSkipped() {
+        when(messages.findById(5L)).thenReturn(Optional.of(blankBody(5L)));
+        ParsedEmail parsed = new ParsedEmail();
+        parsed.setStatus(ParseStatus.PARSED);
+        when(parsedEmails.findByMailMessageId(5L)).thenReturn(Optional.of(parsed));
+
+        EmailParseRunner.QueueOutcome outcome = runner.queue(List.of(5L), true);
+
+        assertThat(outcome.queued()).isZero();
+        assertThat(outcome.skipped()).isEqualTo(1);
+        assertThat(outcome.items()).containsExactly(
+                new EmailParseRunner.QueueOutcome.Item(5L, EmailParseRunner.QueueOutcome.Result.NO_TEXT,
+                        "Subject 5", "broker@example.test", null, null));
+        assertThat(parsed.getStatus()).isEqualTo(ParseStatus.PARSED);
+        verify(parsedEmails, never()).save(any());
     }
 
     private static MailMessage messageWithBody(long id) {

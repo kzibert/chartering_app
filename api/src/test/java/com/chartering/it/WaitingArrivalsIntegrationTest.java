@@ -401,6 +401,48 @@ class WaitingArrivalsIntegrationTest extends IntegrationTest {
         assertCountMatchesWaiting(NO_LIMIT);
     }
 
+    /*
+     * "Read it again": a message already read is queued again with reread set, and its new reading
+     * replaces the old one on the same row. The row is QUEUED, so it is waiting whatever its age and
+     * ahead of the ordinary arrivals, exactly as a message that was never read.
+     */
+
+    @Test
+    void aRereadOfAMessageAlreadyReadIsWaitingAgainAndComesFirst() {
+        ParserSettings.Values lookback7 = new ParserSettings.Values(30, 20, 7);
+        LocalDateTime now = LocalDateTime.now();
+        String tag = tag();
+        long old = mailAt("Old read " + tag, "Ops desk " + tag, now.minusDays(40), now.minusDays(40));
+        long fresh = mail("Fresh " + tag, "Ops desk " + tag);
+        TenantContext.runAs(DESK, () -> parsedEmails.save(
+                parsed(messages.findById(old).orElseThrow(), null, ParseStatus.PARSED)));
+
+        assertThat(waitingIds(lookback7)).doesNotContain(old);
+        assertQueued(queue(old), 0, 1);
+
+        EmailParseRunner.QueueOutcome outcome = reread(old);
+        assertQueued(outcome, 1, 0);
+        assertThat(outcome.items()).extracting(
+                        EmailParseRunner.QueueOutcome.Item::mailMessageId,
+                        EmailParseRunner.QueueOutcome.Item::result)
+                .containsExactly(tuple(old, EmailParseRunner.QueueOutcome.Result.REREAD));
+        assertThat(rowFor(old).orElseThrow().getStatus()).isEqualTo(ParseStatus.QUEUED);
+        // Idempotent like any queue request: a second press finds the row already queued.
+        assertThat(reread(old).items().get(0).result()).isEqualTo(EmailParseRunner.QueueOutcome.Result.ALREADY_QUEUED);
+
+        List<Long> waiting = waitingIds(lookback7);
+        assertThat(waiting).contains(old, fresh);
+        assertThat(waiting.indexOf(old)).isLessThan(waiting.indexOf(fresh));
+
+        List<Long> unparsed = TenantContext.callAs(DESK, () ->
+                parsedEmails.unparsed(lookback7.receivedSince(), lookback7.receivedFloor(), ALL))
+                .stream().map(MailMessage::getId).toList();
+        assertThat(unparsed).contains(old, fresh);
+        assertThat(unparsed.indexOf(old)).isLessThan(unparsed.indexOf(fresh));
+
+        assertCountMatchesWaiting(lookback7);
+    }
+
     // ------------------------------------------------------------------ fixtures
 
     private static String tag() {
@@ -415,7 +457,13 @@ class WaitingArrivalsIntegrationTest extends IntegrationTest {
 
     private EmailParseRunner.QueueOutcome queue(long... mailMessageIds) {
         List<Long> ids = Arrays.stream(mailMessageIds).boxed().toList();
-        return TenantContext.callAs(DESK, () -> runner.queue(ids));
+        return TenantContext.callAs(DESK, () -> runner.queue(ids, false));
+    }
+
+    /** The same request as the screen sends with reread set. */
+    private EmailParseRunner.QueueOutcome reread(long... mailMessageIds) {
+        List<Long> ids = Arrays.stream(mailMessageIds).boxed().toList();
+        return TenantContext.callAs(DESK, () -> runner.queue(ids, true));
     }
 
     private static void assertQueued(EmailParseRunner.QueueOutcome outcome, int queued, int skipped) {

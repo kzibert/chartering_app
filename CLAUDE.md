@@ -662,7 +662,10 @@ a date on it: "SPOT AT MARMARA" was true on Monday and is a lie by Friday. The s
 reported by several brokers who disagree, and both readings are the record. Open Fleet shows
 the newest live row per vessel — a fleet list with the same ship on it twice cannot be
 counted — and the vessel's own history shows the lot. A new live report supersedes the *same
-reporter's* previous one and nobody else's. Nothing is deleted on replacement; `SUPERSEDED`
+reporter's* previous one and nobody else's. "Previous" means earlier-dated: a list read late
+(the sweep reads newest first, so a backlog does this) never displaces a newer reading from the
+same reporter; it is kept as a superseded row, so the history holds it. Nothing is deleted on
+replacement; `SUPERSEDED`
 is a status, because "she was said to be open Adriatic and then wasn't" is worth looking back
 at.
 
@@ -1014,7 +1017,7 @@ It skips those already parsed or skipped and re-reads failed and ignored ones. T
 exist under `LOCAL` too. Render pins `PARSER_ENABLED=true` and `PARSER_PROVIDER=CLOUD`.
 *Add to waiting list* (`POST /intake/queue`) reads nothing now: it writes a `QUEUED` row for each
 picked message, and the sweep takes those first on its next pass whatever their age, because a
-person chose them. Leave out turns a queued row into `IGNORED`.
+person chose them. With `reread` an already-read message is queued again and its new reading replaces the old one on the same parse row. Leave out turns a queued row into `IGNORED`.
 
 **What lands unwatched and what waits is the whole design.** A parse may write anything that
 only *adds*: a position for a hull already on file, a cargo nothing else looks like, a

@@ -20,6 +20,7 @@ import com.chartering.dto.ParseMessagesRequest;
 import com.chartering.dto.ParsedEmailResponse;
 import com.chartering.dto.ParserSettingsRequest;
 import com.chartering.dto.ParserSettingsResponse;
+import com.chartering.dto.QueueMessagesRequest;
 import com.chartering.dto.QueueMessagesResponse;
 import com.chartering.dto.SweepResponse;
 import com.chartering.dto.WaitingArrivalResponse;
@@ -172,15 +173,18 @@ public class IntakeController {
             description = "Reads nothing now. Each picked message is recorded as queued, and the sweep "
                     + "takes it on its next pass whatever its age, ahead of the ordinary arrivals. "
                     + "Read into Intake (POST /parse) is the one that reads at once. Messages already "
-                    + "read, messages with no text body and ids not on this desk are skipped; a message "
-                    + "already queued is counted as queued and left as it is. The response also lists each "
-                    + "picked message in the order sent, with its outcome: QUEUED, REQUEUED (a failed or "
-                    + "ignored row queued again), ALREADY_QUEUED, ALREADY_READ (with the row's parseStatus "
-                    + "and parsedAt), NO_TEXT or NOT_FOUND. Subject and sender come with every message found.")
-    public ResponseEntity<QueueMessagesResponse> queue(@Valid @RequestBody ParseMessagesRequest req) {
+                    + "read are skipped unless reread is true, in which case they are queued again and "
+                    + "their new reading replaces the old one on the same parse row. Messages with no "
+                    + "text body and ids not on this desk are skipped; a message already queued is counted "
+                    + "as queued and left as it is. The response also lists each picked message in the order "
+                    + "sent, with its outcome: QUEUED, REQUEUED (a failed or ignored row queued again), "
+                    + "ALREADY_QUEUED, REREAD (a read row queued again), ALREADY_READ (with the row's "
+                    + "parseStatus and parsedAt), NO_TEXT or NOT_FOUND. Subject and sender come with every "
+                    + "message found.")
+    public ResponseEntity<QueueMessagesResponse> queue(@Valid @RequestBody QueueMessagesRequest req) {
         // Gated like the other intake actions: the same 404 where the feature is not part of this deployment.
         availability.require();
-        EmailParseRunner.QueueOutcome outcome = runner.queue(req.getMailMessageIds());
+        EmailParseRunner.QueueOutcome outcome = runner.queue(req.getMailMessageIds(), req.isReread());
         return ResponseEntity.ok(new QueueMessagesResponse(outcome.queued(), outcome.skipped(),
                 outcome.items().stream().map(IntakeController::queuedMessage).toList()));
     }

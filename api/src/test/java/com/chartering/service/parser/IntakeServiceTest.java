@@ -12,6 +12,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -195,6 +196,74 @@ class IntakeServiceTest {
                 && s.getNotes() != null && s.getNotes().startsWith("Merged on arrival")));
     }
 
+    /**
+     * The email's cargo was made on the first reading and has since been fixed. Read again (a
+     * re-parse), it must find the cargo it made and not make a second one with this email as its
+     * only source.
+     */
+    @Test
+    void aRereadOfAnEmailWhoseCargoHasSinceBeenFixedDoesNotMakeASecondCargo() {
+        Cargo fixed = chornomorskWheat();
+        fixed.setStatus(CargoStatus.FIXED);
+        when(cargoSources.cargoesFromMailMessage(100L)).thenReturn(List.of(fixed));
+        when(cargoes.findDuplicateCandidates(any())).thenReturn(List.of());
+        when(cargoes.save(any(Cargo.class))).thenAnswer(i -> i.getArgument(0));
+        when(styles.read(any(), any())).thenReturn(new CompanyStyleIntake.Reading(null, List.of(), null));
+
+        IntakeService.ApplyOutcome outcome = service.apply(parsed,
+                new Extraction("cargo_offer", List.of(wheatCargo()), List.of(), null, null, null));
+
+        assertThat(outcome.cargoesApplied()).isZero();
+        verify(cargoes, never()).save(any(Cargo.class));
+        verify(cargoSources, never()).save(any(CargoSource.class));
+    }
+
+    /**
+     * A re-read is not a reason to stop reading. The first pass made the wheat; the email also
+     * offers barley, which the first pass missed, and the barley is still created.
+     */
+    @Test
+    void aRereadEmailWithASecondCargoItFirstMissedStillMakesThatOne() {
+        Cargo fixed = chornomorskWheat();
+        fixed.setStatus(CargoStatus.FIXED);
+        when(cargoSources.cargoesFromMailMessage(100L)).thenReturn(List.of(fixed));
+        when(cargoes.findDuplicateCandidates(any())).thenReturn(List.of());
+        when(cargoes.save(any(Cargo.class))).thenAnswer(i -> i.getArgument(0));
+        when(styles.read(any(), any())).thenReturn(new CompanyStyleIntake.Reading(null, List.of(), null));
+
+        Extraction.ExtractedCargo barley = new Extraction.ExtractedCargo(
+                "Barley", new BigDecimal("20000"), "MT", "", null, null, null,
+                "Odessa", "", "", "", "2026-09-12", "2026-09-18", "",
+                "", "", null, null, null, null, null, null, null,
+                "", "", "", "", "");
+        IntakeService.ApplyOutcome outcome = service.apply(parsed,
+                new Extraction("cargo_offer", List.of(wheatCargo(), barley), List.of(), null, null, null));
+
+        assertThat(outcome.cargoesApplied()).isEqualTo(1);
+        ArgumentCaptor<Cargo> made = ArgumentCaptor.forClass(Cargo.class);
+        verify(cargoes).save(made.capture());
+        assertThat(made.getValue().getCommodity()).isEqualTo("Barley");
+    }
+
+    private static Extraction.ExtractedCargo wheatCargo() {
+        return new Extraction.ExtractedCargo(
+                "Wheat", new BigDecimal("25000"), "MT", "", null, null, null,
+                "Chornomorsk", "", "", "", "2026-09-10", "2026-09-15", "",
+                "", "", null, null, null, null, null, null, null,
+                "", "", "", "", "");
+    }
+
+    private static Cargo chornomorskWheat() {
+        Cargo c = new Cargo();
+        c.setId(7L);
+        c.setCommodity("Wheat");
+        c.setQuantity(new BigDecimal("25000"));
+        c.setLoadPortText("Chornomorsk");
+        c.setLaycanFrom(LocalDate.of(2026, 9, 10));
+        c.setLaycanTo(LocalDate.of(2026, 9, 15));
+        return c;
+    }
+
     // ---------------------------------------------------------- the firm that signed it
 
     /** A question about a firm on file, as CompanyStyleIntake would hand one over. */
@@ -365,19 +434,71 @@ class IntakeServiceTest {
         assertThat(known.getReportedAt()).isEqualTo(fresher);
     }
 
+    /**
+     * The sweep reads newest first, so after a backlog an older email from a broker is read after
+     * a newer one from the same broker. Its reading is not a later statement and must not take the
+     * newer one's place on Open Fleet; it is kept on her record as history.
+     */
+    @Test
+    void anOlderReadingReadAfterANewerOneFromTheSameBrokerIsKeptAsHistoryOnly() {
+        when(resolver.resolveVessel(any(), any()))
+                .thenReturn(new IntakeResolver.ResolvedVessel(pacificDawn, IntakeResolver.VesselMatch.NAME));
+        VesselPosition newer = live(interscan, LocalDate.of(2026, 9, 5), LocalDate.of(2026, 9, 7),
+                "5/7 SEPT", OffsetDateTime.parse("2026-09-06T08:30:00+02:00"));
+        onFile.add(newer);
+
+        IntakeService.ApplyOutcome outcome = service.apply(parsed,
+                positionEmail(opening("PACIFIC DAWN", "1/3 SEPT", "2026-09-01", "2026-09-03")));
+
+        // The newer list is still the one Open Fleet shows.
+        assertThat(newer.getStatus()).isEqualTo(PositionStatus.LIVE);
+        // The older reading is recorded, but as history.
+        ArgumentCaptor<VesselPosition> saved = ArgumentCaptor.forClass(VesselPosition.class);
+        verify(positions).save(saved.capture());
+        assertThat(saved.getValue().getStatus()).isEqualTo(PositionStatus.SUPERSEDED);
+        assertThat(saved.getValue().getOpenFrom()).isEqualTo(LocalDate.of(2026, 9, 1));
+        // Nothing on Open Fleet changed, so it is not counted as an applied position.
+        assertThat(outcome.positionsApplied()).isZero();
+    }
+
+    /**
+     * The same email read again, or a second copy of the same list, carries the sender's own clock
+     * unchanged. Nothing is later than it, so the earlier reading is replaced as before.
+     */
+    @Test
+    void aReadingAtTheSameInstantAsTheLiveOneReplacesIt() {
+        when(resolver.resolveVessel(any(), any()))
+                .thenReturn(new IntakeResolver.ResolvedVessel(pacificDawn, IntakeResolver.VesselMatch.NAME));
+        OffsetDateTime sameInstant = message.getSentAt().atZone(ZoneId.systemDefault()).toOffsetDateTime();
+        VesselPosition earlier = live(interscan, LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 3),
+                "1/3 SEPT", sameInstant);
+        onFile.add(earlier);
+
+        IntakeService.ApplyOutcome outcome = service.apply(parsed,
+                positionEmail(opening("PACIFIC DAWN", "5/7 SEPT", "2026-09-05", "2026-09-07")));
+
+        assertThat(earlier.getStatus()).isEqualTo(PositionStatus.SUPERSEDED);
+        ArgumentCaptor<VesselPosition> saved = ArgumentCaptor.forClass(VesselPosition.class);
+        verify(positions).save(saved.capture());
+        assertThat(saved.getValue().getStatus()).isEqualTo(PositionStatus.LIVE);
+        assertThat(outcome.positionsApplied()).isEqualTo(1);
+    }
+
     @Test
     void recordsANewRowAndSupersedesTheSameBrokersPreviousOneWhenTheDatesMove() {
         when(resolver.resolveVessel(any(), any()))
                 .thenReturn(new IntakeResolver.ResolvedVessel(pacificDawn, IntakeResolver.VesselMatch.NAME));
+        // Told on the 3rd, before the email under test (sent on the 4th): it is the earlier list.
         VesselPosition yesterday = live(interscan, LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 3),
-                "1/3 SEPT", OffsetDateTime.now().minusDays(1));
+                "1/3 SEPT", OffsetDateTime.parse("2026-09-03T08:30:00+02:00"));
         onFile.add(yesterday);
 
-        service.apply(parsed,
+        IntakeService.ApplyOutcome outcome = service.apply(parsed,
                 positionEmail(opening("PACIFIC DAWN", "5/7 SEPT", "2026-09-05", "2026-09-07")));
 
         verify(positions).save(any(VesselPosition.class));
         assertThat(yesterday.getStatus()).isEqualTo(PositionStatus.SUPERSEDED);
+        assertThat(outcome.positionsApplied()).isEqualTo(1);
     }
 
     @Test

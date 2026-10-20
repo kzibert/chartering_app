@@ -396,6 +396,16 @@ export interface ParseMessagesRequest {
 }
 
 /**
+ * The waiting list's request. `reread` is for an email already read: without it the answer is
+ * ALREADY_READ and nothing is queued; with it the email is queued again and the new reading
+ * replaces the old one. Absent means false.
+ */
+export interface QueueMessagesRequest {
+  mailMessageIds: number[];
+  reread?: boolean;
+}
+
+/**
  * What the waiting list took from a set of picked messages. Already-read messages and ones
  * with no text are skipped rather than failing the whole call, so the caller can say how many
  * of the picked ones actually joined the list.
@@ -405,6 +415,8 @@ export type QueueOutcome =
   | 'REQUEUED'
   | 'ALREADY_QUEUED'
   | 'ALREADY_READ'
+  /** Only with `reread`: an email already read, queued again. */
+  | 'REREAD'
   | 'NO_TEXT'
   | 'NOT_FOUND';
 
@@ -725,7 +737,7 @@ export const intakeApi = {
    * Put picked messages on the waiting list instead of reading them now. Whatever their age,
    * the timed sweep picks them up on its next pass.
    */
-  queueMessages: (body: ParseMessagesRequest) =>
+  queueMessages: (body: QueueMessagesRequest) =>
     client.post<QueueMessagesResponse>('/intake/queue', body).then((r) => r.data),
 
   /** Asks the running sweep to stop after the message it is on. 204. */

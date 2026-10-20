@@ -307,7 +307,11 @@ public class EmailParseRunner {
      * <ul>
      *   <li>not on this desk, or no text body → skipped. A body is what the model reads, and a
      *       queued row for a message with none would sit outside the sweep's queue for ever.</li>
-     *   <li>already {@code PARSED} or {@code SKIPPED} → skipped; it has been read.</li>
+     *   <li>already {@code PARSED} or {@code SKIPPED} → skipped; it has been read. With
+     *       {@code reread} it is turned to {@code QUEUED} instead, as a first attempt, and reported as
+     *       {@link QueueOutcome.Result#REREAD}. The reading fields are deliberately left as they are:
+     *       the sweep overwrites them when it reads the row, so until then the row still shows the
+     *       reading it had, and nothing is lost by asking for a second look.</li>
      *   <li>already {@code QUEUED} → queued, and left as it is.</li>
      *   <li>{@code FAILED} or {@code IGNORED} → turned back to {@code QUEUED} with the attempt count
      *       and error cleared, so the sweep reads it as a first attempt. A person asking again is a
@@ -322,11 +326,13 @@ public class EmailParseRunner {
      * order the ids were given, each once. The subject and sender are the message's own, so a
      * person reading the answer can tell which email an id was.
      *
-     * @return how many were queued, counting those already queued, how many were skipped, and what
-     *         became of each id
+     * @param reread whether a message already read is queued again for a fresh reading; {@code false}
+     *               leaves it skipped, as it always was
+     * @return how many were queued, counting those already queued and re-read, how many were skipped,
+     *         and what became of each id
      */
     @Transactional
-    public QueueOutcome queue(List<Long> mailMessageIds) {
+    public QueueOutcome queue(List<Long> mailMessageIds, boolean reread) {
         OffsetDateTime now = OffsetDateTime.now();
         List<QueueOutcome.Item> items = new ArrayList<>();
         for (Long id : new LinkedHashSet<>(mailMessageIds)) {
@@ -368,13 +374,26 @@ public class EmailParseRunner {
                     parsedEmails.save(row);
                     items.add(new QueueOutcome.Item(id, QueueOutcome.Result.REQUEUED, subject, fromAddress, null, null));
                 }
-                case PARSED, SKIPPED -> items.add(new QueueOutcome.Item(
-                        id, QueueOutcome.Result.ALREADY_READ, subject, fromAddress,
-                        row.getStatus(), row.getParsedAt()));
+                case PARSED, SKIPPED -> {
+                    if (reread) {
+                        // The same row, so the next reading overwrites this one rather than adding a second.
+                        row.setStatus(ParseStatus.QUEUED);
+                        row.setAttempts(0);
+                        row.setError(null);
+                        row.setParsedAt(now);
+                        parsedEmails.save(row);
+                        items.add(new QueueOutcome.Item(id, QueueOutcome.Result.REREAD, subject, fromAddress, null, null));
+                    } else {
+                        items.add(new QueueOutcome.Item(
+                                id, QueueOutcome.Result.ALREADY_READ, subject, fromAddress,
+                                row.getStatus(), row.getParsedAt()));
+                    }
+                }
             }
         }
         int queued = (int) items.stream().filter(i -> i.result() == QueueOutcome.Result.QUEUED
                 || i.result() == QueueOutcome.Result.REQUEUED
+                || i.result() == QueueOutcome.Result.REREAD
                 || i.result() == QueueOutcome.Result.ALREADY_QUEUED).count();
         return new QueueOutcome(queued, items.size() - queued, items);
     }
@@ -382,8 +401,9 @@ public class EmailParseRunner {
     /**
      * What {@link #queue} did: requests recorded, ids passed over, and what happened to each id.
      *
-     * <p>Queued counts requests a row now stands for, including ones that were already queued, so
-     * pressing the button twice reports the same figure both times. Skipped is everything else.
+     * <p>Queued counts requests a row now stands for, including ones that were already queued and
+     * ones queued again for a reread, so pressing the button twice reports the same figure both times.
+     * Skipped is everything else.
      *
      * <p>{@code items} has one entry per distinct id asked for, in the order asked. A null id has
      * no message to name, so it comes back {@link Result#NOT_FOUND} with a null id.
@@ -400,6 +420,11 @@ public class EmailParseRunner {
             ALREADY_QUEUED,
             /** The row is PARSED or SKIPPED; nothing was written. */
             ALREADY_READ,
+            /**
+             * The row was PARSED or SKIPPED and the request asked for a reread: it is QUEUED again as a
+             * first attempt, and its old reading stays on the row until the sweep overwrites it.
+             */
+            REREAD,
             /** The message is on this desk but has no body text to read. */
             NO_TEXT,
             /** Null, or not a message on this desk. */

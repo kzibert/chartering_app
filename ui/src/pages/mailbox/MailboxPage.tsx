@@ -320,7 +320,7 @@ export default function MailboxPage() {
   // Unlike Read now this never meets a running sweep: it only writes the queue, which the next
   // sweep reads, so it works while a run is going. A failure is said as the server words it.
   const queuePicked = () =>
-    queueMessages.mutate(picked, {
+    queueMessages.mutate({ mailMessageIds: picked }, {
       onSuccess: (r) => {
         setPicked([]);
         const { messages } = r;

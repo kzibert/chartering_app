@@ -519,6 +519,18 @@ public class IntakeService {
      *
      * <p>Superseding is scoped to the same reporter, here as everywhere: when GN says she is
      * open Adriatic and Interscan says the Aegean, both are what we were told.
+     *
+     * <p><b>"Previous" means earlier-dated.</b> The sweep reads newest first, so after a backlog
+     * an older email from a broker is read after a newer one from that same broker. Its reading is
+     * not a later statement, so it must not displace the newer one on Open Fleet. A reading
+     * therefore supersedes only the reporter's LIVE rows reported at or before its own date (a row
+     * with no date counts as older, and an equal date is replaced, so a re-read of the same email
+     * replaces its own earlier reading). If the reporter already has a LIVE row reported after this
+     * arrival, the arrival is still recorded, as a SUPERSEDED row so that it reads as history
+     * ("she was said to be open X"), and the newer row is left LIVE.
+     *
+     * @return whether a LIVE row was written, which is whether Open Fleet changed. A history-only
+     *         row is false: the parse's positions-applied count means positions that landed there.
      */
     private boolean recordPosition(Vessel vessel, Extraction.ExtractedVessel v, Arrival arrival) {
         Port openPort = resolver.resolvePort(v.openPort());
@@ -547,15 +559,19 @@ public class IntakeService {
             return false;
         }
 
+        boolean newerOnFile = false;
         for (VesselPosition p : existing) {
-            if (p.getStatus() == PositionStatus.LIVE && sameReporter(p, reporter)) {
-                p.setStatus(PositionStatus.SUPERSEDED);
-            }
+            if (p.getStatus() != PositionStatus.LIVE || !sameReporter(p, reporter)) continue;
+            // A row this reading is older than is the newer statement, and stays live. Only rows at
+            // or before this reading's date are what it replaces.
+            if (reportedAfter(p, reportedAt)) newerOnFile = true;
+            else p.setStatus(PositionStatus.SUPERSEDED);
         }
 
         VesselPosition p = new VesselPosition();
         p.setVessel(vessel);
-        p.setStatus(PositionStatus.LIVE);
+        // An older reading that arrives late is kept on her record as history, not as the position.
+        p.setStatus(newerOnFile ? PositionStatus.SUPERSEDED : PositionStatus.LIVE);
         p.setOpenPort(openPort);
         p.setOpenPortText(Extraction.text(v.openPort()));
         p.setOpenArea(openArea);
@@ -572,7 +588,7 @@ public class IntakeService {
         p.setReportedAt(reportedAt);
         p.setNotes(Extraction.text(v.notes()));
         positions.save(p);
-        return true;
+        return !newerOnFile;
     }
 
     /**
@@ -586,14 +602,22 @@ public class IntakeService {
                                     Extraction.ExtractedCargo c) {
         ResolvedCargo resolved = resolve(c);
 
+        // This very arrival, read again. Asked first, and of every cargo the arrival is already a
+        // source of, whatever its status now. Asking only the recognised-on-arrival statuses (below)
+        // missed a cargo this email made and that has since been fixed, failed or withdrawn, and the
+        // re-read then made a second cargo with this email as its only source. The sender anchor is
+        // not needed here: only whether anything agrees is asked. A second cargo in the same email
+        // differs on commodity or load point, so it is not taken for the first and is still created.
+        if (CargoMatcher.findDuplicate(resolved, cargoesFromArrival(arrival), Set.of()).isPresent()) {
+            return new CargoOutcome(false, 0);
+        }
+
         List<Cargo> candidates = cargoes.findDuplicateCandidates(CargoService.RECOGNISED_ON_ARRIVAL_STATUSES);
         Optional<CargoMatcher.Candidate> duplicate =
                 CargoMatcher.findDuplicate(resolved, candidates, sourcedBy(arrival));
 
         if (duplicate.isPresent()) {
             CargoMatcher.Candidate candidate = duplicate.get();
-            // This very arrival, read again: it is already on the cargo and asks nothing.
-            if (alreadySourced(candidate.cargo(), arrival)) return new CargoOutcome(false, 0);
             if (candidate.certain()) {
                 mergeOnArrival(candidate, resolved, arrival);
                 return new CargoOutcome(false, 0);
@@ -605,6 +629,16 @@ public class IntakeService {
         Cargo cargo = createCargo(resolved, arrival);
         addSource(cargo, arrival, null);
         return new CargoOutcome(true, 0);
+    }
+
+    /**
+     * The cargoes this arrival is already a source of, of any status — the re-read guard in
+     * {@link #applyCargo}.
+     */
+    private List<Cargo> cargoesFromArrival(Arrival arrival) {
+        if (arrival.message() != null) return cargoSources.cargoesFromMailMessage(arrival.message().getId());
+        if (arrival.post() != null) return cargoSources.cargoesFromFeedItem(arrival.post().getId());
+        return List.of();
     }
 
     /**
@@ -1824,6 +1858,14 @@ public class IntakeService {
                 IntakeResolver.date(c.laycanFrom()),
                 IntakeResolver.date(c.laycanTo()),
                 resolver.resolveCompany(c.charterer()));
+    }
+
+    /**
+     * Whether a row was reported after this reading. A row with no date is older than any reading,
+     * so an undated row never blocks a dated one from superseding it.
+     */
+    private static boolean reportedAfter(VesselPosition p, OffsetDateTime at) {
+        return p.getReportedAt() != null && at != null && p.getReportedAt().isAfter(at);
     }
 
     private static boolean sameReporter(VesselPosition p, Company reporter) {

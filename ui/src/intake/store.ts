@@ -7,6 +7,7 @@ import type {
   LeaveOutRequest,
   LinkSenderRequest,
   ParseStatus,
+  QueueMessagesRequest,
   ParserSettingsRequest,
 } from '../api/intake';
 
@@ -235,7 +236,7 @@ export function useIntakeMutations() {
    * is what the same invalidation covers.
    */
   const queueMessages = useMutation({
-    mutationFn: (mailMessageIds: number[]) => intakeApi.queueMessages({ mailMessageIds }),
+    mutationFn: (body: QueueMessagesRequest) => intakeApi.queueMessages(body),
     onSuccess: invalidate,
   });
 
