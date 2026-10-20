@@ -1,6 +1,8 @@
 package com.chartering.repository;
 
+import com.chartering.dto.WaitingArrivalResponse;
 import com.chartering.model.FeedItem;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
@@ -66,6 +68,42 @@ public interface FeedItemRepository
             order by coalesce(i.publishedAt, i.fetchedAt) desc
             """)
     List<FeedItem> unparsedForIntake(@Param("since") LocalDateTime since, Pageable pageable);
+
+    /**
+     * The board half of the Intake tab's "waiting" list: the rows {@link #unparsedForIntake}
+     * hands the sweep, in the same order, projected to what a list row prints.
+     *
+     * <p>{@code text} is cut to its opening 300 characters in SQL, not in Java: a board post is a
+     * whole circular and a page of them would otherwise carry every one in full. The opening is
+     * enough to tell a position list from a newsletter, which is all a row needs to say.
+     *
+     * <p>No sender address or company: a post has no envelope, and the reporter of a board post
+     * is only worked out by the parser, so a row here shows the author the page printed and the
+     * board it came from. The {@code countQuery} is the same predicate as
+     * {@link #countUnparsedForIntake}, and the integration test checks the two agree.
+     */
+    @Query(value = """
+            select new com.chartering.dto.WaitingArrivalResponse(
+                'WEB', i.id, coalesce(i.publishedAt, i.fetchedAt), i.author,
+                cast(null as string), cast(null as string), i.title, substring(i.text, 1, 300), s.name)
+            from FeedItem i join i.source s
+            where s.enabled = true
+              and exists (select 1 from FeedIntakeSubscription x where x.feedSourceId = s.id)
+              and i.text is not null and i.text <> ''
+              and coalesce(i.publishedAt, i.fetchedAt) >= :since
+              and not exists (select 1 from ParsedEmail p where p.feedItem = i)
+            order by coalesce(i.publishedAt, i.fetchedAt) desc
+            """,
+            countQuery = """
+            select count(i) from FeedItem i
+            where i.source.enabled = true
+              and exists (select 1 from FeedIntakeSubscription x where x.feedSourceId = i.source.id)
+              and i.text is not null and i.text <> ''
+              and coalesce(i.publishedAt, i.fetchedAt) >= :since
+              and not exists (select 1 from ParsedEmail p where p.feedItem = i)
+            """)
+    Page<WaitingArrivalResponse> waitingForIntake(
+            @Param("since") LocalDateTime since, Pageable pageable);
 
     /** How many posts are waiting to be read, for the Intake tab's header. */
     @Query("""

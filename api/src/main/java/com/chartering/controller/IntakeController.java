@@ -13,18 +13,22 @@ import com.chartering.dto.IntakePasteDraftResponse;
 import com.chartering.dto.IntakePasteRequest;
 import com.chartering.dto.IntakeResolveRequest;
 import com.chartering.dto.IntakeStatusResponse;
+import com.chartering.dto.LeaveOutRequest;
+import com.chartering.dto.LeaveOutResponse;
 import com.chartering.dto.PageResponse;
 import com.chartering.dto.ParseMessagesRequest;
 import com.chartering.dto.ParsedEmailResponse;
 import com.chartering.dto.ParserSettingsRequest;
 import com.chartering.dto.ParserSettingsResponse;
 import com.chartering.dto.SweepResponse;
+import com.chartering.dto.WaitingArrivalResponse;
 import com.chartering.model.IntakeItemKind;
 import com.chartering.model.IntakeItemStatus;
 import com.chartering.model.ParseStatus;
 import com.chartering.service.ParserSettings;
 import com.chartering.service.parser.EmailParseRunner;
 import com.chartering.service.parser.IntakePasteService;
+import com.chartering.service.parser.ParserAvailability;
 import com.chartering.service.parser.IntakeQueryService;
 import com.chartering.service.parser.IntakeService;
 import com.chartering.service.parser.ParserSweepService;
@@ -73,6 +77,7 @@ public class IntakeController {
     private final IntakeService intake;
     private final ParserSweepService sweeps;
     private final EmailParseRunner runner;
+    private final ParserAvailability availability;
     private final ParserSettings settings;
     private final VesselLookupService lookupService;
     private final IntakePasteService paste;
@@ -408,7 +413,7 @@ public class IntakeController {
                     + "whether this morning's mail was read at all and what was made of it. "
                     + "Filter by FAILED to find what the model could not manage.")
     public ResponseEntity<PageResponse<ParsedEmailResponse>> parsed(
-            @Parameter(description = "PARSED, FAILED or SKIPPED")
+            @Parameter(description = "PARSED, FAILED, SKIPPED or IGNORED")
             @RequestParam(required = false) ParseStatus status,
             @PageableDefault(size = 25) Pageable pageable) {
         return ResponseEntity.ok(queries.parsed(status, pageable));
@@ -450,6 +455,41 @@ public class IntakeController {
                                              @Valid IgnoreRequest req) {
         runner.ignore(id, req == null ? null : req.getNote());
         return ResponseEntity.noContent().build();
+    }
+
+    // ------------------------------------------------------------------ waiting
+
+    @GetMapping("/waiting")
+    @Operation(summary = "Arrivals the sweep has yet to read, in the order it takes them",
+            description = "The list behind the Waiting to be read count. source=MAIL (the default) "
+                    + "lists synced mail; source=WEB lists board posts read into Intake. Each row "
+                    + "is what the queue prints and carries no body, so a page is cheap to fetch.\n\n"
+                    + "Answers 404 where Intake is not available to the caller, like every other "
+                    + "Intake query.")
+    public ResponseEntity<PageResponse<WaitingArrivalResponse>> waiting(
+            @Parameter(description = "MAIL (default) or WEB")
+            @RequestParam(defaultValue = "MAIL") IntakeQueryService.WaitingSource source,
+            @Parameter(description = "Zero-based page number")
+            @RequestParam(defaultValue = "0") int page,
+            @Parameter(description = "Rows per page, 1 to 100")
+            @RequestParam(defaultValue = "25") int size) {
+        return ResponseEntity.ok(queries.waiting(source, page, size));
+    }
+
+    @PostMapping("/waiting/leave-out")
+    @Operation(summary = "Take arrivals off the waiting list before the sweep reads them",
+            description = "The judgement the Log's Ignore makes, made before the model is asked: "
+                    + "a newsletter or a forwarded thread a person can already see is not worth a "
+                    + "model call. Each one is recorded as IGNORED, so the sweep does not find it "
+                    + "again, and Reopen on the Log puts it back.\n\n"
+                    + "Returns how many were taken off. An arrival already read or already left "
+                    + "out is not counted and is not changed.")
+    public ResponseEntity<LeaveOutResponse> leaveOut(@Valid @RequestBody LeaveOutRequest req) {
+        // Gated here rather than in the runner: the runner is also the sweep's own worker and is
+        // not a place where a request's availability is decided. Same 404 as every other gate.
+        availability.require();
+        int leftOut = runner.leaveOut(req.getMailMessageIds(), req.getFeedItemIds(), req.getNote());
+        return ResponseEntity.ok(new LeaveOutResponse(leftOut));
     }
 
     // ------------------------------------------------------------------ cargo sources

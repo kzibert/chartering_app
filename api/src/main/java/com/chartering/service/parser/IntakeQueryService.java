@@ -9,6 +9,7 @@ import com.chartering.dto.IntakeStatusResponse;
 import com.chartering.dto.IntakeSuggestionResponse;
 import com.chartering.dto.PageResponse;
 import com.chartering.dto.ParsedEmailResponse;
+import com.chartering.dto.WaitingArrivalResponse;
 import com.chartering.exception.ResourceNotFoundException;
 import com.chartering.mapper.DtoMapper;
 import com.chartering.model.IntakeItem;
@@ -36,11 +37,13 @@ import jakarta.persistence.criteria.Predicate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -346,6 +349,35 @@ public class IntakeQueryService {
     }
 
     // ------------------------------------------------------------------ the log
+
+    /**
+     * Which queue the waiting list is showing. The two doors have separate queues, each with its
+     * own predicate, so the list asks for one at a time rather than a merged page: a merge would
+     * need both tables sorted together in memory, and a page of mail and boards interleaved by
+     * date reads as one stream the sweep does not actually take.
+     */
+    public enum WaitingSource { MAIL, WEB }
+
+    /**
+     * What the sweep has yet to read, one door at a time, in the order the sweep takes it.
+     *
+     * <p>The same {@code since} the status counts from, so the list and the header number cannot
+     * disagree about what is inside the lookback. Each row is a projection (see
+     * {@code ParsedEmailRepository#waiting}) and no body crosses the wire.
+     *
+     * <p>Page size is clamped rather than rejected: a list asking for ten thousand rows gets a
+     * hundred, the largest page a person can usefully read, and nothing breaks.
+     */
+    @Transactional(readOnly = true)
+    public PageResponse<WaitingArrivalResponse> waiting(WaitingSource source, int page, int size) {
+        requireEnabled();
+        Pageable pageable = PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), 100));
+        LocalDateTime since = settings.values().receivedSince();
+        Page<WaitingArrivalResponse> found = source == WaitingSource.WEB
+                ? feedItems.waitingForIntake(since, pageable)
+                : parsedEmails.waiting(since, pageable);
+        return PageResponse.from(found);
+    }
 
     @Transactional(readOnly = true)
     public PageResponse<ParsedEmailResponse> parsed(ParseStatus status, Pageable pageable) {
