@@ -318,21 +318,31 @@ public class EmailParseRunner {
      * <p>Each message is loaded with {@code findById}, not referenced, for the reason {@link #leaveOut}
      * gives: an id from another desk must come back empty rather than be written against.
      *
-     * @return how many were queued, counting those already queued, and how many were skipped
+     * <p>Each id gets one {@link QueueOutcome.Item} saying which of these happened to it, in the
+     * order the ids were given, each once. The subject and sender are the message's own, so a
+     * person reading the answer can tell which email an id was.
+     *
+     * @return how many were queued, counting those already queued, how many were skipped, and what
+     *         became of each id
      */
     @Transactional
     public QueueOutcome queue(List<Long> mailMessageIds) {
         OffsetDateTime now = OffsetDateTime.now();
-        int queued = 0;
-        int skipped = 0;
+        List<QueueOutcome.Item> items = new ArrayList<>();
         for (Long id : new LinkedHashSet<>(mailMessageIds)) {
             if (id == null) {
-                skipped++;
+                items.add(new QueueOutcome.Item(null, QueueOutcome.Result.NOT_FOUND, null, null, null, null));
                 continue;
             }
             MailMessage message = messages.findById(id).orElse(null);
-            if (message == null || message.getBodyText() == null || message.getBodyText().isBlank()) {
-                skipped++;
+            if (message == null) {
+                items.add(new QueueOutcome.Item(id, QueueOutcome.Result.NOT_FOUND, null, null, null, null));
+                continue;
+            }
+            String subject = message.getSubject();
+            String fromAddress = message.getFromAddress();
+            if (message.getBodyText() == null || message.getBodyText().isBlank()) {
+                items.add(new QueueOutcome.Item(id, QueueOutcome.Result.NO_TEXT, subject, fromAddress, null, null));
                 continue;
             }
             Optional<ParsedEmail> existing = parsedEmails.findByMailMessageId(id);
@@ -343,33 +353,67 @@ public class EmailParseRunner {
                 row.setStatus(ParseStatus.QUEUED);
                 row.setParsedAt(now);
                 parsedEmails.save(row);
-                queued++;
+                items.add(new QueueOutcome.Item(id, QueueOutcome.Result.QUEUED, subject, fromAddress, null, null));
                 continue;
             }
             ParsedEmail row = existing.get();
             switch (row.getStatus()) {
-                case QUEUED -> queued++;
+                case QUEUED -> items.add(new QueueOutcome.Item(
+                        id, QueueOutcome.Result.ALREADY_QUEUED, subject, fromAddress, null, null));
                 case FAILED, IGNORED -> {
                     row.setStatus(ParseStatus.QUEUED);
                     row.setAttempts(0);
                     row.setError(null);
                     row.setParsedAt(now);
                     parsedEmails.save(row);
-                    queued++;
+                    items.add(new QueueOutcome.Item(id, QueueOutcome.Result.REQUEUED, subject, fromAddress, null, null));
                 }
-                case PARSED, SKIPPED -> skipped++;
+                case PARSED, SKIPPED -> items.add(new QueueOutcome.Item(
+                        id, QueueOutcome.Result.ALREADY_READ, subject, fromAddress,
+                        row.getStatus(), row.getParsedAt()));
             }
         }
-        return new QueueOutcome(queued, skipped);
+        int queued = (int) items.stream().filter(i -> i.result() == QueueOutcome.Result.QUEUED
+                || i.result() == QueueOutcome.Result.REQUEUED
+                || i.result() == QueueOutcome.Result.ALREADY_QUEUED).count();
+        return new QueueOutcome(queued, items.size() - queued, items);
     }
 
     /**
-     * What {@link #queue} did: requests recorded, and ids passed over.
+     * What {@link #queue} did: requests recorded, ids passed over, and what happened to each id.
      *
      * <p>Queued counts requests a row now stands for, including ones that were already queued, so
-     * pressing the button twice reports the same figure both times.
+     * pressing the button twice reports the same figure both times. Skipped is everything else.
+     *
+     * <p>{@code items} has one entry per distinct id asked for, in the order asked. A null id has
+     * no message to name, so it comes back {@link Result#NOT_FOUND} with a null id.
      */
-    public record QueueOutcome(int queued, int skipped) {
+    public record QueueOutcome(int queued, int skipped, List<Item> items) {
+
+        /** What became of one requested id. */
+        public enum Result {
+            /** No row existed; a QUEUED row was created. */
+            QUEUED,
+            /** The row was FAILED or IGNORED and is QUEUED again as a first attempt. */
+            REQUEUED,
+            /** The row was already QUEUED and was left as it is. */
+            ALREADY_QUEUED,
+            /** The row is PARSED or SKIPPED; nothing was written. */
+            ALREADY_READ,
+            /** The message is on this desk but has no body text to read. */
+            NO_TEXT,
+            /** Null, or not a message on this desk. */
+            NOT_FOUND
+        }
+
+        /**
+         * One id's outcome. {@code subject} and {@code fromAddress} come from the message and are
+         * null when it was not found. {@code parseStatus} and {@code parsedAt} are the existing row's,
+         * and are set only for {@link Result#ALREADY_READ}.
+         */
+        public record Item(Long mailMessageId, Result result, String subject, String fromAddress,
+                           ParseStatus parseStatus, OffsetDateTime parsedAt) {
+        }
     }
 
     /**

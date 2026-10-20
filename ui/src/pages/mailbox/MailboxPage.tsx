@@ -62,6 +62,7 @@ import CompanyForm from '../companies/CompanyForm';
 import UnconfirmedCompanyMark from './UnconfirmedCompanyMark';
 import MessageDrawer from './MessageDrawer';
 import FoldersRulesModal from './FoldersRulesModal';
+import QueueResultList, { queueNeedsReport } from './QueueResultList';
 import type {
   CirculationToday,
   CompanyResponse,
@@ -125,7 +126,7 @@ const CLAMP: React.CSSProperties = {
  * and it should cost what it costs only when it was asked for.
  */
 export default function MailboxPage() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [filters, setFilters] = usePersistedState<Filters>('mailbox', DEFAULTS);
   // Typed but not yet searched. Kept apart from filters.search so that every keystroke is
   // not a query against the whole mail table — the search runs on Enter or the button.
@@ -321,10 +322,22 @@ export default function MailboxPage() {
   const queuePicked = () =>
     queueMessages.mutate(picked, {
       onSuccess: (r) => {
-        const skipped =
-          r.skipped > 0 ? `, ${r.skipped} skipped (already read or no text)` : '';
-        message.success(`${r.queued} added to the waiting list${skipped}`);
         setPicked([]);
+        const { messages } = r;
+        const added = messages.filter((e) => e.outcome === 'QUEUED' || e.outcome === 'REQUEUED').length;
+        const alreadyThere = messages.filter((e) => e.outcome === 'ALREADY_QUEUED').length;
+        if (!queueNeedsReport(messages)) {
+          const there = alreadyThere > 0 ? `, ${alreadyThere} already there` : '';
+          message.success(`${added} added to the waiting list${there}`);
+          return;
+        }
+        // Something was left out, and "1 skipped" does not say which one or why, so every picked
+        // email is listed with its own reason.
+        const notAdded = messages.length - added - alreadyThere;
+        modal.info({
+          title: `${added} added to the waiting list, ${notAdded} not added`,
+          content: <QueueResultList entries={messages} />,
+        });
       },
       onError: (e: unknown) => {
         const detail = (e as { response?: { data?: { message?: string } } })?.response?.data

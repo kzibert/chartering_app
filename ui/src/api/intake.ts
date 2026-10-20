@@ -400,9 +400,29 @@ export interface ParseMessagesRequest {
  * with no text are skipped rather than failing the whole call, so the caller can say how many
  * of the picked ones actually joined the list.
  */
+export type QueueOutcome =
+  | 'QUEUED'
+  | 'REQUEUED'
+  | 'ALREADY_QUEUED'
+  | 'ALREADY_READ'
+  | 'NO_TEXT'
+  | 'NOT_FOUND';
+
+/** What happened to one picked email. `parseStatus` and `parsedAt` come only with ALREADY_READ. */
+export interface QueueMessageOutcome {
+  mailMessageId: number;
+  subject?: string;
+  fromAddress?: string;
+  outcome: QueueOutcome;
+  parseStatus?: 'PARSED' | 'SKIPPED';
+  parsedAt?: string;
+}
+
 export interface QueueMessagesResponse {
   queued: number;
   skipped: number;
+  /** One entry per picked email, in pick order. */
+  messages: QueueMessageOutcome[];
 }
 
 /**

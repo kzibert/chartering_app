@@ -31,6 +31,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -254,9 +255,9 @@ class WaitingArrivalsIntegrationTest extends IntegrationTest {
 
         assertThat(waitingIds(lookback7)).doesNotContain(old);
 
-        assertThat(queue(old)).isEqualTo(new EmailParseRunner.QueueOutcome(1, 0));
+        assertQueued(queue(old), 1, 0);
         // Idempotent: a second press counts the same request and changes nothing.
-        assertThat(queue(old)).isEqualTo(new EmailParseRunner.QueueOutcome(1, 0));
+        assertQueued(queue(old), 1, 0);
 
         List<Long> waiting = waitingIds(lookback7);
         assertThat(waiting).contains(old, fresh);
@@ -277,13 +278,60 @@ class WaitingArrivalsIntegrationTest extends IntegrationTest {
     }
 
     @Test
+    void theOutcomeNamesWhatHappenedToEachPickedMessageInTheOrderAsked() {
+        String tag = tag();
+        long fresh = mail("Fresh " + tag, "Ops desk " + tag);
+        long queued = mail("Queued " + tag, "Ops desk " + tag);
+        long failed = mail("Failed " + tag, "Ops desk " + tag);
+        long read = mail("Read " + tag, "Ops desk " + tag);
+        long blank = mail("Blank " + tag, "Ops desk " + tag);
+        long missing = 999_999_999_999L;
+        assertQueued(queue(queued), 1, 0);
+        TenantContext.runAs(DESK, () -> {
+            ParsedEmail f = parsed(messages.findById(failed).orElseThrow(), null, ParseStatus.FAILED);
+            f.setAttempts(3);
+            f.setError("Timed out");
+            parsedEmails.save(f);
+            parsedEmails.save(parsed(messages.findById(read).orElseThrow(), null, ParseStatus.PARSED));
+            MailMessage m = messages.findById(blank).orElseThrow();
+            m.setBodyText(null);
+            messages.save(m);
+        });
+
+        EmailParseRunner.QueueOutcome outcome = queue(read, missing, fresh, blank, queued, failed, fresh);
+
+        assertQueued(outcome, 3, 3);
+        assertThat(outcome.items()).extracting(
+                        EmailParseRunner.QueueOutcome.Item::mailMessageId,
+                        EmailParseRunner.QueueOutcome.Item::result)
+                .containsExactly(
+                        tuple(read, EmailParseRunner.QueueOutcome.Result.ALREADY_READ),
+                        tuple(missing, EmailParseRunner.QueueOutcome.Result.NOT_FOUND),
+                        tuple(fresh, EmailParseRunner.QueueOutcome.Result.QUEUED),
+                        tuple(blank, EmailParseRunner.QueueOutcome.Result.NO_TEXT),
+                        tuple(queued, EmailParseRunner.QueueOutcome.Result.ALREADY_QUEUED),
+                        tuple(failed, EmailParseRunner.QueueOutcome.Result.REQUEUED));
+
+        // The read row's status and time come from the row itself, so the two sides read the same column.
+        EmailParseRunner.QueueOutcome.Item readItem = outcome.items().get(0);
+        assertThat(readItem.parseStatus()).isEqualTo(ParseStatus.PARSED);
+        assertThat(readItem.parsedAt()).isEqualTo(rowFor(read).orElseThrow().getParsedAt());
+        assertThat(readItem.subject()).isEqualTo("Read " + tag);
+        assertThat(outcome.items().get(1).subject()).isNull();
+        assertThat(outcome.items().get(2).subject()).isEqualTo("Fresh " + tag);
+        assertThat(outcome.items().get(2).parseStatus()).isNull();
+        assertThat(rowFor(failed).orElseThrow().getStatus()).isEqualTo(ParseStatus.QUEUED);
+        assertCountMatchesWaiting(NO_LIMIT);
+    }
+
+    @Test
     void queueingAMessageAlreadyReadIsSkipped() {
         String tag = tag();
         long read = mail("Already read " + tag, "Ops desk " + tag);
         TenantContext.runAs(DESK, () -> parsedEmails.save(
                 parsed(messages.findById(read).orElseThrow(), null, ParseStatus.PARSED)));
 
-        assertThat(queue(read)).isEqualTo(new EmailParseRunner.QueueOutcome(0, 1));
+        assertQueued(queue(read), 0, 1);
 
         assertThat(rowFor(read).orElseThrow().getStatus()).isEqualTo(ParseStatus.PARSED);
         assertThat(waitingIds(NO_LIMIT)).doesNotContain(read);
@@ -306,7 +354,7 @@ class WaitingArrivalsIntegrationTest extends IntegrationTest {
             parsedEmails.save(i);
         });
 
-        assertThat(queue(failed, ignored)).isEqualTo(new EmailParseRunner.QueueOutcome(2, 0));
+        assertQueued(queue(failed, ignored), 2, 0);
 
         for (long id : List.of(failed, ignored)) {
             ParsedEmail row = rowFor(id).orElseThrow();
@@ -329,7 +377,7 @@ class WaitingArrivalsIntegrationTest extends IntegrationTest {
             messages.save(m);
         });
 
-        assertThat(queue(empty)).isEqualTo(new EmailParseRunner.QueueOutcome(0, 1));
+        assertQueued(queue(empty), 0, 1);
 
         assertThat(rowFor(empty)).isEmpty();
         assertThat(waitingIds(NO_LIMIT)).doesNotContain(empty);
@@ -340,7 +388,7 @@ class WaitingArrivalsIntegrationTest extends IntegrationTest {
     void leavingOutAQueuedMessageTakesItOffTheListAsIgnored() {
         String tag = tag();
         long queued = mail("Forwarded " + tag, "Friend " + tag);
-        assertThat(queue(queued)).isEqualTo(new EmailParseRunner.QueueOutcome(1, 0));
+        assertQueued(queue(queued), 1, 0);
 
         int leftOut = TenantContext.callAs(DESK,
                 () -> runner.leaveOut(List.of(queued), null, "forwarded thread"));
@@ -368,6 +416,11 @@ class WaitingArrivalsIntegrationTest extends IntegrationTest {
     private EmailParseRunner.QueueOutcome queue(long... mailMessageIds) {
         List<Long> ids = Arrays.stream(mailMessageIds).boxed().toList();
         return TenantContext.callAs(DESK, () -> runner.queue(ids));
+    }
+
+    private static void assertQueued(EmailParseRunner.QueueOutcome outcome, int queued, int skipped) {
+        assertThat(outcome.queued()).isEqualTo(queued);
+        assertThat(outcome.skipped()).isEqualTo(skipped);
     }
 
     private Optional<ParsedEmail> rowFor(long mailMessageId) {
