@@ -24,8 +24,10 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -48,6 +50,9 @@ class WaitingArrivalsIntegrationTest extends IntegrationTest {
     private static final long DESK = 1L;
 
     private static final PageRequest ALL = PageRequest.of(0, 500);
+
+    /** No lookback at all: every message with a body, which is the widest window the list can have. */
+    private static final ParserSettings.Values NO_LIMIT = new ParserSettings.Values(30, 20, 0);
 
     @Autowired
     private ParsedEmailRepository parsedEmails;
@@ -233,6 +238,121 @@ class WaitingArrivalsIntegrationTest extends IntegrationTest {
                 parsedEmails.countUnparsed(noLimit.receivedSince(), noLimit.receivedFloor())));
     }
 
+    /*
+     * "Add to waiting list": the picked messages become QUEUED rows, which the sweep's queue takes
+     * whatever their age and ahead of everything else. Each case is one state a picked message can
+     * be in when it is queued, and each one asserts both the list and its count.
+     */
+
+    @Test
+    void aQueuedMessageFromLongAgoIsWaitingAndComesFirst() {
+        ParserSettings.Values lookback7 = new ParserSettings.Values(30, 20, 7);
+        LocalDateTime now = LocalDateTime.now();
+        String tag = tag();
+        long old = mailAt("Old " + tag, "Ops desk " + tag, now.minusDays(40), now.minusDays(40));
+        long fresh = mail("Fresh " + tag, "Ops desk " + tag);
+
+        assertThat(waitingIds(lookback7)).doesNotContain(old);
+
+        assertThat(queue(old)).isEqualTo(new EmailParseRunner.QueueOutcome(1, 0));
+        // Idempotent: a second press counts the same request and changes nothing.
+        assertThat(queue(old)).isEqualTo(new EmailParseRunner.QueueOutcome(1, 0));
+
+        List<Long> waiting = waitingIds(lookback7);
+        assertThat(waiting).contains(old, fresh);
+        assertThat(waiting.indexOf(old)).isLessThan(waiting.indexOf(fresh));
+
+        List<Long> unparsed = TenantContext.callAs(DESK, () ->
+                parsedEmails.unparsed(lookback7.receivedSince(), lookback7.receivedFloor(), ALL))
+                .stream().map(MailMessage::getId).toList();
+        assertThat(unparsed).contains(old, fresh);
+        assertThat(unparsed.indexOf(old)).isLessThan(unparsed.indexOf(fresh));
+
+        assertCountMatchesWaiting(lookback7);
+        assertThat(rowFor(old).orElseThrow().getStatus()).isEqualTo(ParseStatus.QUEUED);
+
+        Page<ParsedEmail> log = TenantContext.callAs(DESK, () ->
+                parsedEmails.findByStatusNotOrderByParsedAtDesc(ParseStatus.QUEUED, ALL));
+        assertThat(log.getContent()).extracting(ParsedEmail::getStatus).doesNotContain(ParseStatus.QUEUED);
+    }
+
+    @Test
+    void queueingAMessageAlreadyReadIsSkipped() {
+        String tag = tag();
+        long read = mail("Already read " + tag, "Ops desk " + tag);
+        TenantContext.runAs(DESK, () -> parsedEmails.save(
+                parsed(messages.findById(read).orElseThrow(), null, ParseStatus.PARSED)));
+
+        assertThat(queue(read)).isEqualTo(new EmailParseRunner.QueueOutcome(0, 1));
+
+        assertThat(rowFor(read).orElseThrow().getStatus()).isEqualTo(ParseStatus.PARSED);
+        assertThat(waitingIds(NO_LIMIT)).doesNotContain(read);
+        assertCountMatchesWaiting(NO_LIMIT);
+    }
+
+    @Test
+    void aFailedOrIgnoredMessageIsQueuedAgainAsAFirstAttempt() {
+        String tag = tag();
+        long failed = mail("Failed " + tag, "Ops desk " + tag);
+        long ignored = mail("Ignored " + tag, "Ops desk " + tag);
+        TenantContext.runAs(DESK, () -> {
+            ParsedEmail f = parsed(messages.findById(failed).orElseThrow(), null, ParseStatus.FAILED);
+            f.setAttempts(3);
+            f.setError("Timed out");
+            parsedEmails.save(f);
+            ParsedEmail i = parsed(messages.findById(ignored).orElseThrow(), null, ParseStatus.IGNORED);
+            i.setAttempts(1);
+            i.setError("Ignored — newsletter");
+            parsedEmails.save(i);
+        });
+
+        assertThat(queue(failed, ignored)).isEqualTo(new EmailParseRunner.QueueOutcome(2, 0));
+
+        for (long id : List.of(failed, ignored)) {
+            ParsedEmail row = rowFor(id).orElseThrow();
+            assertThat(row.getStatus()).isEqualTo(ParseStatus.QUEUED);
+            assertThat(row.getAttempts()).isZero();
+            assertThat(row.getError()).isNull();
+            assertThat(row.getParsedAt()).isNotNull();
+        }
+        assertThat(waitingIds(NO_LIMIT)).contains(failed, ignored);
+        assertCountMatchesWaiting(NO_LIMIT);
+    }
+
+    @Test
+    void aMessageWithNoBodyCannotBeQueued() {
+        String tag = tag();
+        long empty = mail("No body " + tag, "Ops desk " + tag);
+        TenantContext.runAs(DESK, () -> {
+            MailMessage m = messages.findById(empty).orElseThrow();
+            m.setBodyText(null);
+            messages.save(m);
+        });
+
+        assertThat(queue(empty)).isEqualTo(new EmailParseRunner.QueueOutcome(0, 1));
+
+        assertThat(rowFor(empty)).isEmpty();
+        assertThat(waitingIds(NO_LIMIT)).doesNotContain(empty);
+        assertCountMatchesWaiting(NO_LIMIT);
+    }
+
+    @Test
+    void leavingOutAQueuedMessageTakesItOffTheListAsIgnored() {
+        String tag = tag();
+        long queued = mail("Forwarded " + tag, "Friend " + tag);
+        assertThat(queue(queued)).isEqualTo(new EmailParseRunner.QueueOutcome(1, 0));
+
+        int leftOut = TenantContext.callAs(DESK,
+                () -> runner.leaveOut(List.of(queued), null, "forwarded thread"));
+
+        assertThat(leftOut).isEqualTo(1);
+        ParsedEmail row = rowFor(queued).orElseThrow();
+        assertThat(row.getStatus()).isEqualTo(ParseStatus.IGNORED);
+        assertThat(row.getError()).isEqualTo("Left out of the queue — forwarded thread");
+        assertThat(waitingIds(NO_LIMIT)).doesNotContain(queued);
+        assertCountMatchesWaiting(NO_LIMIT);
+    }
+
     // ------------------------------------------------------------------ fixtures
 
     private static String tag() {
@@ -243,6 +363,29 @@ class WaitingArrivalsIntegrationTest extends IntegrationTest {
     private long mail(String subject, String fromName) {
         LocalDateTime now = LocalDateTime.now();
         return mailAt(subject, fromName, now, now);
+    }
+
+    private EmailParseRunner.QueueOutcome queue(long... mailMessageIds) {
+        List<Long> ids = Arrays.stream(mailMessageIds).boxed().toList();
+        return TenantContext.callAs(DESK, () -> runner.queue(ids));
+    }
+
+    private Optional<ParsedEmail> rowFor(long mailMessageId) {
+        return TenantContext.callAs(DESK, () -> parsedEmails.findByMailMessageId(mailMessageId));
+    }
+
+    private List<Long> waitingIds(ParserSettings.Values window) {
+        return TenantContext.callAs(DESK, () ->
+                parsedEmails.waiting(window.receivedSince(), window.receivedFloor(), ALL))
+                .getContent().stream().map(WaitingArrivalResponse::id).toList();
+    }
+
+    /** The list's total and the count query must be the same number for the same window. */
+    private void assertCountMatchesWaiting(ParserSettings.Values window) {
+        Page<WaitingArrivalResponse> page = TenantContext.callAs(DESK, () ->
+                parsedEmails.waiting(window.receivedSince(), window.receivedFloor(), ALL));
+        assertThat(page.getTotalElements()).isEqualTo(TenantContext.callAs(DESK, () ->
+                parsedEmails.countUnparsed(window.receivedSince(), window.receivedFloor())));
     }
 
     private long mailAt(String subject, String fromName, LocalDateTime receivedAt, LocalDateTime syncedAt) {

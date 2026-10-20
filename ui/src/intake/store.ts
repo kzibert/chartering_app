@@ -230,6 +230,16 @@ export function useIntakeMutations() {
   });
 
   /**
+   * Put the picked messages on the waiting list. Nothing is read yet, so the sweep is not
+   * started, but the Intake header's waiting count and the waiting list both move, and that
+   * is what the same invalidation covers.
+   */
+  const queueMessages = useMutation({
+    mutationFn: (mailMessageIds: number[]) => intakeApi.queueMessages({ mailMessageIds }),
+    onSuccess: invalidate,
+  });
+
+  /**
    * Search an outside source for this hull, now.
    *
    * Invalidates only this feature: a lookup writes nothing to a vessel, it stores a proposal.
@@ -294,6 +304,7 @@ export function useIntakeMutations() {
     startSweep,
     stopSweep,
     parseMessages,
+    queueMessages,
     reopen,
     ignoreParsed,
     leaveOut,

@@ -20,14 +20,16 @@ import java.util.Optional;
 public interface ParsedEmailRepository extends JpaRepository<ParsedEmail, Long> {
 
     /**
-     * The sweep's queue: synced mail nobody has read yet, newest first.
+     * The sweep's queue: synced mail nobody has read yet, with the messages a person has queued
+     * ahead of it.
      *
      * <p>Newest first for the reason the analysis capture takes the recent end of a range —
      * a sweep that stops at its cap should have read today's circulars rather than a
-     * three-year-old thread. A message with a row in {@code parsed_emails} of any status is
-     * excluded, which is what makes the sweep idempotent; {@link #retryable} brings the
-     * failures back separately, so "never read" and "read and failed" stay two different
-     * questions with two different answers.
+     * three-year-old thread. A message with a row in {@code parsed_emails} is excluded, which is
+     * what makes the sweep idempotent, with one exception: a row {@link ParseStatus#QUEUED} is a
+     * person's request to read it, so it is in the queue whatever its age, and ahead of everything
+     * else. {@link #retryable} brings the failures back separately, so "never read" and "read and
+     * failed" stay two different questions with two different answers.
      *
      * <p>Bodies are required, not merely preferred: a message with none has nothing to send
      * a model, and filtering here is cheaper than writing a SKIPPED row for every calendar
@@ -40,7 +42,11 @@ public interface ParsedEmailRepository extends JpaRepository<ParsedEmail, Long> 
      * would otherwise be older than the window on the day it arrived, and never read. Counting
      * from arrival gives it a full window from when it reached us, and {@code floor} (twice the
      * lookback) keeps the first sync of a mailbox, which brings history with {@code syncedAt} = now,
-     * from being read whole.
+     * from being read whole. A queued message is outside the window by design: the window limits
+     * what a timer reads on its own, and a queued row is not that.
+     *
+     * <p>Queued rows come first, and newest first among themselves as among the rest: a person who
+     * asked for a message a fortnight ago should not wait behind this morning's circulars.
      *
      * <p>{@code since} and {@code floor} are both always dates, never null, and "no limit" is
      * {@link ParserSettings#NO_LIMIT_SINCE} for both rather than a null to test for. That is not
@@ -51,9 +57,13 @@ public interface ParsedEmailRepository extends JpaRepository<ParsedEmail, Long> 
     @Query("""
             select m from MailMessage m
             where m.bodyText is not null and m.bodyText <> ''
-              and (m.receivedAt >= :since or (m.syncedAt >= :since and m.receivedAt >= :floor))
-              and not exists (select 1 from ParsedEmail p where p.mailMessage = m)
-            order by m.receivedAt desc
+              and ((m.receivedAt >= :since or (m.syncedAt >= :since and m.receivedAt >= :floor))
+                   and not exists (select 1 from ParsedEmail p where p.mailMessage = m)
+                   or exists (select 1 from ParsedEmail q where q.mailMessage = m
+                              and q.status = com.chartering.model.ParseStatus.QUEUED))
+            order by case when exists (select 1 from ParsedEmail r where r.mailMessage = m
+                                       and r.status = com.chartering.model.ParseStatus.QUEUED) then 0 else 1 end,
+                     m.receivedAt desc
             """)
     List<MailMessage> unparsed(@Param("since") LocalDateTime since, @Param("floor") LocalDateTime floor,
                                Pageable pageable);
@@ -69,22 +79,29 @@ public interface ParsedEmailRepository extends JpaRepository<ParsedEmail, Long> 
      *
      * <p>The window predicate is the one {@link #unparsed} documents, copied rather than shared,
      * because JPQL has no way to share a {@code where} clause; the {@code countQuery} must stay in
-     * step with it, and the integration test checks the two agree.
+     * step with it, and the integration test checks the two agree. Queued rows lead, as they do in
+     * {@link #unparsed}, so the list shows what the sweep will read next.
      */
     @Query(value = """
             select new com.chartering.dto.WaitingArrivalResponse(
                 'MAIL', m.id, m.receivedAt, m.fromName, m.fromAddress, c.name, m.subject, m.snippet)
             from MailMessage m left join m.company c
             where m.bodyText is not null and m.bodyText <> ''
-              and (m.receivedAt >= :since or (m.syncedAt >= :since and m.receivedAt >= :floor))
-              and not exists (select 1 from ParsedEmail p where p.mailMessage = m)
-            order by m.receivedAt desc
+              and ((m.receivedAt >= :since or (m.syncedAt >= :since and m.receivedAt >= :floor))
+                   and not exists (select 1 from ParsedEmail p where p.mailMessage = m)
+                   or exists (select 1 from ParsedEmail q where q.mailMessage = m
+                              and q.status = com.chartering.model.ParseStatus.QUEUED))
+            order by case when exists (select 1 from ParsedEmail r where r.mailMessage = m
+                                       and r.status = com.chartering.model.ParseStatus.QUEUED) then 0 else 1 end,
+                     m.receivedAt desc
             """,
             countQuery = """
             select count(m) from MailMessage m
             where m.bodyText is not null and m.bodyText <> ''
-              and (m.receivedAt >= :since or (m.syncedAt >= :since and m.receivedAt >= :floor))
-              and not exists (select 1 from ParsedEmail p where p.mailMessage = m)
+              and ((m.receivedAt >= :since or (m.syncedAt >= :since and m.receivedAt >= :floor))
+                   and not exists (select 1 from ParsedEmail p where p.mailMessage = m)
+                   or exists (select 1 from ParsedEmail q where q.mailMessage = m
+                              and q.status = com.chartering.model.ParseStatus.QUEUED))
             """)
     Page<WaitingArrivalResponse> waiting(@Param("since") LocalDateTime since,
                                          @Param("floor") LocalDateTime floor, Pageable pageable);
@@ -128,8 +145,13 @@ public interface ParsedEmailRepository extends JpaRepository<ParsedEmail, Long> 
 
     boolean existsByMailMessageId(Long mailMessageId);
 
+    /**
+     * The Log's unfiltered list: every parse outcome, newest first, except the requests still
+     * waiting for the sweep. A queued row is not a result yet and has no answer to show; it stays
+     * on the waiting list until it is read or left out.
+     */
     @EntityGraph(attributePaths = {"mailMessage", "feedItem", "feedItem.source"})
-    Page<ParsedEmail> findAllByOrderByParsedAtDesc(Pageable pageable);
+    Page<ParsedEmail> findByStatusNotOrderByParsedAtDesc(ParseStatus status, Pageable pageable);
 
     @EntityGraph(attributePaths = {"mailMessage", "feedItem", "feedItem.source"})
     Page<ParsedEmail> findByStatusOrderByParsedAtDesc(ParseStatus status, Pageable pageable);
@@ -139,15 +161,17 @@ public interface ParsedEmailRepository extends JpaRepository<ParsedEmail, Long> 
     /**
      * How much is left to read, for the tab's header and for "is a sweep worth running".
      *
-     * <p>Same window as {@link #unparsed} and {@link #waiting} — the header and the queue must agree
-     * about what is inside the lookback, so this takes the same {@code since} and {@code floor}
-     * from the same settings snapshot.
+     * <p>Same window as {@link #unparsed} and {@link #waiting}, queued rows included — the header and
+     * the queue must agree about what is waiting, so this takes the same {@code since} and
+     * {@code floor} from the same settings snapshot.
      */
     @Query("""
             select count(m) from MailMessage m
             where m.bodyText is not null and m.bodyText <> ''
-              and (m.receivedAt >= :since or (m.syncedAt >= :since and m.receivedAt >= :floor))
-              and not exists (select 1 from ParsedEmail p where p.mailMessage = m)
+              and ((m.receivedAt >= :since or (m.syncedAt >= :since and m.receivedAt >= :floor))
+                   and not exists (select 1 from ParsedEmail p where p.mailMessage = m)
+                   or exists (select 1 from ParsedEmail q where q.mailMessage = m
+                              and q.status = com.chartering.model.ParseStatus.QUEUED))
             """)
     long countUnparsed(@Param("since") LocalDateTime since, @Param("floor") LocalDateTime floor);
 

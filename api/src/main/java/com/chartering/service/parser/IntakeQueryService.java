@@ -385,7 +385,7 @@ public class IntakeQueryService {
     public PageResponse<ParsedEmailResponse> parsed(ParseStatus status, Pageable pageable) {
         requireEnabled();
         Page<ParsedEmail> page = status == null
-                ? parsedEmails.findAllByOrderByParsedAtDesc(pageable)
+                ? parsedEmails.findByStatusNotOrderByParsedAtDesc(ParseStatus.QUEUED, pageable)
                 : parsedEmails.findByStatusOrderByParsedAtDesc(status, pageable);
         // No rawJson in the list: it is the model's whole answer and a page of twenty would
         // be a megabyte of JSON to render a table of counts.

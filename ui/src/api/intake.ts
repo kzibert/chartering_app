@@ -44,7 +44,7 @@ export type IntakeItemKind =
 
 export type IntakeItemStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED';
 
-export type ParseStatus = 'PARSED' | 'FAILED' | 'SKIPPED' | 'IGNORED';
+export type ParseStatus = 'PARSED' | 'FAILED' | 'SKIPPED' | 'IGNORED' | 'QUEUED';
 
 /**
  * ACCEPT does the proposed thing; ALTERNATIVE does the other one and also writes — keeping
@@ -396,6 +396,16 @@ export interface ParseMessagesRequest {
 }
 
 /**
+ * What the waiting list took from a set of picked messages. Already-read messages and ones
+ * with no text are skipped rather than failing the whole call, so the caller can say how many
+ * of the picked ones actually joined the list.
+ */
+export interface QueueMessagesResponse {
+  queued: number;
+  skipped: number;
+}
+
+/**
  * One arrival the sweep has not been given yet. `id` is the mail message id for MAIL and the
  * feed item id for WEB — the two are not the same kind of number, which is why the source
  * travels with it everywhere it is used.
@@ -690,6 +700,13 @@ export const intakeApi = {
    */
   parseMessages: (body: ParseMessagesRequest) =>
     client.post<SweepResponse>('/intake/parse', body, { quiet: true }).then((r) => r.data),
+
+  /**
+   * Put picked messages on the waiting list instead of reading them now. Whatever their age,
+   * the timed sweep picks them up on its next pass.
+   */
+  queueMessages: (body: ParseMessagesRequest) =>
+    client.post<QueueMessagesResponse>('/intake/queue', body).then((r) => r.data),
 
   /** Asks the running sweep to stop after the message it is on. 204. */
   stopSweep: () => client.post<void>('/intake/sweep/stop').then((r) => r.data),

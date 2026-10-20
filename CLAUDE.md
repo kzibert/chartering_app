@@ -1012,6 +1012,9 @@ until one reads nothing, the model stops answering, Stop is pressed
 tab (`POST /intake/parse`, at most 200 ids) reads the picked messages, ignoring the lookback.
 It skips those already parsed or skipped and re-reads failed and ignored ones. These modes
 exist under `LOCAL` too. Render pins `PARSER_ENABLED=true` and `PARSER_PROVIDER=CLOUD`.
+*Add to waiting list* (`POST /intake/queue`) reads nothing now: it writes a `QUEUED` row for each
+picked message, and the sweep takes those first on its next pass whatever their age, because a
+person chose them. Leave out turns a queued row into `IGNORED`.
 
 **What lands unwatched and what waits is the whole design.** A parse may write anything that
 only *adds*: a position for a hull already on file, a cargo nothing else looks like, a

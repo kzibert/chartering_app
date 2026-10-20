@@ -23,6 +23,7 @@ import {
 import {
   BankOutlined,
   CheckCircleOutlined,
+  ClockCircleOutlined,
   DeleteOutlined,
   EditOutlined,
   FilterOutlined,
@@ -153,7 +154,7 @@ export default function MailboxPage() {
   // before. Absent on a deployment without the parser, where it is simply not offered.
   const intakeStatus = useIntakeStatus();
   const intakeOn = intakeStatus.data?.enabled === true;
-  const { parseMessages } = useIntakeMutations();
+  const { parseMessages, queueMessages } = useIntakeMutations();
   // The same key the Circulars and Settings tabs read the day's volume from, so a reply
   // sent here moves the number there without either tab counting anything itself.
   const todayQ = useQuery({ queryKey: ['circulations', 'today'], queryFn: circulationsApi.today });
@@ -312,6 +313,23 @@ export default function MailboxPage() {
         const detail = (e as { response?: { data?: { message?: string } } })?.response?.data
           ?.message;
         message.error(detail || 'These messages could not be queued for reading.');
+      },
+    });
+
+  // Unlike Read now this never meets a running sweep: it only writes the queue, which the next
+  // sweep reads, so it works while a run is going. A failure is said as the server words it.
+  const queuePicked = () =>
+    queueMessages.mutate(picked, {
+      onSuccess: (r) => {
+        const skipped =
+          r.skipped > 0 ? `, ${r.skipped} skipped (already read or no text)` : '';
+        message.success(`${r.queued} added to the waiting list${skipped}`);
+        setPicked([]);
+      },
+      onError: (e: unknown) => {
+        const detail = (e as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message;
+        message.error(detail || 'These messages could not be added to the waiting list.');
       },
     });
 
@@ -651,27 +669,50 @@ export default function MailboxPage() {
                   </Button>
                 </Dropdown>
                 {intakeOn && (
-                  // The span keeps the tooltip alive while the button is disabled, which
-                  // swallows the pointer events a tooltip needs.
-                  <Tooltip
-                    title={
-                      picked.length > READ_LIMIT
-                        ? `Pick at most ${READ_LIMIT} at a time — this is ${picked.length}`
-                        : 'Read these messages into Intake now, whatever the lookback says'
-                    }
-                  >
-                    <span>
-                      <Button
-                        size="small"
-                        icon={<ThunderboltOutlined />}
-                        loading={parseMessages.isPending}
-                        disabled={picked.length > READ_LIMIT}
-                        onClick={readPicked}
-                      >
-                        Read into Intake
-                      </Button>
-                    </span>
-                  </Tooltip>
+                  // Two small buttons rather than a split button: read now and read later are
+                  // equal choices, and a menu would hide one of them. Both wrap with
+                  // the row on a phone like the rest of it. The span keeps each tooltip alive
+                  // while its button is disabled, which swallows the pointer events it needs.
+                  <>
+                    <Tooltip
+                      title={
+                        picked.length > READ_LIMIT
+                          ? `Pick at most ${READ_LIMIT} at a time — this is ${picked.length}`
+                          : 'Read these messages into Intake now, whatever the lookback says'
+                      }
+                    >
+                      <span>
+                        <Button
+                          size="small"
+                          icon={<ThunderboltOutlined />}
+                          loading={parseMessages.isPending}
+                          disabled={picked.length > READ_LIMIT}
+                          onClick={readPicked}
+                        >
+                          Read now
+                        </Button>
+                      </span>
+                    </Tooltip>
+                    <Tooltip
+                      title={
+                        picked.length > READ_LIMIT
+                          ? `Pick at most ${READ_LIMIT} at a time — this is ${picked.length}`
+                          : 'Put these messages on the Intake waiting list; the next sweep reads them, whatever their age'
+                      }
+                    >
+                      <span>
+                        <Button
+                          size="small"
+                          icon={<ClockCircleOutlined />}
+                          loading={queueMessages.isPending}
+                          disabled={picked.length > READ_LIMIT}
+                          onClick={queuePicked}
+                        >
+                          Add to waiting list
+                        </Button>
+                      </span>
+                    </Tooltip>
+                  </>
                 )}
                 <Button size="small" type="text" onClick={() => setPicked([])}>
                   Clear

@@ -19,7 +19,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * One message, read and written, in one transaction.
@@ -293,6 +295,84 @@ public class EmailParseRunner {
     }
 
     /**
+     * Add messages to the waiting list: the sweep reads them on its next pass, whatever their age.
+     *
+     * <p>The same act as "Read into Intake" with the reading left to later. That one starts a run
+     * now, and is refused while another run is going; this writes a {@link ParseStatus#QUEUED} row
+     * per message and returns, works whether or not a sweep is running, and the timer does the
+     * reading on its own terms. The row is what the sweep's queue finds, and
+     * it finds queued rows first and outside the lookback, which is the whole point of asking.
+     *
+     * <p>Per id, in the order given and each once:
+     * <ul>
+     *   <li>not on this desk, or no text body → skipped. A body is what the model reads, and a
+     *       queued row for a message with none would sit outside the sweep's queue for ever.</li>
+     *   <li>already {@code PARSED} or {@code SKIPPED} → skipped; it has been read.</li>
+     *   <li>already {@code QUEUED} → queued, and left as it is.</li>
+     *   <li>{@code FAILED} or {@code IGNORED} → turned back to {@code QUEUED} with the attempt count
+     *       and error cleared, so the sweep reads it as a first attempt. A person asking again is a
+     *       new request, not another failure of the old one.</li>
+     *   <li>no row → a {@code QUEUED} row is created.</li>
+     * </ul>
+     *
+     * <p>Each message is loaded with {@code findById}, not referenced, for the reason {@link #leaveOut}
+     * gives: an id from another desk must come back empty rather than be written against.
+     *
+     * @return how many were queued, counting those already queued, and how many were skipped
+     */
+    @Transactional
+    public QueueOutcome queue(List<Long> mailMessageIds) {
+        OffsetDateTime now = OffsetDateTime.now();
+        int queued = 0;
+        int skipped = 0;
+        for (Long id : new LinkedHashSet<>(mailMessageIds)) {
+            if (id == null) {
+                skipped++;
+                continue;
+            }
+            MailMessage message = messages.findById(id).orElse(null);
+            if (message == null || message.getBodyText() == null || message.getBodyText().isBlank()) {
+                skipped++;
+                continue;
+            }
+            Optional<ParsedEmail> existing = parsedEmails.findByMailMessageId(id);
+            if (existing.isEmpty()) {
+                ParsedEmail row = new ParsedEmail();
+                row.setMailMessage(message);
+                row.setAttempts(0);
+                row.setStatus(ParseStatus.QUEUED);
+                row.setParsedAt(now);
+                parsedEmails.save(row);
+                queued++;
+                continue;
+            }
+            ParsedEmail row = existing.get();
+            switch (row.getStatus()) {
+                case QUEUED -> queued++;
+                case FAILED, IGNORED -> {
+                    row.setStatus(ParseStatus.QUEUED);
+                    row.setAttempts(0);
+                    row.setError(null);
+                    row.setParsedAt(now);
+                    parsedEmails.save(row);
+                    queued++;
+                }
+                case PARSED, SKIPPED -> skipped++;
+            }
+        }
+        return new QueueOutcome(queued, skipped);
+    }
+
+    /**
+     * What {@link #queue} did: requests recorded, and ids passed over.
+     *
+     * <p>Queued counts requests a row now stands for, including ones that were already queued, so
+     * pressing the button twice reports the same figure both times.
+     */
+    public record QueueOutcome(int queued, int skipped) {
+    }
+
+    /**
      * Take arrivals off the waiting list before the sweep reads them.
      *
      * <p>The same judgement {@link #ignore} makes, but made before the model has been asked
@@ -303,10 +383,12 @@ public class EmailParseRunner {
      * it back. No new status and no deletion, so there is no new state to learn; a deleted row
      * would be found and read again by tomorrow's sweep.
      *
-     * <p>An arrival that already has a row of any status is left alone and not counted: it is no
-     * longer waiting, and overwriting its verdict with "left out" would be rewriting what the
-     * model or a person already decided. An id not on this desk is skipped the same way, so the
-     * count is of rows created and says nothing about ids that were not this desk's.
+     * <p>An arrival that already has a row is left alone and not counted, with one exception: a row
+     * {@link ParseStatus#QUEUED} is still waiting, so it is turned into this verdict and counted —
+     * the person who queued it has changed their mind. Any other status means it is no longer
+     * waiting, and overwriting its verdict with "left out" would be rewriting what the model or a
+     * person already decided. An id not on this desk is skipped the same way, so the count is of
+     * arrivals taken off the list and says nothing about ids that were not this desk's.
      *
      * <p>Each id is loaded, not referenced, although the row only needs to point at it: a
      * reference to an id a caller sent skips the load that would have found it is another desk's,
@@ -314,7 +396,7 @@ public class EmailParseRunner {
      * costs the bodies of the messages picked, which is a person's selection on one button press
      * and not a timer re-reading a table - the case the transfer budget is about.
      *
-     * @return how many rows were created
+     * @return how many arrivals came off the waiting list: a new row, or a queued row turned to IGNORED
      */
     @Transactional
     public int leaveOut(List<Long> mailMessageIds, List<Long> feedItemIds, String note) {
@@ -326,7 +408,12 @@ public class EmailParseRunner {
         int created = 0;
         if (mailMessageIds != null) {
             for (Long id : mailMessageIds) {
-                if (id == null || parsedEmails.findByMailMessageId(id).isPresent()) continue;
+                if (id == null) continue;
+                Optional<ParsedEmail> existing = parsedEmails.findByMailMessageId(id);
+                if (existing.isPresent()) {
+                    if (takeOffQueue(existing.get(), error)) created++;
+                    continue;
+                }
                 MailMessage message = messages.findById(id).orElse(null);
                 if (message == null) continue;
                 ParsedEmail row = leftOutRow(error);
@@ -337,7 +424,12 @@ public class EmailParseRunner {
         }
         if (feedItemIds != null) {
             for (Long id : feedItemIds) {
-                if (id == null || parsedEmails.findByFeedItemId(id).isPresent()) continue;
+                if (id == null) continue;
+                Optional<ParsedEmail> existing = parsedEmails.findByFeedItemId(id);
+                if (existing.isPresent()) {
+                    if (takeOffQueue(existing.get(), error)) created++;
+                    continue;
+                }
                 FeedItem post = feedItems.findById(id).orElse(null);
                 if (post == null) continue;
                 ParsedEmail row = leftOutRow(error);
@@ -347,6 +439,22 @@ public class EmailParseRunner {
             }
         }
         return created;
+    }
+
+    /**
+     * Turn a queued row into the left-out verdict. Any other row is not touched.
+     *
+     * <p>Attempts are left alone: a queued row has none, and the verdict should not claim one.
+     *
+     * @return whether the row changed
+     */
+    private boolean takeOffQueue(ParsedEmail row, String error) {
+        if (row.getStatus() != ParseStatus.QUEUED) return false;
+        row.setStatus(ParseStatus.IGNORED);
+        row.setError(error);
+        row.setParsedAt(OffsetDateTime.now());
+        parsedEmails.save(row);
+        return true;
     }
 
     /**
@@ -376,6 +484,9 @@ public class EmailParseRunner {
     @Transactional
     public void reopen(Long parsedEmailId) {
         parsedEmails.findById(parsedEmailId).ifPresent(row -> {
+            // Already waiting for the sweep. Turning it into a failure would give it a retry state
+            // it has not earned, and the Log, where Reopen is pressed, never lists a queued row.
+            if (row.getStatus() == ParseStatus.QUEUED) return;
             row.setAttempts(0);
             row.setStatus(ParseStatus.FAILED);
             row.setError("Queued to be read again.");
