@@ -107,7 +107,7 @@ public class IntakeQueryService {
         boolean reachable = client.isReachable();
         ParserSettings.Values values = settings.values();
         IntakeService.Counts counts = intake.counts();
-        long unparsed = parsedEmails.countUnparsed(values.receivedSince());
+        long unparsed = parsedEmails.countUnparsed(values.receivedSince(), values.receivedFloor());
         long unparsedPosts = feedItems.countUnparsedForIntake(values.receivedSince());
         long intakeSources = sources.findReadIntoIntake().stream()
                 .filter(com.chartering.model.FeedSource::isEnabled).count();
@@ -145,7 +145,7 @@ public class IntakeQueryService {
                     + "Sources to have them read in too.");
         }
         if (values.sweepMaxAgeDays() > 0 && unparsed == 0
-                && parsedEmails.countUnparsed(ParserSettings.NO_LIMIT_SINCE) > 0) {
+                && parsedEmails.countUnparsed(ParserSettings.NO_LIMIT_SINCE, ParserSettings.NO_LIMIT_SINCE) > 0) {
             // The one case where the counter reads zero and there is genuinely work: older
             // mail outside the window. Worth saying, because widening the window is the fix
             // and nothing else on the screen hints at it.
@@ -361,8 +361,10 @@ public class IntakeQueryService {
     /**
      * What the sweep has yet to read, one door at a time, in the order the sweep takes it.
      *
-     * <p>The same {@code since} the status counts from, so the list and the header number cannot
-     * disagree about what is inside the lookback. Each row is a projection (see
+     * <p>The same {@code since} and {@code floor} the status counts from, taken from one settings
+     * snapshot, so the list and the header number cannot disagree about what is inside the lookback.
+     * Mail's window counts from arrival, capped at twice the lookback (see
+     * {@code ParsedEmailRepository#unparsed}). Each row is a projection (see
      * {@code ParsedEmailRepository#waiting}) and no body crosses the wire.
      *
      * <p>Page size is clamped rather than rejected: a list asking for ten thousand rows gets a
@@ -372,10 +374,10 @@ public class IntakeQueryService {
     public PageResponse<WaitingArrivalResponse> waiting(WaitingSource source, int page, int size) {
         requireEnabled();
         Pageable pageable = PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), 100));
-        LocalDateTime since = settings.values().receivedSince();
+        ParserSettings.Values values = settings.values();
         Page<WaitingArrivalResponse> found = source == WaitingSource.WEB
-                ? feedItems.waitingForIntake(since, pageable)
-                : parsedEmails.waiting(since, pageable);
+                ? feedItems.waitingForIntake(values.receivedSince(), pageable)
+                : parsedEmails.waiting(values.receivedSince(), values.receivedFloor(), pageable);
         return PageResponse.from(found);
     }
 

@@ -51,7 +51,7 @@ export function useIntakeInvalidator() {
  * change while somebody is looking at the screen. PARSER_ENABLED cannot change without a
  * restart, but it is the cheapest field on a response that has to be fresh anyway.
  */
-export const useIntakeStatus = () =>
+export const useIntakeStatus = (options?: { poll?: boolean }) =>
   useQuery({
     queryKey: intakeKeys.status,
     queryFn: intakeApi.status,
@@ -59,6 +59,12 @@ export const useIntakeStatus = () =>
     // every navigation, short enough that starting the container is noticed without a
     // reload.
     staleTime: 60_000,
+    // Only the Intake tab polls. Staleness alone never refetches a query that stays mounted,
+    // so the "waiting to be read" count stood still while mail arrived underneath it, and the
+    // only way to see the mailbox feeding the queue was to leave the tab and come back. The
+    // shell and the other screens keep the old behaviour: they read whether the feature exists,
+    // which does not move, and a request a minute from every open page is not worth that.
+    refetchInterval: options?.poll ? 60_000 : false,
     // A deployment without the feature answers enabled:false rather than failing, so a retry
     // here would only ever be retrying a real outage — which the rest of the app already
     // reports.

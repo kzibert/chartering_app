@@ -202,7 +202,12 @@ public class ParserSettings {
     public record Values(int sweepIntervalMinutes, int sweepBatchSize, int sweepMaxAgeDays) {
 
         /**
-         * The oldest mail a sweep may pick up. Never null — see {@link #NO_LIMIT_SINCE}.
+         * The lookback's start, measured on when the mail server received the message (or when
+         * the board published the post). Never null — see {@link #NO_LIMIT_SINCE}.
+         *
+         * <p>Feed posts use this alone: a post has no sync to be late about, its date is when the
+         * board published it. Mail uses it together with {@link #receivedFloor()} — see
+         * {@code ParsedEmailRepository#unparsed}.
          *
          * <p>On the value rather than in the sweep so the count in the header and the queue
          * the sweep actually reads cannot be computed from two different cutoffs — which
@@ -211,6 +216,25 @@ public class ParserSettings {
         public java.time.LocalDateTime receivedSince() {
             return sweepMaxAgeDays <= 0 ? NO_LIMIT_SINCE
                     : java.time.LocalDateTime.now().minusDays(sweepMaxAgeDays);
+        }
+
+        /**
+         * The oldest mail the lookback may ever reach back to, however late it was synced. Never null.
+         *
+         * <p>Twice the lookback. Mail counts from when it reached us ({@code syncedAt} at or after
+         * {@link #receivedSince()}), so a message that sat in a mailbox the poller could not reach
+         * for days still gets a full window from the day it arrived here. This floor is what stops
+         * that rule reading history: the first sync of a mailbox brings {@code IMAP_INITIAL_DAYS} of
+         * old mail, all with {@code syncedAt} = now, and none of it may be read just because it was
+         * synced today. Anything sent before the floor is outside every window, late or not.
+         *
+         * <p>Computed the same way as {@link #receivedSince()}, with the same no-limit rule. The two
+         * are read from separate {@code now()} calls, which is harmless here: the floor is two
+         * windows back, so a few milliseconds between them cannot move a message across it.
+         */
+        public java.time.LocalDateTime receivedFloor() {
+            return sweepMaxAgeDays <= 0 ? NO_LIMIT_SINCE
+                    : java.time.LocalDateTime.now().minusDays(2L * sweepMaxAgeDays);
         }
     }
 

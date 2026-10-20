@@ -1174,7 +1174,13 @@ is a supported way to run it.** The lookback (30 days by default, matching
 `IMAP_INITIAL_DAYS`) is what stops the first run reading a mailbox's whole history: a
 year-old position list is not information — the ship sailed and the cargo fixed — so parsing
 it spends GPU to put rows on Open Fleet that are wrong by construction and look right until
-somebody offers the ship. 0 removes the limit. The header count and the sweep's own queue are
+somebody offers the ship. 0 removes the limit. **Mail counts from when it reached us, never
+from further back than twice the lookback**: a message is in the window when its server received
+it since the cutoff, or when it was *synced* since the cutoff and is younger than 2N days. On
+2026-10-19 forty-two circulars dated the 12th, synced on the 16th after an outage, had aged out
+of a 7-day window the day the sweep came back, and nothing on screen said so. The floor keeps
+the first sync of a mailbox, all of it synced "today", from being read whole. Board posts have
+no sync to be late about and keep the plain cutoff. The header count and the sweep's own queue are
 computed from one resolved snapshot of these, or the screen would say "0 waiting" above a run
 that then read twenty. A ticker checks
 the clock every minute rather than Spring binding `fixedDelay` at startup. `EmailParseRunner`

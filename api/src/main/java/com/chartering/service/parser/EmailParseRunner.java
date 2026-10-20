@@ -158,9 +158,12 @@ public class EmailParseRunner {
         } catch (EmailParserClient.ParserUnavailableException e) {
             row.setStatus(ParseStatus.FAILED);
             row.setError(e.getMessage());
-            // Saved and flushed before the throw, so the failure is on record even though
-            // the caller is about to abandon the sweep. Nothing else in this transaction has
-            // written, so there is nothing for the rollback to take with it.
+            // Flushed and then rolled back with the rest of the transaction: the exception is
+            // a RuntimeException, so the row does not survive and the message stays in the
+            // queue with its attempts untouched. That is the right outcome, whatever this
+            // once claimed. A server that is down says nothing about the email, and recording
+            // it would spend one of the message's attempts per outage until the ceiling took
+            // it out of the queue for good. The sweep's report is where an outage is told.
             parsedEmails.saveAndFlush(row);
             throw e;
         }

@@ -10,6 +10,7 @@ import jakarta.annotation.PreDestroy;
 import jakarta.mail.FetchProfile;
 import jakarta.mail.Flags;
 import jakarta.mail.Folder;
+import jakarta.mail.FolderClosedException;
 import jakarta.mail.Message;
 import jakarta.mail.MessagingException;
 import jakarta.mail.Session;
@@ -275,7 +276,36 @@ public class ImapMailboxSyncService {
             long highestUid = state.getLastUid() == null ? 0L : state.getLastUid();
             for (Message m : batch) {
                 Long uid = uidOf(folder, m);
-                parsed.add(read(m, uid, validity, name));
+                try {
+                    MailIngestService.Incoming incoming = read(m, uid, validity, name);
+                    // The body extractor keeps going past a part it cannot read, which is right
+                    // for a broken part and wrong for a dropped connection: the message would
+                    // be stored without its body, the cursor would step past it, and it would
+                    // never be fetched again. A connection gone mid-read fails the folder here
+                    // instead, so the whole batch is read again on the next poll.
+                    if (!store.isConnected() || !folder.isOpen()) {
+                        throw new FolderClosedException(folder, "connection lost while reading UID " + uid);
+                    }
+                    parsed.add(incoming);
+                } catch (FolderClosedException e) {
+                    throw e;
+                } catch (Exception e) {
+                    // A connection that has gone is not a bad message: every later read would
+                    // fail the same way and the cursor would then step past all of them. Let
+                    // the folder fail instead, so the cursor stays where it was and the next
+                    // poll reads them again.
+                    if (!store.isConnected() || !folder.isOpen()) {
+                        throw e;
+                    }
+                    // A message that cannot be read at all is skipped and its UID still
+                    // counts towards the cursor. The alternative, holding the cursor, means
+                    // the oldest unreadable message fails the whole folder on every poll,
+                    // because capped() takes the oldest UIDs first, and nothing after it is
+                    // ever stored. The cost is that this one message is not retried; it is
+                    // logged here with its UID so it can be found on the server.
+                    log.warn("Skipping message UID {} in {}: it could not be read: {}",
+                            uid, name, e.toString());
+                }
                 if (uid != null && uid > highestUid) {
                     highestUid = uid;
                 }
@@ -530,7 +560,7 @@ public class ImapMailboxSyncService {
 
     private MailIngestService.Incoming read(Message m, Long uid, long validity, String folderName)
             throws MessagingException {
-        InternetAddress from = firstAddress(m);
+        InternetAddress from = senderQuietly(m);
         MimeBodyExtractor.Body body = bodies.extract(m);
         LocalDateTime arrived = arrivalOf(m);
 
@@ -545,7 +575,7 @@ public class ImapMailboxSyncService {
                 from != null ? truncate(from.getPersonal(), 255) : null,
                 addresses(m, Message.RecipientType.TO),
                 addresses(m, Message.RecipientType.CC),
-                m.getSubject(),
+                subjectQuietly(m),
                 toLocal(sentDateQuietly(m)),
                 arrived != null ? arrived : LocalDateTime.now(),
                 body.text(),
@@ -572,6 +602,28 @@ public class ImapMailboxSyncService {
         var from = m.getFrom();
         if (from == null || from.length == 0) return null;
         return from[0] instanceof InternetAddress ia ? ia : new InternetAddress(from[0].toString());
+    }
+
+    /**
+     * A malformed From header is the sender being unknown, not the message being unreadable:
+     * the row is still stored, labelled "unknown", as it would be for a message with no From.
+     */
+    private static InternetAddress senderQuietly(Message m) {
+        try {
+            return firstAddress(m);
+        } catch (MessagingException e) {
+            log.debug("Unparseable From header on a message: {}", e.toString());
+            return null;
+        }
+    }
+
+    private static String subjectQuietly(Message m) {
+        try {
+            return m.getSubject();
+        } catch (MessagingException e) {
+            log.debug("Unreadable Subject header on a message: {}", e.toString());
+            return null;
+        }
     }
 
     private static String addresses(Message m, Message.RecipientType type) {

@@ -33,25 +33,30 @@ public interface ParsedEmailRepository extends JpaRepository<ParsedEmail, Long> 
      * a model, and filtering here is cheaper than writing a SKIPPED row for every calendar
      * invite the mailbox has ever carried.
      *
-     * <p>{@code since} is the lookback window, and it is what stops the feature reading a
-     * mailbox's whole history the first time it is switched on. A three-year-old position
-     * list is not information — the ship sailed, the cargo fixed — so parsing it spends GPU
-     * to fill Open Fleet with rows that are wrong by construction.
+     * <p>The window: a message is inside it when its mail server received it since
+     * {@code since}, or when it reached this application since {@code since} and its server had it
+     * after {@code floor}. The first clause is the ordinary lookback. The second exists because the
+     * mailbox poller can be down for days: mail synced on the 16th for a sending date of the 12th
+     * would otherwise be older than the window on the day it arrived, and never read. Counting
+     * from arrival gives it a full window from when it reached us, and {@code floor} (twice the
+     * lookback) keeps the first sync of a mailbox, which brings history with {@code syncedAt} = now,
+     * from being read whole.
      *
-     * <p>Always a date, never null, and "no limit" is {@link ParserSettings#NO_LIMIT_SINCE}
-     * rather than a null to test for. That is not style: Postgres cannot infer the type of a
-     * bare parameter in {@code (? is null or ...)} and refuses the statement outright —
-     * "could not determine data type of parameter $1". A sentinel keeps the predicate a plain
-     * comparison, which is also the form the index can serve.
+     * <p>{@code since} and {@code floor} are both always dates, never null, and "no limit" is
+     * {@link ParserSettings#NO_LIMIT_SINCE} for both rather than a null to test for. That is not
+     * style: Postgres cannot infer the type of a bare parameter in {@code (? is null or ...)} and
+     * refuses the statement outright — "could not determine data type of parameter $1". A sentinel
+     * keeps the predicate a plain comparison, which is also the form the index can serve.
      */
     @Query("""
             select m from MailMessage m
             where m.bodyText is not null and m.bodyText <> ''
-              and m.receivedAt >= :since
+              and (m.receivedAt >= :since or (m.syncedAt >= :since and m.receivedAt >= :floor))
               and not exists (select 1 from ParsedEmail p where p.mailMessage = m)
             order by m.receivedAt desc
             """)
-    List<MailMessage> unparsed(@Param("since") LocalDateTime since, Pageable pageable);
+    List<MailMessage> unparsed(@Param("since") LocalDateTime since, @Param("floor") LocalDateTime floor,
+                               Pageable pageable);
 
     /**
      * The mail half of the Intake tab's "waiting" list: the same rows {@link #unparsed} hands the
@@ -62,26 +67,27 @@ public interface ParsedEmailRepository extends JpaRepository<ParsedEmail, Long> 
      * wire to print a sender, a subject and a line of preview. {@code snippet} is the preview
      * the sync already stores, which is the one part of the body a list needs.
      *
-     * <p>The predicate is copied from {@link #unparsed} rather than shared, because JPQL has no
-     * way to share a {@code where} clause; the {@code countQuery} must stay in step with it, and
-     * the integration test checks the two agree.
+     * <p>The window predicate is the one {@link #unparsed} documents, copied rather than shared,
+     * because JPQL has no way to share a {@code where} clause; the {@code countQuery} must stay in
+     * step with it, and the integration test checks the two agree.
      */
     @Query(value = """
             select new com.chartering.dto.WaitingArrivalResponse(
                 'MAIL', m.id, m.receivedAt, m.fromName, m.fromAddress, c.name, m.subject, m.snippet)
             from MailMessage m left join m.company c
             where m.bodyText is not null and m.bodyText <> ''
-              and m.receivedAt >= :since
+              and (m.receivedAt >= :since or (m.syncedAt >= :since and m.receivedAt >= :floor))
               and not exists (select 1 from ParsedEmail p where p.mailMessage = m)
             order by m.receivedAt desc
             """,
             countQuery = """
             select count(m) from MailMessage m
             where m.bodyText is not null and m.bodyText <> ''
-              and m.receivedAt >= :since
+              and (m.receivedAt >= :since or (m.syncedAt >= :since and m.receivedAt >= :floor))
               and not exists (select 1 from ParsedEmail p where p.mailMessage = m)
             """)
-    Page<WaitingArrivalResponse> waiting(@Param("since") LocalDateTime since, Pageable pageable);
+    Page<WaitingArrivalResponse> waiting(@Param("since") LocalDateTime since,
+                                         @Param("floor") LocalDateTime floor, Pageable pageable);
 
     /**
      * Failures worth another go, oldest first.
@@ -130,14 +136,20 @@ public interface ParsedEmailRepository extends JpaRepository<ParsedEmail, Long> 
 
     long countByStatus(ParseStatus status);
 
-    /** How much is left to read, for the tab's header and for "is a sweep worth running". */
+    /**
+     * How much is left to read, for the tab's header and for "is a sweep worth running".
+     *
+     * <p>Same window as {@link #unparsed} and {@link #waiting} — the header and the queue must agree
+     * about what is inside the lookback, so this takes the same {@code since} and {@code floor}
+     * from the same settings snapshot.
+     */
     @Query("""
             select count(m) from MailMessage m
             where m.bodyText is not null and m.bodyText <> ''
-              and m.receivedAt >= :since
+              and (m.receivedAt >= :since or (m.syncedAt >= :since and m.receivedAt >= :floor))
               and not exists (select 1 from ParsedEmail p where p.mailMessage = m)
             """)
-    long countUnparsed(@Param("since") LocalDateTime since);
+    long countUnparsed(@Param("since") LocalDateTime since, @Param("floor") LocalDateTime floor);
 
     @Query("select max(p.parsedAt) from ParsedEmail p")
     OffsetDateTime lastParsedAt();

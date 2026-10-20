@@ -81,7 +81,7 @@ class WaitingArrivalsIntegrationTest extends IntegrationTest {
         });
 
         Page<WaitingArrivalResponse> page = TenantContext.callAs(DESK,
-                () -> parsedEmails.waiting(ParserSettings.NO_LIMIT_SINCE, ALL));
+                () -> parsedEmails.waiting(ParserSettings.NO_LIMIT_SINCE, ParserSettings.NO_LIMIT_SINCE, ALL));
 
         assertThat(page.getContent()).extracting(WaitingArrivalResponse::id).contains(waiting).doesNotContain(read);
         WaitingArrivalResponse row = page.getContent().stream()
@@ -93,7 +93,7 @@ class WaitingArrivalsIntegrationTest extends IntegrationTest {
         assertThat(row.receivedAt()).isNotNull();
         assertThat(row.boardName()).isNull();
         assertThat(page.getTotalElements()).isEqualTo(
-                TenantContext.callAs(DESK, () -> parsedEmails.countUnparsed(ParserSettings.NO_LIMIT_SINCE)));
+                TenantContext.callAs(DESK, () -> parsedEmails.countUnparsed(ParserSettings.NO_LIMIT_SINCE, ParserSettings.NO_LIMIT_SINCE)));
     }
 
     @Test
@@ -135,7 +135,7 @@ class WaitingArrivalsIntegrationTest extends IntegrationTest {
 
         assertThat(first).isEqualTo(2);
         assertThat(second).isZero();
-        assertThat(TenantContext.callAs(DESK, () -> parsedEmails.waiting(ParserSettings.NO_LIMIT_SINCE, ALL)).getContent())
+        assertThat(TenantContext.callAs(DESK, () -> parsedEmails.waiting(ParserSettings.NO_LIMIT_SINCE, ParserSettings.NO_LIMIT_SINCE, ALL)).getContent())
                 .extracting(WaitingArrivalResponse::id).doesNotContain(mail);
         assertThat(TenantContext.callAs(DESK, () -> feedItems.waitingForIntake(ParserSettings.NO_LIMIT_SINCE, ALL)).getContent())
                 .extracting(WaitingArrivalResponse::id).doesNotContain(post);
@@ -159,8 +159,78 @@ class WaitingArrivalsIntegrationTest extends IntegrationTest {
 
         assertThat(created).isZero();
         assertThat(TenantContext.callAs(DESK, () -> parsedEmails.findByMailMessageId(mail))).isEmpty();
-        assertThat(TenantContext.callAs(DESK, () -> parsedEmails.waiting(ParserSettings.NO_LIMIT_SINCE, ALL)).getContent())
+        assertThat(TenantContext.callAs(DESK, () -> parsedEmails.waiting(ParserSettings.NO_LIMIT_SINCE, ParserSettings.NO_LIMIT_SINCE, ALL)).getContent())
                 .extracting(WaitingArrivalResponse::id).contains(mail);
+    }
+
+    /*
+     * The lookback counts mail from when it reached us, within twice the lookback. Each case is one
+     * shape of message against a seven-day window, and the Values record supplies both cutoffs the
+     * way the sweep does, so the test exercises the same helpers production calls.
+     */
+
+    @Test
+    void mailSyncedLateGetsAWindowFromArrival() {
+        ParserSettings.Values lookback7 = new ParserSettings.Values(30, 20, 7);
+        LocalDateTime now = LocalDateTime.now();
+        String tag = tag();
+        // Sent 10 days ago, synced 2 days ago: older than 7 days by the send date, inside by arrival.
+        long lateSynced = mailAt("Late " + tag, "Ops desk " + tag, now.minusDays(10), now.minusDays(2));
+
+        Page<WaitingArrivalResponse> page = TenantContext.callAs(DESK, () ->
+                parsedEmails.waiting(lookback7.receivedSince(), lookback7.receivedFloor(), ALL));
+
+        assertThat(page.getContent()).extracting(WaitingArrivalResponse::id).contains(lateSynced);
+        assertThat(page.getTotalElements()).isEqualTo(TenantContext.callAs(DESK, () ->
+                parsedEmails.countUnparsed(lookback7.receivedSince(), lookback7.receivedFloor())));
+    }
+
+    @Test
+    void mailOlderThanTwiceTheLookbackIsNeverReadEvenWhenSyncedToday() {
+        ParserSettings.Values lookback7 = new ParserSettings.Values(30, 20, 7);
+        LocalDateTime now = LocalDateTime.now();
+        String tag = tag();
+        // Sent 20 days ago, synced today: the first sync of a mailbox brings exactly this, and it is
+        // past the 14-day floor, so it must stay out.
+        long history = mailAt("History " + tag, "Ops desk " + tag, now.minusDays(20), now);
+
+        Page<WaitingArrivalResponse> page = TenantContext.callAs(DESK, () ->
+                parsedEmails.waiting(lookback7.receivedSince(), lookback7.receivedFloor(), ALL));
+
+        assertThat(page.getContent()).extracting(WaitingArrivalResponse::id).doesNotContain(history);
+        assertThat(page.getTotalElements()).isEqualTo(TenantContext.callAs(DESK, () ->
+                parsedEmails.countUnparsed(lookback7.receivedSince(), lookback7.receivedFloor())));
+    }
+
+    @Test
+    void mailSentAndSyncedBeforeTheLookbackIsNotWaiting() {
+        ParserSettings.Values lookback7 = new ParserSettings.Values(30, 20, 7);
+        LocalDateTime now = LocalDateTime.now();
+        String tag = tag();
+        long stale = mailAt("Stale " + tag, "Ops desk " + tag, now.minusDays(10), now.minusDays(10));
+
+        Page<WaitingArrivalResponse> page = TenantContext.callAs(DESK, () ->
+                parsedEmails.waiting(lookback7.receivedSince(), lookback7.receivedFloor(), ALL));
+
+        assertThat(page.getContent()).extracting(WaitingArrivalResponse::id).doesNotContain(stale);
+        assertThat(page.getTotalElements()).isEqualTo(TenantContext.callAs(DESK, () ->
+                parsedEmails.countUnparsed(lookback7.receivedSince(), lookback7.receivedFloor())));
+    }
+
+    @Test
+    void noLimitTakesEveryMessageWithABody() {
+        ParserSettings.Values noLimit = new ParserSettings.Values(30, 20, 0);
+        LocalDateTime now = LocalDateTime.now();
+        String tag = tag();
+        long ancient = mailAt("Ancient " + tag, "Ops desk " + tag, now.minusDays(400), now.minusDays(400));
+        long lateSynced = mailAt("Late " + tag, "Ops desk " + tag, now.minusDays(30), now);
+
+        Page<WaitingArrivalResponse> page = TenantContext.callAs(DESK, () ->
+                parsedEmails.waiting(noLimit.receivedSince(), noLimit.receivedFloor(), ALL));
+
+        assertThat(page.getContent()).extracting(WaitingArrivalResponse::id).contains(ancient, lateSynced);
+        assertThat(page.getTotalElements()).isEqualTo(TenantContext.callAs(DESK, () ->
+                parsedEmails.countUnparsed(noLimit.receivedSince(), noLimit.receivedFloor())));
     }
 
     // ------------------------------------------------------------------ fixtures
@@ -169,7 +239,13 @@ class WaitingArrivalsIntegrationTest extends IntegrationTest {
         return UUID.randomUUID().toString().substring(0, 8);
     }
 
+    /** A message received and synced just now, which is what a live sync writes. */
     private long mail(String subject, String fromName) {
+        LocalDateTime now = LocalDateTime.now();
+        return mailAt(subject, fromName, now, now);
+    }
+
+    private long mailAt(String subject, String fromName, LocalDateTime receivedAt, LocalDateTime syncedAt) {
         // Mail is personal (V32): a row is written as a person on the desk, not as the desk alone.
         Long owner = TenantContext.callAs(DESK, () ->
                 jdbc.queryForObject("select min(id) from users", Long.class));
@@ -179,7 +255,8 @@ class WaitingArrivalsIntegrationTest extends IntegrationTest {
             m.setFromAddress("sender@example.test");
             m.setFromName(fromName);
             m.setSubject(subject);
-            m.setReceivedAt(LocalDateTime.now());
+            m.setReceivedAt(receivedAt);
+            m.setSyncedAt(syncedAt);
             m.setBodyText("Body of " + subject);
             m.setSnippet("Snippet for " + subject);
             return messages.save(m).getId();

@@ -82,7 +82,7 @@ import type {
  * "how much mail is waiting" is what makes Parse now worth pressing or not.
  */
 export default function IntakePage() {
-  const status = useIntakeStatus();
+  const status = useIntakeStatus({ poll: true });
   const [view, setView] = useState<'queue' | 'minor' | 'log'>('queue');
   const [kind, setKind] = useState<IntakeItemKind>();
   const [itemStatus, setItemStatus] = useState<IntakeItemStatus>('PENDING');

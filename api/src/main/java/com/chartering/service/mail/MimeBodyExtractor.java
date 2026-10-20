@@ -1,16 +1,26 @@
 package com.chartering.service.mail;
 
 import com.chartering.config.MailboxProperties;
-import jakarta.mail.BodyPart;
 import jakarta.mail.Message;
 import jakarta.mail.MessagingException;
 import jakarta.mail.Multipart;
 import jakarta.mail.Part;
+import jakarta.mail.internet.ContentType;
+import jakarta.mail.internet.MimeBodyPart;
+import jakarta.mail.internet.MimeMessage;
+import jakarta.mail.internet.MimeUtility;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.Charset;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
@@ -60,13 +70,10 @@ public class MimeBodyExtractor {
         StringBuilder text = new StringBuilder();
         StringBuilder html = new StringBuilder();
         List<String> attachments = new ArrayList<>();
-        try {
-            walk(message, text, html, attachments);
-        } catch (MessagingException | IOException e) {
-            // A body that will not parse is not a reason to lose the message: the headers
-            // are the half that links it to a company, and they are already read.
-            log.warn("Could not read the body of a message: {}", e.toString());
-        }
+        // walk() contains its own failures, so a body that will not parse is not a reason to
+        // lose the message: the headers are the half that links it to a company, and they
+        // are already read.
+        walk(message, text, html, attachments);
 
         String plain = trim(text.toString());
         String markup = trim(html.toString());
@@ -83,7 +90,20 @@ public class MimeBodyExtractor {
         return flat.length() <= 300 ? flat : flat.substring(0, 297) + "...";
     }
 
-    private void walk(Part part, StringBuilder text, StringBuilder html, List<String> attachments)
+    /**
+     * Walks one part and everything under it. A failure is contained here, to the part that
+     * raised it: one broken child of a multipart must not end the walk of its siblings, which
+     * is how a single unregistered charset used to cost a whole message its HTML.
+     */
+    private void walk(Part part, StringBuilder text, StringBuilder html, List<String> attachments) {
+        try {
+            walkPart(part, text, html, attachments);
+        } catch (MessagingException | IOException | RuntimeException e) {
+            log.warn("Skipped a {} part of a message: {}", contentTypeOf(part), e.toString());
+        }
+    }
+
+    private void walkPart(Part part, StringBuilder text, StringBuilder html, List<String> attachments)
             throws MessagingException, IOException {
 
         String filename = filenameOf(part);
@@ -96,14 +116,19 @@ public class MimeBodyExtractor {
         }
 
         if (part.isMimeType("text/plain")) {
-            append(text, asString(part));
+            append(text, textOf(part));
         } else if (part.isMimeType("text/html")) {
-            append(html, asString(part));
+            append(html, textOf(part));
         } else if (part.isMimeType("multipart/*")) {
             Multipart mp = (Multipart) part.getContent();
             for (int i = 0; i < mp.getCount(); i++) {
-                BodyPart child = mp.getBodyPart(i);
-                walk(child, text, html, attachments);
+                // Each child is its own unit: a child that cannot be fetched is skipped, and
+                // the ones after it are still read.
+                try {
+                    walk(mp.getBodyPart(i), text, html, attachments);
+                } catch (MessagingException | RuntimeException e) {
+                    log.warn("Skipped child {} of a multipart: {}", i, e.toString());
+                }
             }
         } else if (part.isMimeType("message/rfc822")) {
             // A forwarded message. Its text is part of what the reader sees, and part of
@@ -122,9 +147,106 @@ public class MimeBodyExtractor {
         }
     }
 
-    private static String asString(Part part) throws MessagingException, IOException {
-        Object content = part.getContent();
-        return content instanceof String s ? s : String.valueOf(content);
+    /** The media type alone ("text/plain"), so a warning stays one short line. */
+    private static String contentTypeOf(Part part) {
+        try {
+            return new ContentType(part.getContentType()).getBaseType();
+        } catch (MessagingException | RuntimeException e) {
+            return "unknown";
+        }
+    }
+
+    /**
+     * The text of a text/plain or text/html part. The normal route is {@code getContent()},
+     * which decodes the transfer encoding and the charset together. When that throws, or hands
+     * back something other than a String, the bytes are read here instead: they are usually
+     * fine, and the failure is in a label on them (a charset name nobody registered, a
+     * transfer encoding typed wrongly), not in the words. One warning per part either way.
+     */
+    private static String textOf(Part part) throws MessagingException, IOException {
+        try {
+            Object content = part.getContent();
+            if (content instanceof String s) return s;
+            log.warn("A {} part did not come back as text ({}); reading its bytes instead",
+                    contentTypeOf(part), content.getClass().getName());
+        } catch (MessagingException | IOException | RuntimeException e) {
+            log.warn("A {} part did not decode ({}); reading its bytes instead",
+                    contentTypeOf(part), e.toString());
+        }
+        return decodeBytes(part);
+    }
+
+    /**
+     * Reads the part's bytes without asking the mail library to decode them, then decodes them
+     * ourselves. Transfer-decoded first, since that is what the sender meant; if the transfer
+     * encoding itself is the problem, the raw bytes on the wire are the next best thing.
+     * Returns null when neither can be read, which leaves the part as nothing rather than
+     * failing the whole message.
+     */
+    private static String decodeBytes(Part part) {
+        byte[] bytes;
+        try (InputStream in = part.getInputStream()) {
+            bytes = in.readAllBytes();
+        } catch (MessagingException | IOException | RuntimeException e) {
+            bytes = rawBytes(part);
+        }
+        if (bytes == null) return null;
+        return decode(bytes, declaredCharset(part));
+    }
+
+    private static byte[] rawBytes(Part part) {
+        try (InputStream in = rawStream(part)) {
+            return in == null ? null : in.readAllBytes();
+        } catch (MessagingException | IOException | RuntimeException e) {
+            log.debug("No raw bytes for a {} part: {}", contentTypeOf(part), e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * The bytes as they sit in the message, transfer encoding and all. Only the two concrete
+     * MIME classes expose this; anything else answers null.
+     */
+    private static InputStream rawStream(Part part) throws MessagingException {
+        if (part instanceof MimeMessage m) return m.getRawInputStream();
+        if (part instanceof MimeBodyPart b) return b.getRawInputStream();
+        return null;
+    }
+
+    /** The charset the part declares, as a Java name, or null when it declares none or is junk. */
+    private static String declaredCharset(Part part) {
+        try {
+            String charset = new ContentType(part.getContentType()).getParameter("charset");
+            return charset == null ? null : MimeUtility.javaCharset(charset);
+        } catch (MessagingException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * The declared charset when the JVM has it; otherwise UTF-8 if the bytes are valid UTF-8
+     * (most mail that names no charset it can read is UTF-8 anyway); otherwise ISO-8859-1,
+     * which maps every byte to something and so never fails. The result is for search and
+     * reading, so a stray character is preferable to losing the part.
+     */
+    static String decode(byte[] bytes, String javaCharset) {
+        if (javaCharset != null) {
+            try {
+                if (Charset.isSupported(javaCharset)) {
+                    return new String(bytes, Charset.forName(javaCharset));
+                }
+            } catch (IllegalArgumentException e) {
+                // An illegal charset name: fall through to the guesses below.
+            }
+        }
+        try {
+            CharsetDecoder strict = StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT);
+            return strict.decode(ByteBuffer.wrap(bytes)).toString();
+        } catch (CharacterCodingException e) {
+            return new String(bytes, StandardCharsets.ISO_8859_1);
+        }
     }
 
     /**
