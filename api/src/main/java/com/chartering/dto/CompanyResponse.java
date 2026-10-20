@@ -26,5 +26,11 @@ public record CompanyResponse(
         boolean banned,
         boolean legacy,
         /** derived: the company has email addresses, but every one is flagged not working */
-        boolean noWorkingEmail) {
+        boolean noWorkingEmail,
+        /**
+         * derived: a question about the firm's own details is waiting in Intake, minor or not.
+         * The "Update from correspondence" mark. A primitive like the flags above, so it is always
+         * sent: false is the answer for a firm with nothing waiting, not an absent field.
+         */
+        boolean correspondenceUpdate) {
 }

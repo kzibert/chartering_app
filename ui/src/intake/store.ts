@@ -33,6 +33,7 @@ export const intakeKeys = {
   settings: [...KEY, 'settings'] as const,
   vesselFields: [...KEY, 'vessel-fields'] as const,
   cargoSources: (cargoId: number) => [...KEY, 'cargo-sources', cargoId] as const,
+  possibleDuplicates: (cargoId: number) => [...KEY, 'possible-duplicates', cargoId] as const,
   companyPending: (companyId: number) => [...KEY, 'company-pending', companyId] as const,
   positionCompanyPending: (positionId: number) =>
     [...KEY, 'position-company-pending', positionId] as const,
@@ -190,6 +191,21 @@ export const useCargoSources = (cargoId?: number) =>
     queryKey: intakeKeys.cargoSources(cargoId ?? 0),
     queryFn: () => intakeApi.cargoSources(cargoId!),
     enabled: cargoId != null,
+  });
+
+/**
+ * The duplicate-cargo questions waiting on one cargo, for its drawer to stack.
+ *
+ * Not retried: a deployment without Intake answers 404, which the API function reads as an
+ * empty list rather than an error, so there is nothing a retry could fix. Under the intake
+ * prefix, so answering one anywhere (the Intake tab too) takes it off every cargo's drawer.
+ */
+export const usePossibleDuplicates = (cargoId?: number) =>
+  useQuery({
+    queryKey: intakeKeys.possibleDuplicates(cargoId ?? 0),
+    queryFn: () => intakeApi.possibleDuplicates(cargoId!),
+    enabled: cargoId != null,
+    retry: false,
   });
 
 export function useIntakeMutations() {

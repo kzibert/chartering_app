@@ -1050,6 +1050,15 @@ So three things stop and become `intake_items`:
   or found too much, so a broker's habit can never overrule a hull's own name. One hull per
   firm per name, replaced rather than added to, because an owner sells a ship and takes the
   name to the next one.
+  **Placeholder slots are not ships.** A name that is TBN, TBA, TBC, TBD, NOMINATED or "to be
+  nominated/named/advised" as a whole word (`IntakeResolver.isPlaceholderName`) is skipped at intake
+  with no IMO, so it raises nothing and files nothing; a legacy hull with that name and an IMO
+  still goes through. The reweigh pass closes any waiting placeholder NEW_VESSEL as REJECTED.
+  **Discard memory:** a name a reviewer rejected as a ship to create is not raised again for 180
+  days (`rejectedNewVesselSince`), because asking every morning is the noise the queue exists to stop.
+  **One pending particulars question per vessel** is enforced on the conversion path as well as the
+  email path, and the reweigh pass folds any extra ones into the oldest; a particulars item with
+  every row already settled is closed ACCEPTED rather than left as an empty card in Needs review.
 - **`VESSEL_FIELDS`** — she is on file and the email disagrees. One item per vessel per email,
   accepted whole or per field. Gap fills are *not* queued: an empty column is written straight
   away, on the importer's rule that a matched record is never overwritten, only gap-filled.
@@ -1131,26 +1140,45 @@ So three things stop and become `intake_items`:
   firm is folded in (`CompanyStyleIntake.aggregate`): every person and address any of its mail
   has carried, the newer reading winning a field where two speak, compared again on the whole;
   `seenStyles` keeps every fingerprint so a discard suppresses all of them. **It is minor unless
-  the name or an email address changed** — a new firm, a real rename (not a legal form, per
-  `CompanyNames.similarityKey`) or an address the firm does not have; a website, a city, a phone
-  or a new face waits on Minor updates. The company's own drawer asks
-  `GET /intake/companies/{id}/pending` and, while the aggregate would still change something,
-  shows **Update from correspondence**, opening the same item drawer (`CorrespondenceUpdate`).
+  the name or an email address changed** — a new firm, a real rename, or an address the firm does
+  not have; a website, a city, a phone or a new face is minor. "Renamed" is `CompanyMatcher.sameFirm`,
+  which ignores legal forms, trade words (chartering, operations, lines…), punctuation and the office
+  a name is written with, and counts a name containing the one on file as the same firm: "Steel&Bulk"
+  and "STEELBULK", "Damarax Chartering" and "Damarax", "Bermuda Shipping -Istanbul" and "Bermuda
+  Shipping" are not renames. **A minor one is not in the Intake queue at all** — it is excluded from
+  the lists and the counts (`countPendingMinorUpdates`), stays PENDING, and is a mark on the firm:
+  `CompanyResponse.correspondenceUpdate` (any pending company question, minor or not), the companies
+  list's `correspondenceUpdate=true` filter, and the company's drawer, which asks
+  `GET /intake/companies/{id}/pending` and, while the aggregate would still change something, shows
+  **Update from correspondence**, opening the same item drawer (`CorrespondenceUpdate`). A minor item
+  that a later arrival makes non-minor is the same row, so it reappears in the queue by itself.
 - **`CARGO_MERGE`** — a cargo that looks like one in hand. The test is a set of **anchors**
   (`CargoMatcher`), each agreeing, abstaining or objecting, any objection ruling the pair out:
   commodity and load point must agree; discharge point, quantity (within 20%), laycan
   (overlapping with five days' grace) and charterer may abstain but may not object. **An absent
   field abstains** — a cargo email is mostly silent. A candidate is **certain** and merged on
-  arrival, with no item, where the sender is already a source of that cargo and two of
-  {quantity within 5%, discharge point, laycan} agree — a broker re-sending his own enquiry,
-  which was six of cargo 122's seven items — or where all three agree *and* the load point
-  agrees at port level. Everything else is **probable** and is asked, because two firms working
-  one cargo and two firms with similar cargoes look alike from here. A merge of either kind
-  gap-fills and leaves every disagreement alone — neither broker is the charterer, so there is
-  no reason to believe the second over the first — and the arrival stays on the cargo as a
-  source, a certain one noting "Merged on arrival" with its anchors. **One pending item per
+  arrival, with no item, where either the sender is already a source of that cargo and quantity
+  is within 5% or the discharge point agrees — a broker re-sending his own enquiry with the same
+  figure or the same discharge is the same enquiry, and laycan overlap alone does not qualify,
+  because one broker can carry two parcels from one port in one window — or the sender is a
+  source and two of {quantity within 5%, discharge point, laycan} agree, or all three agree *and*
+  the load point agrees at port level. Everything else is **probable** and is asked, because two
+  firms working one cargo and two firms with similar cargoes look alike from here. A merge of
+  either kind gap-fills and leaves every disagreement alone — neither broker is the charterer, so
+  there is no reason to believe the second over the first — and the arrival stays on the cargo as
+  a source, a certain one noting "Merged on arrival" with its anchors. **One pending item per
   candidate cargo**; later sightings join it as sources, and answering it puts every one of
   them on whichever cargo the answer names.
+
+  **A probable question is minor, and is answered on the cargo it is stacked on.** It does not
+  hold up Needs review — the minor flag is set when it is raised and when a later sighting joins
+  it. The cargo's drawer lists its waiting merges (`GET /intake/cargoes/{id}/possible-duplicates`),
+  each with the reading it arrived with, why it was raised, and its sources. The reweigh pass
+  (`IntakeService.reweighPending`, the same timer as the vessel and company questions) re-runs the
+  anchors on each waiting merge against its cargo as it stands: one that has become CERTAIN is
+  merged there and then, gap-fill only, and its answer notes "Merged automatically" with the
+  anchors; one whose cargo is no longer recognised on arrival (fixed, failed, withdrawn) is left for
+  a person. The pass reads the waiting merges and their own cargoes by id, never the cargoes table.
 
 **A position that repeats is a re-confirmation, not a new row.** An identical reading from the
 same reporter against a row still LIVE moves that row's `reported_at` forward — and only

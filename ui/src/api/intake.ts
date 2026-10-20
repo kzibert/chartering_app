@@ -818,6 +818,22 @@ export const intakeApi = {
   cargoSources: (cargoId: number) =>
     client.get<CargoSourceResponse[]>(`/intake/cargoes/${cargoId}/sources`).then((r) => r.data),
 
+  /**
+   * The pending duplicate-cargo questions stacked on one cargo: a list, empty when there are none.
+   *
+   * A 404 is the answer where Intake is not part of this deployment or this login (parser off,
+   * or the cloud parser and not an administrator), and it reads as "none" rather than as an
+   * error: the cargo drawer asks for every cargo it opens. It is accepted through validateStatus
+   * so the shared client does not raise its notification for it, while any other failure still
+   * reaches the user the usual way.
+   */
+  possibleDuplicates: (cargoId: number) =>
+    client
+      .get<IntakeItemResponse[]>(`/intake/cargoes/${cargoId}/possible-duplicates`, {
+        validateStatus: (status) => (status >= 200 && status < 300) || status === 404,
+      })
+      .then((r) => (r.status === 404 ? [] : r.data)),
+
   settings: () =>
     client.get<ParserSettingsResponse>('/intake/settings').then((r) => r.data),
 

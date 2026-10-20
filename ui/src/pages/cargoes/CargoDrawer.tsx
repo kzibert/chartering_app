@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react';
 import { Button, Drawer, Empty, Select, Space, Spin, Tag, Tooltip, Typography } from 'antd';
 import { EditOutlined, MailOutlined, NodeIndexOutlined } from '@ant-design/icons';
 import { useCargo, useCargoMutations, useMatchesForCargo } from '../../api/hooks';
-import { useCargoSources } from '../../intake/store';
+import { useCargoSources, usePossibleDuplicates } from '../../intake/store';
 import OriginalEmail from '../../components/OriginalEmail';
 import RecordHistory from '../../components/RecordHistory';
 import CargoDetails from './CargoDetails';
 import CargoSources from './CargoSources';
+import PossibleDuplicates from './PossibleDuplicates';
 import CargoMatchWindow, { cargoEmailSources } from './CargoMatchWindow';
 import MatchList from '../match/MatchList';
 import VesselDrawer from '../vessels/VesselDrawer';
@@ -39,6 +40,10 @@ export default function CargoDrawer({ cargoId, onClose, onEdit }: Props) {
   // and the sources are not behind the parser switch, because they are part of the cargo
   // rather than part of the feature that created it.
   const { data: sources } = useCargoSources(cargoId);
+  // Enquiries the intake queue has stacked on this cargo as possibly the same one. Empty for
+  // every cargo on a deployment without Intake, which is the answer the API gives there.
+  const duplicates = usePossibleDuplicates(cargoId);
+  const duplicateItems = duplicates.data ?? [];
   const [emailOpen, setEmailOpen] = useState(false);
   // Set when an arrival's own Read button opened the modal, so it opens on that email rather
   // than on the newest. Cleared by the header button, which means "the emails", not one.
@@ -97,6 +102,13 @@ export default function CargoDrawer({ cargoId, onClose, onEdit }: Props) {
                 onChange={(status) => setStatus.mutate({ id: data.id, status })}
               />
             </Tooltip>
+            {duplicateItems.length > 0 && (
+              <Tooltip title="Enquiries that may be this cargo under another name. Decide them below, before the list is worked.">
+                <Tag color="purple">
+                  {duplicateItems.length} possible duplicate{duplicateItems.length === 1 ? '' : 's'}
+                </Tag>
+              </Tooltip>
+            )}
             {data.sourceKind === 'MAIL' && <Tag color="blue">from mail</Tag>}
             {data.sourceKind === 'WEB' && (
               <Tooltip
@@ -126,6 +138,10 @@ export default function CargoDrawer({ cargoId, onClose, onEdit }: Props) {
           {data.statusNote && (
             <Typography.Paragraph type="secondary">{data.statusNote}</Typography.Paragraph>
           )}
+
+          {/* Above the details: a duplicate is a decision about what this record is, so it is
+              asked before anybody reads the figures it might change. */}
+          <PossibleDuplicates items={duplicateItems} />
 
           <CargoDetails cargo={data} hasSources={hasSources} />
 

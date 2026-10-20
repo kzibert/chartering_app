@@ -245,6 +245,74 @@ class IntakeServiceTest {
         assertThat(made.getValue().getCommodity()).isEqualTo("Barley");
     }
 
+    /**
+     * Same figure and load port, no laycan on file, and nobody from this firm has sent it before:
+     * a question, not a certainty. It is raised minor, so it waits on the cargo's drawer rather
+     * than holding up the Needs review count.
+     */
+    @Test
+    void aProbableDuplicateIsRaisedMinorSoItDoesNotHoldUpTheCount() {
+        Cargo theirs = chornomorskWheat();
+        theirs.setLaycanFrom(null);
+        theirs.setLaycanTo(null);
+        when(cargoes.findDuplicateCandidates(any())).thenReturn(List.of(theirs));
+        when(styles.read(any(), any())).thenReturn(new CompanyStyleIntake.Reading(null, List.of(), null));
+
+        IntakeService.ApplyOutcome outcome = service.apply(parsed,
+                new Extraction("cargo_offer", List.of(wheatCargo()), List.of(), null, null, null));
+
+        assertThat(outcome.itemsRaised()).isEqualTo(1);
+        verify(items, atLeastOnce()).save(argThat(i -> i.getKind() == IntakeItemKind.CARGO_MERGE
+                && i.isMinor() && i.getCargoId() != null && i.getCargoId() == 7L));
+    }
+
+    /**
+     * The reweigh pass is the one place a waiting merge is decided without a person. Here the
+     * sender has since become one the cargo already holds, so the figure alone makes it certain
+     * and it is merged; the other waiting question is about a cargo from someone else, stays
+     * waiting, and is minor.
+     */
+    @Test
+    void reweighMergesAWaitingDuplicateThatHasBecomeCertainAndMarksTheRestMinor() throws Exception {
+        Cargo his = chornomorskWheat();
+        his.setLaycanFrom(null);
+        his.setLaycanTo(null);
+        Cargo theirs = chornomorskWheat();
+        theirs.setId(8L);
+        theirs.setLaycanFrom(null);
+        theirs.setLaycanTo(null);
+        when(cargoes.findById(7L)).thenReturn(java.util.Optional.of(his));
+        when(cargoes.findById(8L)).thenReturn(java.util.Optional.of(theirs));
+        // The sender is read off the parse, not off its message, and asked of this cargo alone.
+        when(parsedEmails.senderOf(parsed.getId())).thenReturn(java.util.Optional.of(interscan));
+        when(cargoSources.existsByCargoIdAndReportedByCompanyIdIn(7L, List.of(3L))).thenReturn(true);
+
+        IntakeItem sameBroker = waitingMerge(21L, 7L);
+        IntakeItem otherFirm = waitingMerge(22L, 8L);
+        when(items.pendingOfKind(IntakeItemKind.CARGO_MERGE)).thenReturn(List.of(sameBroker, otherFirm));
+
+        service.reweighPending();
+
+        assertThat(sameBroker.getStatus()).isEqualTo(IntakeItemStatus.ACCEPTED);
+        assertThat(sameBroker.getResolutionNote()).startsWith("Merged automatically: ");
+        verify(cargoSources).save(argThat(s -> s.getCargo() == his
+                && s.getNotes() != null && s.getNotes().startsWith("Merged automatically")));
+        assertThat(otherFirm.getStatus()).isEqualTo(IntakeItemStatus.PENDING);
+        assertThat(otherFirm.isMinor()).isTrue();
+        verify(cargoSources, never()).save(argThat(s -> s.getCargo() == theirs));
+    }
+
+    private IntakeItem waitingMerge(Long id, Long cargoId) throws Exception {
+        IntakeItem item = new IntakeItem();
+        item.setId(id);
+        item.setKind(IntakeItemKind.CARGO_MERGE);
+        item.setCargoId(cargoId);
+        item.setParsedEmail(parsed);
+        item.setPayload(new ObjectMapper().writeValueAsString(new IntakePayloads.CargoMerge(
+                wheatCargo(), cargoId, "Wheat", List.of(), List.of(), List.of())));
+        return item;
+    }
+
     private static Extraction.ExtractedCargo wheatCargo() {
         return new Extraction.ExtractedCargo(
                 "Wheat", new BigDecimal("25000"), "MT", "", null, null, null,
@@ -952,6 +1020,220 @@ class IntakeServiceTest {
         when(directory.current()).thenReturn(new CompanyDirectoryVersion.Version(5, 41, 4, 5, 12));
         TenantContext.runAs(1L, () -> service.attributeUnreported());
         verify(styles, times(2)).read(any(), any());
+    }
+
+    // ---------------------------------------------------------- placeholder slots
+
+    /**
+     * A TBN with no number is a berth on a fixture, not a ship. Nothing is raised or filed for it,
+     * and the resolver is never asked, so there is no hull for it to be matched to.
+     */
+    @Test
+    void skipsAnUnnominatedSlotWithNoNumber() {
+        IntakeService.ApplyOutcome outcome = service.apply(parsed,
+                positionEmail(opening("TBN", "SPOT", null, null)));
+
+        assertThat(outcome.positionsApplied()).isZero();
+        assertThat(outcome.itemsRaised()).isZero();
+        verify(resolver, never()).resolveVessel(any(), any());
+        verify(items, never()).save(any());
+        verify(positions, never()).save(any());
+    }
+
+    /**
+     * A legacy hull that happens to be called TBN, carrying its IMO. It is a real ship and goes
+     * through as any other: the IMO is what makes it one.
+     */
+    @Test
+    void aSlotNamedLikeAShipWithANumberStillGoesThrough() {
+        Vessel legacy = new Vessel();
+        legacy.setId(77L);
+        legacy.setName("TBN");
+        when(resolver.resolveVessel(any(), any()))
+                .thenReturn(new IntakeResolver.ResolvedVessel(legacy, IntakeResolver.VesselMatch.IMO));
+
+        Extraction.ExtractedVessel numbered = new Extraction.ExtractedVessel(
+                "TBN", "9123456", "", null, null, null, null, "",
+                null, null, "", null, "", null, null, null, null, null, "",
+                "MARMARA", "", "", "", "SPOT", "", "", "");
+        IntakeService.ApplyOutcome outcome = service.apply(parsed, positionEmail(numbered));
+
+        assertThat(outcome.positionsApplied()).isEqualTo(1);
+    }
+
+    @Test
+    void closesAWaitingPlaceholderSlotAsRejectedWithItsReason() {
+        IntakeItem slot = newVesselItem(20L, "{\"vessel\":{\"name\":\"TBN 2\"},"
+                + "\"searchedBy\":\"TBN 2\",\"suggestions\":[]}");
+        when(items.pendingOfKind(IntakeItemKind.NEW_VESSEL)).thenReturn(List.of(slot));
+
+        service.reweighPending();
+
+        assertThat(slot.getStatus()).isEqualTo(IntakeItemStatus.REJECTED);
+        assertThat(slot.getResolutionNote()).isEqualTo(IntakeService.PLACEHOLDER_CLOSED);
+        assertThat(slot.getResolvedBy()).isNull();
+        verify(items).save(slot);
+    }
+
+    /** The same name with a number on it is a hull someone may still name; it stays waiting. */
+    @Test
+    void leavesAWaitingNumberedSlotPending() {
+        IntakeItem numbered = newVesselItem(21L, "{\"vessel\":{\"name\":\"TBN\",\"imo\":\"9123456\"},"
+                + "\"searchedBy\":\"TBN\",\"suggestions\":[]}");
+        when(items.pendingOfKind(IntakeItemKind.NEW_VESSEL)).thenReturn(List.of(numbered));
+
+        service.reweighPending();
+
+        assertThat(numbered.getStatus()).isEqualTo(IntakeItemStatus.PENDING);
+        verify(items, never()).save(numbered);
+    }
+
+    // ---------------------------------------------------------- discard memory
+
+    /**
+     * The reviewer has already said this name is not a ship to create. A broker sending it again
+     * raises nothing, and nothing is written for the email beyond what it always was.
+     */
+    @Test
+    void doesNotRaiseANewVesselTheDeskHasAlreadyTurnedDown() {
+        when(resolver.resolveVessel(any(), any()))
+                .thenReturn(new IntakeResolver.ResolvedVessel(null, IntakeResolver.VesselMatch.NONE));
+        IntakeItem turnedDown = newVesselItem(22L, "{}");
+        turnedDown.setStatus(IntakeItemStatus.REJECTED);
+        when(items.rejectedNewVesselSince(any(), any())).thenReturn(List.of(turnedDown));
+
+        IntakeService.ApplyOutcome outcome = service.apply(parsed,
+                positionEmail(opening("UNKNOWN TRADER", "SPOT", null, null)));
+
+        assertThat(outcome.itemsRaised()).isZero();
+        verify(items, never()).save(any());
+    }
+
+    // ---------------------------------------------------------- one question per vessel
+
+    /**
+     * The conversion path: a lookup turned a waiting NEW_VESSEL into a particulars question about
+     * a hull that already has one waiting. The two are merged; the position is still filed.
+     */
+    @Test
+    void aConvertedNewVesselMergesIntoTheParticularsQuestionAlreadyWaiting() {
+        Vessel celia = new Vessel();
+        celia.setId(2776L);
+        celia.setName("CELIA");
+        celia.setFlag("Malta");
+
+        IntakeItem newVessel = new IntakeItem();
+        newVessel.setId(6L);
+        newVessel.setKind(IntakeItemKind.NEW_VESSEL);
+        newVessel.setParsedEmail(parsed);
+        newVessel.setSubjectLabel("LIUDMILA");
+        newVessel.setPayload("""
+                {"vessel":{"name":"LIUDMILA","flag":"PANAMA","openArea":"MARMARA"},
+                 "searchedBy":"LIUDMILA","suggestions":[]}""");
+        when(items.pendingOfKind(IntakeItemKind.NEW_VESSEL)).thenReturn(List.of(newVessel));
+
+        IntakeItem waiting = new IntakeItem();
+        waiting.setId(3L);
+        waiting.setKind(IntakeItemKind.VESSEL_FIELDS);
+        waiting.setVesselId(2776L);
+        waiting.setPayload("""
+                {"vesselId":2776,"vesselName":"CELIA","diffs":[
+                  {"field":"deadweightTonnage","label":"DWT","current":"2000 t","incoming":"2100 t"}],
+                 "filled":[]}""");
+        when(items.pendingForVessel(IntakeItemKind.VESSEL_FIELDS, 2776L)).thenReturn(List.of(waiting));
+
+        VesselLookup row = new VesselLookup();
+        row.setStatus(VesselLookup.STATUS_OK);
+        row.setMatchedImo("9344394");
+        when(lookupService.forItem(6L)).thenReturn(java.util.Optional.of(row));
+        when(lookupService.alreadyOnFile(row)).thenReturn(java.util.Optional.of(celia));
+
+        assertThat(service.reconcileIdentifiedHulls()).isEqualTo(1);
+
+        assertThat(newVessel.getStatus()).isEqualTo(IntakeItemStatus.ACCEPTED);
+        assertThat(newVessel.getResolutionNote()).contains("#3");
+        assertThat(newVessel.getKind()).isEqualTo(IntakeItemKind.NEW_VESSEL);
+        // The waiting question takes the new reading's rows alongside its own.
+        assertThat(waiting.getStatus()).isEqualTo(IntakeItemStatus.PENDING);
+        assertThat(waiting.getPayload()).contains("flag").contains("deadweightTonnage");
+        verify(itemSources).save(any());
+        verify(positions).save(any());
+    }
+
+    /**
+     * Two particulars questions for one hull, as the queue held them before the rule. The reweigh
+     * pass folds the newer into the oldest, keeps both emails on the oldest, and closes the newer.
+     */
+    @Test
+    void reweighFoldsASecondParticularsQuestionAboutOneHullIntoTheOldest() {
+        when(vessels.findById(42L)).thenReturn(java.util.Optional.of(pacificDawn));
+
+        IntakeItem oldest = particularsItem(1L, "{\"vesselId\":42,\"vesselName\":\"PACIFIC DAWN\","
+                + "\"diffs\":[{\"field\":\"deadweightTonnage\",\"label\":\"DWT\","
+                + "\"current\":\"28500 t\",\"incoming\":\"32000 t\"}],\"filled\":[],"
+                + "\"vessel\":{\"name\":\"PACIFIC DAWN\",\"dwt\":32000}}");
+        IntakeItem newer = particularsItem(2L, "{\"vesselId\":42,\"vesselName\":\"PACIFIC DAWN\","
+                + "\"diffs\":[{\"field\":\"maximumDraft\",\"label\":\"Draft\","
+                + "\"current\":\"7.9 m\",\"incoming\":\"8.2 m\"}],\"filled\":[],"
+                + "\"vessel\":{\"name\":\"PACIFIC DAWN\",\"draft\":8.2}}");
+        newer.setParsedEmail(parsed);
+        when(items.pendingOfKind(IntakeItemKind.VESSEL_FIELDS)).thenReturn(List.of(oldest, newer));
+
+        service.reweighPending();
+
+        assertThat(newer.getStatus()).isEqualTo(IntakeItemStatus.ACCEPTED);
+        assertThat(newer.getResolutionNote()).contains("#1");
+        assertThat(oldest.getStatus()).isEqualTo(IntakeItemStatus.PENDING);
+        assertThat(oldest.getPayload()).contains("deadweightTonnage").contains("maximumDraft");
+        // The newer email is kept on the question that is still open.
+        ArgumentCaptor<IntakeItemSource> kept = ArgumentCaptor.forClass(IntakeItemSource.class);
+        verify(itemSources).save(kept.capture());
+        assertThat(kept.getValue().getIntakeItem()).isSameAs(oldest);
+    }
+
+    /**
+     * Every row already agrees with the record, so there is nothing for a person to decide. Left
+     * pending, such an item would be empty on the screen and read as "not minor" by the policy,
+     * which keeps it in Needs review indefinitely.
+     */
+    @Test
+    void closesAParticularsQuestionWhoseRowsAllAgreeWithTheRecord() {
+        pacificDawn.setDeadweightTonnage(new BigDecimal("28500"));
+        when(vessels.findById(42L)).thenReturn(java.util.Optional.of(pacificDawn));
+
+        IntakeItem settled = particularsItem(5L, "{\"vesselId\":42,\"vesselName\":\"PACIFIC DAWN\","
+                + "\"diffs\":[{\"field\":\"deadweightTonnage\",\"label\":\"DWT\","
+                + "\"current\":\"28500 t\",\"incoming\":\"28500 t\"}],\"filled\":[],"
+                + "\"vessel\":{\"name\":\"PACIFIC DAWN\",\"dwt\":28500}}");
+        when(items.pendingOfKind(IntakeItemKind.VESSEL_FIELDS)).thenReturn(List.of(settled));
+
+        service.reweighPending();
+
+        assertThat(settled.getStatus()).isEqualTo(IntakeItemStatus.ACCEPTED);
+        assertThat(settled.getResolutionNote()).isEqualTo(IntakeService.NOTHING_LEFT);
+        verify(items).save(settled);
+    }
+
+    private IntakeItem newVesselItem(Long id, String payload) {
+        IntakeItem item = new IntakeItem();
+        item.setId(id);
+        item.setKind(IntakeItemKind.NEW_VESSEL);
+        item.setParsedEmail(parsed);
+        item.setSubjectLabel("TBN");
+        item.setStatus(IntakeItemStatus.PENDING);
+        item.setPayload(payload);
+        return item;
+    }
+
+    private IntakeItem particularsItem(Long id, String payload) {
+        IntakeItem item = new IntakeItem();
+        item.setId(id);
+        item.setKind(IntakeItemKind.VESSEL_FIELDS);
+        item.setVesselId(42L);
+        item.setSubjectLabel("PACIFIC DAWN");
+        item.setStatus(IntakeItemStatus.PENDING);
+        item.setPayload(payload);
+        return item;
     }
 
     private VesselPosition position(Long id, Company reporter, OffsetDateTime reportedAt) {

@@ -196,6 +196,13 @@ public class IntakeQueryService {
             List<Predicate> where = new ArrayList<>();
             if (kind != null) where.add(cb.equal(root.get("kind"), kind));
             if (status != null) where.add(cb.equal(root.get("status"), status));
+            // A minor company question is not in the queue at all. It is a mark on the firm's own
+            // record (CompanyResponse.correspondenceUpdate), answered there, so no list of pending
+            // items shows it whatever minor filter asked. Other statuses are untouched: an
+            // accepted or discarded one stays in history.
+            where.add(cb.not(cb.and(cb.equal(root.get("status"), IntakeItemStatus.PENDING),
+                    cb.equal(root.get("kind"), IntakeItemKind.COMPANY_DETAILS),
+                    cb.isTrue(root.get("minor")))));
             // The queue and the "Minor updates" sub-tab are one table split on this flag; null
             // is both, which is what the answered and discarded views want - history is history.
             if (minor != null) where.add(cb.equal(root.get("minor"), minor));
@@ -421,6 +428,21 @@ public class IntakeQueryService {
                 .filter(s -> !SettingsService.isOwn(s.getFromAddress(), own))
                 .map(mapper::toCargoSourceResponse)
                 .toList();
+    }
+
+    /**
+     * The probable duplicates waiting against one cargo, each whole, for its drawer to stack.
+     *
+     * <p>Asked of the cargo the question is stacked on, not of the arrival: the drawer shows what
+     * the other brokers' readings say against this record, and an ACCEPT here merges into it. Each
+     * item goes through {@link #get} so the stack carries the same reading, reasons and sources
+     * the item's own screen does. Empty when nothing is waiting, and a cargo from another desk
+     * finds nothing for the same reason every other lookup by id does.
+     */
+    @Transactional(readOnly = true)
+    public List<IntakeItemResponse> possibleDuplicates(Long cargoId) {
+        requireEnabled();
+        return items.pendingCargoMerge(cargoId).stream().map(i -> get(i.getId())).toList();
     }
 
     // ------------------------------------------------------------------ internals

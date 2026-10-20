@@ -103,6 +103,36 @@ class CompanyDetailsAggregationTest {
     }
 
     @Test
+    void aSpellingOfTheFirmsNameIsNotARename() {
+        // Trade words, punctuation and the office a name is written with: the firm on file, written
+        // another way. Raised as a question before, one per circular, for a record that was right.
+        CompanyDraft draft = draftWith();
+        IntakePasteCompanyComparison trade = new IntakePasteCompanyComparison(5L, "Corvane Example",
+                List.of(new IntakePasteCompanyComparison.FieldRow("name", "Name", "Corvane Lines",
+                        "CORVANE Chartering & Operations")),
+                List.of(), List.of(), List.of());
+        IntakePasteCompanyComparison office = new IntakePasteCompanyComparison(5L, "Bermuda Example",
+                List.of(new IntakePasteCompanyComparison.FieldRow("name", "Name", "Bermuda Example Shipping",
+                        "Bermuda Example -Istanbul")),
+                List.of(), List.of(), List.of());
+
+        assertThat(CompanyStyleIntake.isMinor(5L, draft, trade)).isTrue();
+        assertThat(CompanyStyleIntake.isMinor(5L, draft, office)).isTrue();
+    }
+
+    @Test
+    void aPhoneAloneIsMinorWhateverTheFirmIsCalled() {
+        // The reason a phone-only question was once raised: it was not. This method never reads a
+        // phone, so a new number on a firm that matches on name is minor on its own.
+        CompanyDraft draft = draftWith(new ContactDraft("phone", "+30 210 000 0004", "Mobile", "Anna Example"));
+        IntakePasteCompanyComparison cmp = new IntakePasteCompanyComparison(5L, "Oceanic Example",
+                List.of(), List.of(), List.of(),
+                List.of(new IntakePasteCompanyComparison.ContactRow(null, null, null)));
+
+        assertThat(CompanyStyleIntake.isMinor(5L, draft, cmp)).isTrue();
+    }
+
+    @Test
     void aFirmNotOnFileIsNeverMinor() {
         assertThat(CompanyStyleIntake.isMinor(null, draftWith(), null)).isFalse();
     }

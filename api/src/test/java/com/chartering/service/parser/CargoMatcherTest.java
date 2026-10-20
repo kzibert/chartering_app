@@ -321,6 +321,47 @@ class CargoMatcherTest {
     }
 
     @Test
+    void sameSenderWithTightQuantityIsCertainWithoutALaycan() {
+        // A re-sent enquiry with the same figure and no dates on either side: the figure is the
+        // identifying anchor, and the sender having sent it before is what makes it certain.
+        Cargo his = onFile("25000", null, null, null, null);
+
+        Optional<CargoMatcher.Candidate> found = CargoMatcher.findDuplicate(
+                resolved("25000", null, null, null, null), List.of(his), Set.of(7L));
+
+        assertThat(found).isPresent();
+        assertThat(found.get().certain()).isTrue();
+    }
+
+    @Test
+    void sameSenderWithALaycanOnlyIsStillAQuestion() {
+        // One broker can carry two parcels from one port in one window. Laycan overlap alone,
+        // from the same firm, does not make them one cargo.
+        LocalDate from = LocalDate.of(2026, 9, 10);
+        LocalDate to = LocalDate.of(2026, 9, 15);
+        Cargo his = onFile(null, null, null, from, to);
+
+        Optional<CargoMatcher.Candidate> found = CargoMatcher.findDuplicate(
+                resolved(null, null, null, from, to), List.of(his), Set.of(7L));
+
+        assertThat(found).isPresent();
+        assertThat(found.get().certain()).isFalse();
+    }
+
+    @Test
+    void differentSenderWithTightQuantityIsStillAQuestion() {
+        // The figure repeats, but nobody from this firm has sent it: two firms can carry the
+        // same parcel size from one area in one month.
+        Cargo theirs = onFile("25000", null, null, null, null);
+
+        Optional<CargoMatcher.Candidate> found = CargoMatcher.findDuplicate(
+                resolved("25000", null, null, null, null), List.of(theirs), Set.of());
+
+        assertThat(found).isPresent();
+        assertThat(found.get().certain()).isFalse();
+    }
+
+    @Test
     void prefersTheCargoThisSenderAlreadySent() {
         Cargo somebodyElses = onFile("25000", null, null, null, null);
         somebodyElses.setId(8L);

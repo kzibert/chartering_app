@@ -192,6 +192,10 @@ public class CompanyMatcher {
     /**
      * Words that say what trade a firm is in rather than which firm it is.
      *
+     * <p>{@link #sameFirm} reads this list too, for the rename test: "Corvane Lines" and "Corvane
+     * Chartering &amp; Operations" are one firm, so {@code operations} and the misspelt
+     * {@code chartring} (as signed on a real circular) belong here with the rest.
+     *
      * <p>Stripped before names are compared for resemblance, on top of the legal forms, because
      * in this table they are the rule rather than the exception: with them left in, "North Sea
      * Example Chartering A/S" reduced to a key ending in "chartering", and "Shipping &amp;
@@ -200,11 +204,12 @@ public class CompanyMatcher {
      * whole.
      */
     private static final Set<String> TRADE_WORDS = Set.of(
-            "chartering", "charterers", "maritime", "marine", "navigation", "lines", "line",
+            "chartering", "chartring", "charterers", "maritime", "marine", "navigation", "lines", "line",
             "logistics", "trading", "trade", "agency", "agencies", "bulk", "carriers", "carrier",
             "freight", "shipmanagement", "management", "international", "intl", "services",
             "transport", "transportation", "denizcilik", "nakliyat", "ticaret", "tic", "shipbrokers",
-            "shipbroking", "brokers", "broking", "tankers", "ships", "sea", "ocean", "global");
+            "shipbroking", "brokers", "broking", "tankers", "ships", "sea", "ocean", "global",
+            "operations");
 
     /**
      * The part of a name that tells one firm from another: legal forms and trade words gone,
@@ -236,6 +241,30 @@ public class CompanyMatcher {
             return "name contains \"" + (other.length() < key.length() ? onFile : parsed) + "\"";
         }
         return null;
+    }
+
+    /**
+     * Whether a signed name and the name on file are one firm written two ways, so that a
+     * difference between them is not a rename. Asked by {@code CompanyStyleIntake#isMinor}, which
+     * wants to know whether the firm has changed its name, not whether two spellings resemble.
+     *
+     * <p>Compared on the distinctive key, so the trade words and punctuation this class ignores
+     * are ignored here too: "Steel&amp;Bulk" is STEELBULK, "Damarax Chartering" is Damarax,
+     * "BALTIC SHIPPING - Chartering" is BALTIC SHIPPING. A name that <em>contains</em> the other
+     * is the same firm with more written after it: "Bermuda Shipping -Istanbul" is the Bermuda
+     * Shipping on file with its office named, and "Seafright Chartring" is Seafright. Containment
+     * needs five letters of the shorter key, as in {@link #resemblance}, so a short name cannot
+     * absorb a longer one by accident ("Alba" is not "Albatross"). A name that is nothing but
+     * trade words has no distinctive key, so it is compared on its legal form alone.
+     */
+    static boolean sameFirm(String onFile, String signed) {
+        String a = distinctiveKey(onFile);
+        String b = distinctiveKey(signed);
+        if (a.isEmpty() || b.isEmpty()) {
+            return CompanyNames.similarityKey(onFile).equals(CompanyNames.similarityKey(signed));
+        }
+        if (a.equals(b)) return true;
+        return Math.min(a.length(), b.length()) >= 5 && (a.contains(b) || b.contains(a));
     }
 
     /** The last nine digits, or null for anything too short to be one number and not another. */

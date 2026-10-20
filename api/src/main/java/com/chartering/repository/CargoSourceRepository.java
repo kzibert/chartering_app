@@ -27,6 +27,9 @@ public interface CargoSourceRepository extends JpaRepository<CargoSource, Long> 
 
     boolean existsByCargoIdAndMailMessageId(Long cargoId, Long mailMessageId);
 
+    /** Whether any of these firms is already a source of the cargo: one row read, not a firm's history. */
+    boolean existsByCargoIdAndReportedByCompanyIdIn(Long cargoId, java.util.Collection<Long> companyIds);
+
     /** The same guard for an arrival that came off a board rather than out of the mailbox. */
     boolean existsByCargoIdAndFeedItemId(Long cargoId, Long feedItemId);
 

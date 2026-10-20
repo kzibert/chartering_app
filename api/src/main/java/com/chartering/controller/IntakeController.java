@@ -538,6 +538,19 @@ public class IntakeController {
         return ResponseEntity.ok(queries.cargoSources(cargoId));
     }
 
+    @GetMapping("/cargoes/{cargoId}/possible-duplicates")
+    @Operation(summary = "The probable duplicates waiting against this cargo",
+            description = "Other enquiries that look like this cargo but were not certain enough to "
+                    + "merge on arrival, stacked here for the drawer to show. Each is a waiting "
+                    + "CARGO_MERGE item in the same shape as GET /items/{id}, so its reading, the "
+                    + "reasons it was raised and its sources can be shown beside this cargo. "
+                    + "Answering one with ACCEPT merges it into this cargo. An empty list when "
+                    + "nothing is waiting. Behind the parser switch like the other item endpoints.")
+    public ResponseEntity<java.util.List<IntakeItemResponse>> possibleDuplicates(
+            @PathVariable Long cargoId) {
+        return ResponseEntity.ok(queries.possibleDuplicates(cargoId));
+    }
+
     // ------------------------------------------------------------------ settings
 
     @GetMapping("/settings")

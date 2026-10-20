@@ -10,6 +10,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
+import java.time.OffsetDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -30,6 +32,36 @@ public interface IntakeItemRepository
 
     /** The queue's own count, or the "Minor updates" sub-tab's - see {@code IntakeItem.minor}. */
     long countByStatusAndMinor(IntakeItemStatus status, boolean minor);
+
+    /**
+     * The "Minor updates" count the Intake tab prints, which leaves out company details.
+     *
+     * <p>A minor company question is not queued at all: it waits as a mark on the firm's own
+     * record ({@code CompanyResponse.correspondenceUpdate}) and is answered there. Counting it
+     * here would print a number on the tab for questions the tab never lists.
+     */
+    @Query("""
+            select count(i) from IntakeItem i
+            where i.status = com.chartering.model.IntakeItemStatus.PENDING
+              and i.minor = true
+              and i.kind <> com.chartering.model.IntakeItemKind.COMPANY_DETAILS
+            """)
+    long countPendingMinorUpdates();
+
+    /**
+     * Which of these firms have a question waiting about their own details, minor or not.
+     *
+     * <p>One query for a whole page of companies, for the "Update from correspondence" mark on
+     * the companies list. Minor or not, because the mark says a firm has something to look at on
+     * its record, and a major question is no less worth finding there.
+     */
+    @Query("""
+            select distinct i.companyId from IntakeItem i
+            where i.status = com.chartering.model.IntakeItemStatus.PENDING
+              and i.kind = com.chartering.model.IntakeItemKind.COMPANY_DETAILS
+              and i.companyId in ?1
+            """)
+    List<Long> companiesWithPendingDetails(Collection<Long> companyIds);
 
     @Query("select i.kind, count(i) from IntakeItem i where i.status = ?1 group by i.kind")
     List<Object[]> countByKind(IntakeItemStatus status);
@@ -158,4 +190,22 @@ public interface IntakeItemRepository
             order by i.id desc
             """)
     List<IntakeItem> pendingNewVessel(String name);
+
+    /**
+     * A name the desk has turned down as a ship to create, answered since {@code since}.
+     *
+     * <p>The discard memory for {@code NEW_VESSEL}. Matched the way {@link #pendingNewVessel}
+     * matches a waiting one, so the two cannot disagree about whether a name is the same. A
+     * discard is the reviewer saying this is not a ship to create; without this, a broker's
+     * "TBN" or a one-off name he keeps re-sending is asked again every morning.
+     */
+    @Query("""
+            select i from IntakeItem i
+            where i.status = com.chartering.model.IntakeItemStatus.REJECTED
+              and i.kind = com.chartering.model.IntakeItemKind.NEW_VESSEL
+              and lower(i.subjectLabel) = lower(?1)
+              and i.resolvedAt >= ?2
+            order by i.id desc
+            """)
+    List<IntakeItem> rejectedNewVesselSince(String name, OffsetDateTime since);
 }

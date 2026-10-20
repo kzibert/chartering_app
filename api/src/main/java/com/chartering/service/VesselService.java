@@ -56,6 +56,7 @@ public class VesselService {
      * vessel repository rather than on this class, so there is no cycle.
      */
     private final VesselLookupService vesselLookups;
+    private final CompanyService companyService;
     private final DtoMapper mapper;
 
     @Transactional(readOnly = true)
@@ -213,7 +214,10 @@ public class VesselService {
         boolean ownerNoWorkingEmail =
                 !ownerEmails.isEmpty() && ownerEmails.stream().noneMatch(ContactResponse::working);
         CompanyResponse ownerDto = owner != null
-                ? mapper.toCompanyResponse(owner, ownerNoWorkingEmail) : null;
+                ? mapper.toCompanyResponse(owner, ownerNoWorkingEmail,
+                        companyService.companiesWithCorrespondenceUpdate(List.of(owner.getId()))
+                                .contains(owner.getId()))
+                : null;
         // Her latest reading, of any status. One indexed row off (vessel_id, reported_at
         // DESC) - the same index Open Fleet is built on - so this costs the detail view
         // nothing measurable and saves opening a second tab to answer "where is she".

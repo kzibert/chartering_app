@@ -9,12 +9,12 @@ import type { IntakeItemResponse } from '../../api/intake';
 /**
  * "Update from correspondence" — the company question, offered on the company's own record.
  *
- * <b>Why here as well as on the Intake tab.</b> Every circular a firm sends ends in its full
+ * <b>Why here and not on the Intake tab.</b> Every circular a firm sends ends in its full
  * style, and most of what those blocks say beyond the record is worth having and not worth a
- * morning: a website moved, a new mobile, a colleague's job title. So those questions stopped
- * counting toward Needs review (they wait on Minor updates), and this is where they are meant to
- * be answered — on the record, when somebody has it open, from every email the firm has sent
- * aggregated into one set of details rather than one question per circular.
+ * morning: a website moved, a new mobile, a colleague's job title. Those small updates no longer
+ * reach the Intake tab at all, so this is where they are answered — on the record, when somebody
+ * has it open, from every email the firm has sent aggregated into one set of details rather than
+ * one question per circular.
  *
  * Shown only while there is something the aggregate would still change. The item is compared
  * again with the record every time it is read, so a phone added by hand on the People tab
@@ -42,7 +42,7 @@ export default function CorrespondenceUpdate({ companyId }: { companyId: number 
         style={{ marginBottom: 12 }}
         message={
           <>
-            Their signatures carry details this record does not have
+            Details from this firm's recent mail can update this record
             {item.minor && (
               <Tooltip title={MINOR_HINT}>
                 <Tag style={{ marginInlineStart: 8 }}>minor</Tag>

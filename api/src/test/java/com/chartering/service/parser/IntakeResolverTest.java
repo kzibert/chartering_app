@@ -269,4 +269,37 @@ class IntakeResolverTest {
         a.setSource(com.chartering.model.IntakeVesselAlias.LINKED);
         return a;
     }
+
+    /**
+     * What a circular writes for a slot nobody has filled. The true cases are the spellings a
+     * broker actually types; the false ones are real ship names that happen to contain the
+     * letters, which is the failure a substring match would have made.
+     */
+    @Test
+    void recognisesAnUnnominatedSlotHoweverItIsSpelled() {
+        assertThat(IntakeResolver.isPlaceholderName("TBN")).isTrue();
+        assertThat(IntakeResolver.isPlaceholderName("TBN 1")).isTrue();
+        assertThat(IntakeResolver.isPlaceholderName("TBN-2")).isTrue();
+        assertThat(IntakeResolver.isPlaceholderName("M/V TBN")).isTrue();
+        assertThat(IntakeResolver.isPlaceholderName("MV TBA")).isTrue();
+        assertThat(IntakeResolver.isPlaceholderName("barge tbn")).isTrue();
+        assertThat(IntakeResolver.isPlaceholderName("BARGE TBN")).isTrue();
+        assertThat(IntakeResolver.isPlaceholderName("TBN CAPE")).isTrue();
+        assertThat(IntakeResolver.isPlaceholderName("TO BE NOMINATED")).isTrue();
+        assertThat(IntakeResolver.isPlaceholderName("to be advised")).isTrue();
+        assertThat(IntakeResolver.isPlaceholderName("NOMINATED TONNAGE")).isTrue();
+    }
+
+    @Test
+    void doesNotMistakeAShipNameForAnUnnominatedSlot() {
+        assertThat(IntakeResolver.isPlaceholderName("TBILISI")).isFalse();
+        assertThat(IntakeResolver.isPlaceholderName("TABONE")).isFalse();
+        assertThat(IntakeResolver.isPlaceholderName("ATBN STAR")).isFalse();
+        assertThat(IntakeResolver.isPlaceholderName("TBNX")).isFalse();
+        assertThat(IntakeResolver.isPlaceholderName("ATLANTIC BREEZE")).isFalse();
+        assertThat(IntakeResolver.isPlaceholderName("PACIFIC DAWN")).isFalse();
+        assertThat(IntakeResolver.isPlaceholderName("")).isFalse();
+        assertThat(IntakeResolver.isPlaceholderName("   ")).isFalse();
+        assertThat(IntakeResolver.isPlaceholderName(null)).isFalse();
+    }
 }

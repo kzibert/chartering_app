@@ -146,6 +146,10 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
         <Spin />
       ) : (
         <>
+          {/* First on the record, not down among the tags: a question about what this firm
+              has told us is the one thing a person opening the drawer may need to act on
+              before reading anything else. The notice renders nothing when there is none. */}
+          <CorrespondenceUpdate companyId={c.id} />
           {/* Confirming only. `confirmable` adds the attestation and nothing else: the
               control that *clears* one stays at the foot of the edit form, because that
               throws away who vouched for this company and when. The modal is what keeps a
@@ -191,7 +195,6 @@ export default function CompanyDrawer({ companyId, initialTab = 'vessels', onClo
               </Typography.Link>
             </Typography.Paragraph>
           )}
-          <CorrespondenceUpdate companyId={c.id} />
           <Tabs
             activeKey={tab}
             onChange={(k) => setTab(k as TabKey)}

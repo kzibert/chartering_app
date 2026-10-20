@@ -6,6 +6,7 @@ import com.chartering.mapper.DtoMapper;
 import com.chartering.model.Company;
 import com.chartering.model.Contact;
 import com.chartering.repository.CompanyRepository;
+import com.chartering.repository.IntakeItemRepository;
 import com.chartering.repository.ContactRepository;
 import com.chartering.repository.VesselCompanyLinkRepository;
 import com.chartering.repository.VesselRepository;
@@ -29,6 +30,7 @@ public class CompanyService {
 
     private final CompanyRepository companyRepository;
     private final ContactRepository contactRepository;
+    private final IntakeItemRepository intakeItems;
     private final VesselRepository vesselRepository;
     private final VesselCompanyLinkRepository linkRepository;
     private final RecipientSelectionService recipientSelection;
@@ -37,9 +39,12 @@ public class CompanyService {
     @Transactional(readOnly = true)
     public PageResponse<CompanyResponse> search(CompanyFilter f, Pageable pageable) {
         Page<Company> page = companyRepository.findAll(buildSpec(f), pageable);
-        // One extra query for the whole page rather than one per row.
-        Set<Long> dead = deadEmailCompanyIds(page.getContent().stream().map(Company::getId).toList());
-        return PageResponse.from(page.map(c -> mapper.toCompanyResponse(c, dead.contains(c.getId()))));
+        // One extra query each for the whole page rather than one per row.
+        List<Long> ids = page.getContent().stream().map(Company::getId).toList();
+        Set<Long> dead = deadEmailCompanyIds(ids);
+        Set<Long> waiting = companiesWithCorrespondenceUpdate(ids);
+        return PageResponse.from(page.map(c -> mapper.toCompanyResponse(
+                c, dead.contains(c.getId()), waiting.contains(c.getId()))));
     }
 
     /**
@@ -78,6 +83,19 @@ public class CompanyService {
         return !deadEmailCompanyIds(List.of(companyId)).isEmpty();
     }
 
+    /**
+     * Of these firms, the ones with a question waiting about their own details, minor or not.
+     * Public because the vessel record shows its owner's card and needs the same answer.
+     */
+    public Set<Long> companiesWithCorrespondenceUpdate(Collection<Long> companyIds) {
+        if (companyIds.isEmpty()) return Set.of();
+        return Set.copyOf(intakeItems.companiesWithPendingDetails(companyIds));
+    }
+
+    private boolean hasCorrespondenceUpdate(Long companyId) {
+        return !companiesWithCorrespondenceUpdate(List.of(companyId)).isEmpty();
+    }
+
     @Transactional(readOnly = true)
     public CompanyDetailResponse getDetail(Long id) {
         Company c = companyRepository.findById(id)
@@ -89,7 +107,8 @@ public class CompanyService {
         List<ContactResponse> emails = contacts.stream()
                 .filter(ct -> "email".equals(ct.contactKind())).toList();
         boolean noWorkingEmail = !emails.isEmpty() && emails.stream().noneMatch(ContactResponse::working);
-        return new CompanyDetailResponse(mapper.toCompanyResponse(c, noWorkingEmail), contacts, vessels);
+        return new CompanyDetailResponse(
+                mapper.toCompanyResponse(c, noWorkingEmail, hasCorrespondenceUpdate(c.getId())), contacts, vessels);
     }
 
     @Transactional(readOnly = true)
@@ -119,7 +138,7 @@ public class CompanyService {
     public CompanyResponse create(CompanyRequest req) {
         Company c = new Company();
         apply(c, req);
-        return mapper.toCompanyResponse(companyRepository.save(c), hasNoWorkingEmail(c.getId()));
+        return mapper.toCompanyResponse(companyRepository.save(c), hasNoWorkingEmail(c.getId()), hasCorrespondenceUpdate(c.getId()));
     }
 
     @Transactional
@@ -127,7 +146,7 @@ public class CompanyService {
         Company c = companyRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Company", id));
         apply(c, req);
-        return mapper.toCompanyResponse(companyRepository.save(c), hasNoWorkingEmail(c.getId()));
+        return mapper.toCompanyResponse(companyRepository.save(c), hasNoWorkingEmail(c.getId()), hasCorrespondenceUpdate(c.getId()));
     }
 
     @Transactional
@@ -141,7 +160,7 @@ public class CompanyService {
         Company c = companyRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Company", id));
         c.setBanned(banned);
-        return mapper.toCompanyResponse(companyRepository.save(c), hasNoWorkingEmail(c.getId()));
+        return mapper.toCompanyResponse(companyRepository.save(c), hasNoWorkingEmail(c.getId()), hasCorrespondenceUpdate(c.getId()));
     }
 
     @Transactional
@@ -152,7 +171,7 @@ public class CompanyService {
         c.setConfirmedAt(confirmed ? OffsetDateTime.now() : null);
         c.setConfirmedBy(confirmed && req != null ? req.getConfirmedBy() : null);
         c.setConfirmNotes(confirmed && req != null ? req.getConfirmNotes() : null);
-        return mapper.toCompanyResponse(companyRepository.save(c), hasNoWorkingEmail(c.getId()));
+        return mapper.toCompanyResponse(companyRepository.save(c), hasNoWorkingEmail(c.getId()), hasCorrespondenceUpdate(c.getId()));
     }
 
     /** Shared by the paged search and the bulk collect, so both see the same result set. */
@@ -171,6 +190,7 @@ public class CompanyService {
                 CompanySpecification.hasTonnageCategoryId(f.tonnageCategoryId()),
                 CompanySpecification.excludeBanned(f.includeBanned()),
                 CompanySpecification.noWorkingEmail(f.noWorkingEmail()),
+                CompanySpecification.correspondenceUpdate(f.correspondenceUpdate()),
                 CompanySpecification.legacyEquals(f.legacy()));
     }
 
@@ -197,6 +217,6 @@ public class CompanyService {
             String name, String city, String personName,
             Boolean shipowner, Boolean charterer, Boolean broker, Boolean agent,
             Boolean confirmed, Long regionId, Long portId, Long tonnageCategoryId,
-            boolean includeBanned, Boolean legacy, Boolean noWorkingEmail) {
+            boolean includeBanned, Boolean legacy, Boolean noWorkingEmail, Boolean correspondenceUpdate) {
     }
 }

@@ -350,6 +350,27 @@ class VesselFieldDiffTest {
     }
 
     /**
+     * ZAYTUNA, written with a space between every letter by a broker whose list was spaced out.
+     *
+     * <p>The same hull, by IMO, under the same name — a rename row here would ask a person to
+     * accept "Name: ZAYTUNA -> Z A Y T U N A" and file the spaced form as her former name. The
+     * comparison already drops every non-alphanumeric before comparing, so the spacing is not a
+     * difference; this pins it so nobody narrows that comparison later without noticing.
+     */
+    @Test
+    void treatsASpacedOutNameAsTheSameWordNotARename() {
+        Vessel v = new Vessel();
+        v.setName("ZAYTUNA");
+        v.setImoNumber("9123456");
+
+        VesselFieldDiff.Result result = VesselFieldDiff.compare(v,
+                with(reading(), b -> b.imo("9123456").name("Z A Y T U N A")));
+
+        assertThat(result.conflicts()).extracting(FieldDiff::field).doesNotContain("name");
+        assertThat(v.getName()).isEqualTo("ZAYTUNA");
+    }
+
+    /**
      * JELENA, and the reason each figure is now asked about its own size.
      *
      * <p>One broker writes her grain in cubic metres (8,267) and her bale in cubic feet
