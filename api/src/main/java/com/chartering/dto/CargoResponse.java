@@ -67,6 +67,13 @@ public record CargoResponse(
 
         String freightIdea,
         String commission,
+
+        /**
+         * The total commission as a percentage, read out of {@code commission} - see
+         * {@code Cargo.commissionPct}. Absent where the broker's words state no figure, which
+         * is a fact about the text and not a zero.
+         */
+        BigDecimal commissionPct,
         String terms,
         String loadRate,
         String dischargeRate,

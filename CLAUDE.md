@@ -657,6 +657,15 @@ and the setting covers what was stored before it was set. They are in `AuditedEn
 without it. The list's sortable columns use these names as their `dataIndex`, because the sort
 is the server's.
 
+**Commission size is `commissionPct`, another formula.** The column stays the broker's words
+("3.75 PCT TTL", "2.5% + 1.25% adcom", "as usual") and the list prints them; the formula reads a
+total out of them: the figure marked ttl/total, else the % figures added up, else a bare number,
+else null, ignoring any single figure of 20 or more. The filter is a min/max range, and
+`commissionNotStated` adds the cargoes with no figure (alone, it finds only those). Sorting on it
+is remapped in `CargoService` onto `commissionSortAsc`/`commissionSortDesc`, which put a missing
+figure last in their own direction, because Hibernate 6 refuses `Order.nullsLast()` on a
+criteria query and Postgres puts NULLs first on a descending sort.
+
 **A `VesselPosition` is one row per report, never one per vessel.** A position is a fact with
 a date on it: "SPOT AT MARMARA" was true on Monday and is a lie by Friday. The same hull is
 reported by several brokers who disagree, and both readings are the record. Open Fleet shows

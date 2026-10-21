@@ -13,7 +13,9 @@ import com.chartering.repository.*;
 import com.chartering.specification.CargoSpecification;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -67,7 +69,10 @@ public class CargoService {
                               BigDecimal maxQuantity,
                               LocalDate sentSince,
                               Long companyId,
-                              SourceKind sourceKind) {
+                              SourceKind sourceKind,
+                              BigDecimal minCommission,
+                              BigDecimal maxCommission,
+                              Boolean commissionNotStated) {
     }
 
     /**
@@ -79,7 +84,7 @@ public class CargoService {
      */
     @Transactional(readOnly = true)
     public PageResponse<CargoResponse> search(CargoFilter f, Pageable pageable) {
-        Page<Cargo> page = cargoRepository.findAll(buildSpec(f), pageable);
+        Page<Cargo> page = cargoRepository.findAll(buildSpec(f), nullsLastForCommission(pageable));
         List<Long> ids = page.getContent().stream().map(Cargo::getId).toList();
         // Our own replies are arrivals the sweep read, not senders - see Cargo.lastSentAt.
         Set<String> own = ids.isEmpty() ? Set.of() : settingsService.ownAddresses();
@@ -104,7 +109,32 @@ public class CargoService {
                 CargoSpecification.quantityOverlaps(f.minQuantity(), f.maxQuantity()),
                 CargoSpecification.lastSentSince(f.sentSince()),
                 CargoSpecification.companyIdEquals(f.companyId()),
-                CargoSpecification.sourceKindEquals(f.sourceKind()));
+                CargoSpecification.sourceKindEquals(f.sourceKind()),
+                CargoSpecification.commission(f.minCommission(), f.maxCommission(), f.commissionNotStated()));
+    }
+
+    /**
+     * Puts cargoes with no commission figure at the end of a commission sort, whichever way it
+     * runs.
+     *
+     * <p>Postgres sorts NULLs as larger than any value, so a descending sort would lead with
+     * every cargo that has no figure. Spring's {@code Order.nullsLast()} would say what is wanted,
+     * but Hibernate 6 refuses null precedence on the criteria query Specifications build, so the
+     * order is rewritten onto the sort-key formulas on {@code Cargo}: each substitutes a sentinel
+     * for a missing figure that lands last in its own direction. The direction is kept as asked;
+     * other orders, the page and the size are left as they were.
+     */
+    private static Pageable nullsLastForCommission(Pageable pageable) {
+        if (pageable.isUnpaged() || pageable.getSort().getOrderFor("commissionPct") == null) {
+            return pageable;
+        }
+        Sort sort = Sort.by(pageable.getSort().stream()
+                .map(o -> "commissionPct".equals(o.getProperty())
+                        ? new Sort.Order(o.getDirection(),
+                                o.isAscending() ? "commissionSortAsc" : "commissionSortDesc")
+                        : o)
+                .toList());
+        return PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), sort);
     }
 
     @Transactional(readOnly = true)

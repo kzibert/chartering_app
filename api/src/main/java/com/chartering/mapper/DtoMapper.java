@@ -366,7 +366,7 @@ public class DtoMapper {
                 c.getMaxDraft(), c.getMinDwt(), c.getMaxDwt(), c.getMaxAgeYears(),
                 c.getRequiresGeared(), c.getRequiresGrainFitted(), c.getRequiresImoFitted(),
                 c.getMaxBallastDays(),
-                c.getFreightIdea(), c.getCommission(), c.getTerms(),
+                c.getFreightIdea(), c.getCommission(), c.getCommissionPct(), c.getTerms(),
                 c.getLoadRate(), c.getDischargeRate(),
                 charterer != null ? charterer.getId() : null,
                 charterer != null ? charterer.getName() : null,

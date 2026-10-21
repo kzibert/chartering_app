@@ -642,6 +642,12 @@ export interface CargoResponse {
 
   freightIdea?: string;
   commission?: string;
+  /**
+   * The server's reading of `commission`, as a total percentage: the figure marked ttl/total,
+   * else the sum of the % figures, else a bare number. Absent when the words name no figure
+   * ("as usual"). The list sorts and filters on this; `commission` is what was written.
+   */
+  commissionPct?: number;
   terms?: string;
   loadRate?: string;
   dischargeRate?: string;
@@ -848,6 +854,17 @@ export interface CargoFilter extends PageParams {
   laycanTo?: string;
   minQuantity?: number;
   maxQuantity?: number;
+  /**
+   * Total commission, in percent, matched against `CargoResponse.commissionPct`. Both ends are
+   * inclusive. Cargoes with no figure on file are left out unless `commissionNotStated` is set.
+   */
+  minCommission?: number;
+  maxCommission?: number;
+  /**
+   * With a range: also returns cargoes with no commission figure. Alone: returns only those.
+   * Left out or false, it does not filter on commission at all.
+   */
+  commissionNotStated?: boolean;
   companyId?: number;
   /** Typed in, read out of the mailbox, or read off an open board. */
   sourceKind?: SourceKind;

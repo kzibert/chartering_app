@@ -76,7 +76,8 @@ public final class AuditedEntities {
      * are not part of what a snapshot could put back.
      */
     static final Set<String> IGNORED_FIELDS = Set.of("createdAt", "updatedAt",
-            "lastSentAt", "statusRank", "loadPlace", "dischargePlace");
+            "lastSentAt", "statusRank", "loadPlace", "dischargePlace",
+            "commissionPct", "commissionSortAsc", "commissionSortDesc");
 
     private record Audited(String type, Function<Object, String> label) {
     }

@@ -286,4 +286,86 @@ public class Cargo {
             + " discharge_port_text, (select a.name from trade_areas a where a.id = discharge_area_id)))")
     @Setter(AccessLevel.NONE)
     private String dischargePlace;
+
+    /**
+     * The total commission a broker is taking, as a percentage, read out of the free-text
+     * {@link #commission}. Null where the text states no figure ("as usual", blank).
+     *
+     * <p>Read in this order, first non-null wins: a figure marked as the total ("3.75 PCT TTL",
+     * "5% ttl incl 1.25% adcom" - the largest such figure); else the sum of every figure written
+     * as a percentage ("2.5% + 1.25% adcom" is 3.75, brokerage and address commission together); else the
+     * whole text being a bare number ("1.25"). A figure of 20 or more is ignored in the first
+     * two, because "2.5% on 100% of freight" is a rate and a basis, not a commission of 102.5.
+     *
+     * <p>A formula rather than a column for the same reason as the rest of this group: it is a
+     * reading of the text, and a stored copy would be a second answer to keep in step with the
+     * first on an audited row. Kept as a sort and filter key only; the broker's words are still
+     * what the form shows and what the mail said.
+     *
+     * <p>{@code COMMISSION_PCT_SQL} is written with no {@code ?}, no {@code ::} and no
+     * {@code substring(... from ...)}, all three of which Hibernate's formula templating
+     * mishandles. A mistake there does not fail; it reads null through the entity, so
+     * {@code CargoCommissionIntegrationTest} reads every case back through a load.
+     */
+    @Formula(COMMISSION_PCT_SQL)
+    @Setter(AccessLevel.NONE)
+    private BigDecimal commissionPct;
+
+    /**
+     * Sort key for an ascending sort of {@link #commissionPct}: a cargo with no figure reads as
+     * 1,000,000,000, above any real commission, so it lands last.
+     *
+     * <p>Exists because Spring Data's {@code Sort.Order.nullsLast()} is refused on criteria
+     * queries by Hibernate 6 ("Applying Null Precedence using Criteria Queries is not yet
+     * supported"), and Postgres puts NULLs first on a descending sort. A sentinel chosen per
+     * direction is the way round it: one key cannot serve both, since a value that sorts a
+     * missing figure last ascending sorts it first descending. The service maps a sort on
+     * {@code commissionPct} onto the key for its direction ({@code CargoService}).
+     */
+    @Formula("coalesce(" + COMMISSION_PCT_SQL + ", 1000000000)")
+    @Setter(AccessLevel.NONE)
+    private BigDecimal commissionSortAsc;
+
+    /** Sort key for a descending sort of {@link #commissionPct}: no figure reads as -1, below any real one. */
+    @Formula("coalesce(" + COMMISSION_PCT_SQL + ", -1)")
+    @Setter(AccessLevel.NONE)
+    private BigDecimal commissionSortDesc;
+
+    /** A decimal comma between digits becomes a point, so "3,75%" reads as "3.75%". */
+    private static final String COMMISSION_NORMALISED =
+            "regexp_replace(lower(commission), '(\\d),(\\d)', '\\1.\\2', 'g')";
+
+    /** A number, optionally with a decimal part. Group 1 is the whole figure. */
+    private static final String COMMISSION_NUMBER = "(\\d+(\\.\\d+){0,1})";
+
+    /**
+     * A figure marked as the total. The percent sign, "pct", "per cent" or "percent" and the dot
+     * after "pct" are each optional, so "3.75 PCT TTL" and "5% total" both match.
+     */
+    private static final String COMMISSION_TOTAL_RE =
+            COMMISSION_NUMBER + "\\s*(%|pct|per cent|percent){0,1}\\.{0,1}\\s*(ttl|total)";
+
+    /** A figure written as a percentage, by itself or added to another. */
+    private static final String COMMISSION_PERCENT_RE =
+            COMMISSION_NUMBER + "\\s*(%|pct|per cent|percent)";
+
+    /** The whole text is one bare number and nothing else. */
+    private static final String COMMISSION_BARE_RE = "^\\s*" + COMMISSION_NUMBER + "\\s*$";
+
+    /*
+     * Hibernate's formula templating qualifies a bare identifier with this entity's table alias
+     * wherever it is not a function name or follows a dot, so an alias anywhere in the FROM
+     * clause (t(m), as t, t) came out as a reference to cargoes - a syntax error or a wrong
+     * column. With no alias, the set-returning function is named regexp_matches in both places,
+     * and that name is only ever a function call or the left of a dot.
+     */
+    private static final String COMMISSION_PCT_SQL = "coalesce("
+            + "(select max(cast(regexp_matches.regexp_matches[1] as numeric)) from regexp_matches("
+            + COMMISSION_NORMALISED + ", '" + COMMISSION_TOTAL_RE + "', 'g')"
+            + " where cast(regexp_matches.regexp_matches[1] as numeric) < 20),"
+            + " (select sum(cast(regexp_matches.regexp_matches[1] as numeric)) from regexp_matches("
+            + COMMISSION_NORMALISED + ", '" + COMMISSION_PERCENT_RE + "', 'g')"
+            + " where cast(regexp_matches.regexp_matches[1] as numeric) < 20),"
+            + " cast((regexp_match(" + COMMISSION_NORMALISED + ", '" + COMMISSION_BARE_RE
+            + "'))[1] as numeric))";
 }

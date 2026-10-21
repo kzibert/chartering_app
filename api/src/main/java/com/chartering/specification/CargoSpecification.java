@@ -170,4 +170,43 @@ public final class CargoSpecification {
         return (root, query, cb) -> kind == null ? null
                 : cb.equal(root.get("sourceKind"), kind);
     }
+
+    /**
+     * Cargoes whose total commission falls in the range, and optionally those with no figure.
+     *
+     * <p>The range is inclusive at both ends and either end may be left out: "3 to 4 per cent"
+     * is the usual question, and "at least 5" or "at most 2.5" are the others.
+     * Reads {@code commissionPct}, the figure read out of the broker's words - a cargo that
+     * says "3.75 pct ttl" is in the range 3 to 4, whatever the words were.
+     *
+     * <p>"Not stated" is opt-in, and the reason is what it does to the answer. Most first
+     * emails leave the commission out, so a cargo with no figure is the common case, not an
+     * edge. Sweeping every one of them into every range would make the range mean very little,
+     * since most of what came back would be cargoes whose terms are still to be asked. Never
+     * offering them would hide enquiries whose commission is simply not yet known, which is the
+     * other failure. So a person asks for them when they want them: a range alone answers "what
+     * has a stated commission in this band", and the same range with not-stated ticked answers
+     * "and what has not yet said".
+     *
+     * <p>Nothing set means no restriction at all, so the filter contributes nothing to a list
+     * that did not ask for it.
+     */
+    public static Specification<Cargo> commission(BigDecimal min, BigDecimal max, Boolean notStated) {
+        return (root, query, cb) -> {
+            boolean ranged = min != null || max != null;
+            boolean includeNotStated = Boolean.TRUE.equals(notStated);
+            if (!ranged && !includeNotStated) return null;
+            Predicate notStatedPredicate = cb.isNull(root.get("commissionPct"));
+            if (!ranged) return notStatedPredicate;
+            List<Predicate> within = new ArrayList<>();
+            if (min != null) {
+                within.add(cb.greaterThanOrEqualTo(root.<BigDecimal>get("commissionPct"), min));
+            }
+            if (max != null) {
+                within.add(cb.lessThanOrEqualTo(root.<BigDecimal>get("commissionPct"), max));
+            }
+            Predicate inRange = cb.and(within.toArray(Predicate[]::new));
+            return includeNotStated ? cb.or(inRange, notStatedPredicate) : inRange;
+        };
+    }
 }
