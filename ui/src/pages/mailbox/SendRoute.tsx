@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
+import { useCampaignConfig } from '../../api/hooks';
 import { Alert, Button, Select, Space, Tooltip, Typography } from 'antd';
 import { SettingOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
-import { campaignsApi } from '../../api/campaigns';
 import { emailFootersApi } from '../../api/emailLibrary';
 import FooterManagerModal from '../circulars/FooterManagerModal';
 
@@ -22,7 +22,7 @@ import FooterManagerModal from '../circulars/FooterManagerModal';
  * the route actually taken is the unconfigured one.
  */
 export function useSendRoute() {
-  const cfgQ = useQuery({ queryKey: ['campaign', 'config'], queryFn: campaignsApi.config });
+  const cfgQ = useCampaignConfig();
   const cfg = cfgQ.data;
   const missing = cfg?.replyMissingSettings ?? [];
   return {

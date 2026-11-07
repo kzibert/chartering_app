@@ -34,7 +34,7 @@ import java.util.Map;
  *
  * <p>So the choice this class offers is not "Brevo or the mailbox". It is "Brevo or nothing",
  * and only on a deployment that has already been established to be in that position. See
- * {@code MailCampaignProperties#replyProvider} for why that is an environment variable.
+ * {@code MailCampaignProperties#smtpBlocked} for why that is an environment variable.
  *
  * <h2>What is given up, and what is not</h2>
  * <p><b>Not the From address.</b> A reply must come from the address the correspondent wrote

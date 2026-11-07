@@ -55,7 +55,7 @@ class AnalysisExportPromptTest {
     }
 
     private JsonNode exportOneLine(String annotation) throws Exception {
-        when(analysis.readyForExport()).thenReturn(List.of(sample(annotation)));
+        when(analysis.readyForExportAfter(0L)).thenReturn(List.of(sample(annotation)));
         String jsonl = export.toJsonl();
         assertThat(jsonl).endsWith("\n");
         assertThat(jsonl.strip()).doesNotContain("\n");
@@ -102,5 +102,21 @@ class AnalysisExportPromptTest {
         String user = line.path("messages").path(1).path("content").asText();
         assertThat(user).startsWith("Date: 2026-09-05\n");
         assertThat(user).contains("Subject: MV EXAMPLE - OPEN 07/10 SEPTEMBER");
+    }
+
+    /** Pages are read after the last id written, and concatenate into one file in id order. */
+    @Test
+    void thePagesFollowOnFromTheLastIdIntoOneFile() throws Exception {
+        AnalysisSample first = sample("{\"type\":\"vessel_opening\",\"vessels\":[]}");
+        AnalysisSample second = sample("{\"type\":\"vessel_opening\",\"vessels\":[]}");
+        second.setId(7L);
+        when(analysis.readyForExportAfter(0L)).thenReturn(List.of(first));
+        when(analysis.readyForExportAfter(1L)).thenReturn(List.of(second));
+
+        String[] lines = export.toJsonl().split("\n");
+
+        assertThat(lines).hasSize(2);
+        assertThat(new ObjectMapper().readTree(lines[0]).path("metadata").path("sampleId").asLong()).isEqualTo(1L);
+        assertThat(new ObjectMapper().readTree(lines[1]).path("metadata").path("sampleId").asLong()).isEqualTo(7L);
     }
 }

@@ -27,7 +27,9 @@ public class CompanyController {
     @GetMapping
     @Operation(summary = "Search companies",
             description = "noWorkingEmail=true lists only companies whose every email address is "
-                    + "flagged not working (companies with no email at all are not included).")
+                    + "flagged not working (companies with no email at all are not included). "
+                    + "correspondenceUpdate=true lists the firms with a question waiting in Intake "
+                    + "about their own details.")
     public ResponseEntity<PageResponse<CompanyResponse>> search(
             @RequestParam(required = false) String name,
             @RequestParam(required = false) String city,
@@ -43,10 +45,12 @@ public class CompanyController {
             @RequestParam(defaultValue = "false") boolean includeBanned,
             @RequestParam(required = false) Boolean legacy,
             @RequestParam(required = false) Boolean noWorkingEmail,
+            @RequestParam(required = false) Boolean correspondenceUpdate,
             @PageableDefault(size = 20, sort = "name") Pageable pageable) {
 
         CompanyFilter filter = new CompanyFilter(name, city, personName, shipowner, charterer, broker, agent,
-                confirmed, regionId, portId, tonnageCategoryId, includeBanned, legacy, noWorkingEmail);
+                confirmed, regionId, portId, tonnageCategoryId, includeBanned, legacy, noWorkingEmail,
+                correspondenceUpdate);
         return ResponseEntity.ok(companyService.search(filter, pageable));
     }
 
@@ -75,12 +79,14 @@ public class CompanyController {
             @RequestParam(defaultValue = "false") boolean includeBanned,
             @RequestParam(required = false) Boolean legacy,
             @RequestParam(required = false) Boolean noWorkingEmail,
+            @RequestParam(required = false) Boolean correspondenceUpdate,
             @RequestParam(defaultValue = "false") boolean confirmedOnly,
             @Parameter(description = "Explicit company selection; overrides the filter when present")
             @RequestParam(required = false) List<Long> companyId) {
 
         CompanyFilter filter = new CompanyFilter(name, city, personName, shipowner, charterer, broker,
-                agent, confirmed, regionId, portId, tonnageCategoryId, includeBanned, legacy, noWorkingEmail);
+                agent, confirmed, regionId, portId, tonnageCategoryId, includeBanned, legacy, noWorkingEmail,
+                correspondenceUpdate);
         return ResponseEntity.ok(companyService.emailContacts(filter, companyId, confirmedOnly));
     }
 

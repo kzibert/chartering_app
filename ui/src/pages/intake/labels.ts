@@ -98,7 +98,8 @@ export const parseStatusMeta = (status: ParseStatus) =>
  * toward Needs review. It is recomputed as mail arrives, so it can move back onto the queue.
  */
 export const MINOR_HINT =
-  'Kept for the record rather than the queue: a company whose name and email addresses have not ' +
-  'changed, or particulars that differ only by a rounding, by a value already decided, or ' +
-  'against a record other firms confirm. It moves back to Needs review if a later email makes ' +
-  'it a real question.';
+  'Kept for the record rather than the queue: particulars that differ only by a rounding, by a ' +
+  'value already decided, or against a record other firms confirm, and possible duplicate cargoes ' +
+  '(those are also on each cargo\'s drawer). Small company updates are not listed here; they are ' +
+  'on the company, under Update from correspondence. Anything here moves back to Needs review if ' +
+  'a later email makes it a real question.';

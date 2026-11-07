@@ -8,6 +8,14 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.io.BufferedWriter;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.UncheckedIOException;
+import java.io.Writer;
+import java.nio.charset.StandardCharsets;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
@@ -60,23 +68,44 @@ public class AnalysisExportService {
     }
 
     /**
-     * The whole file as one string.
+     * The whole file, written to {@code out} as it is read.
      *
-     * <p>Built in memory rather than streamed, and that is a deliberate limit rather than an
-     * oversight: a corpus is thousands of emails of a few kilobytes each, so the file is tens
-     * of megabytes at the outside, and it is downloaded by one person clicking once. If it
-     * ever stops being that, the fix is a {@code StreamingResponseBody} over the same loop —
-     * not a paging scheme, because a training file that arrives in pages is not a training
-     * file.
+     * <p>Streamed, which it was not at first: built as one string, the file and every entity
+     * behind it were on the heap together — tens of megabytes twice over, on an instance with
+     * a few hundred. It is read in pages of 200 in id order and written line by line, so the
+     * bytes are exactly what the one-string version produced and two exports of one corpus are
+     * still the same file. The pages are an implementation detail; what arrives is one file.
+     *
+     * @return how many examples were written
      */
-    public String toJsonl() {
-        List<AnalysisSample> ready = analysis.readyForExport();
-        StringBuilder out = new StringBuilder(ready.size() * 4096);
-        for (AnalysisSample s : ready) {
-            out.append(line(s)).append('\n');
+    public int writeJsonl(OutputStream out) throws IOException {
+        Writer writer = new BufferedWriter(new OutputStreamWriter(out, StandardCharsets.UTF_8));
+        int written = 0;
+        long after = 0;
+        while (true) {
+            List<AnalysisSample> page = analysis.readyForExportAfter(after);
+            if (page.isEmpty()) break;
+            for (AnalysisSample s : page) {
+                writer.write(line(s));
+                writer.write('\n');
+                written++;
+            }
+            after = page.get(page.size() - 1).getId();
         }
-        log.info("Analysis export: {} examples", ready.size());
-        return out.toString();
+        writer.flush();
+        log.info("Analysis export: {} examples", written);
+        return written;
+    }
+
+    /** The whole file as one string: {@link #writeJsonl} into memory, for tests and small callers. */
+    public String toJsonl() {
+        try {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            writeJsonl(out);
+            return out.toString(StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     /**

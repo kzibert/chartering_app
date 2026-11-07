@@ -52,6 +52,11 @@ import java.util.Set;
  * only, with the source row saying it was automatic — where either
  *
  * <ul>
+ *   <li>the sender is already a source of that cargo and quantity agrees tightly (within
+ *       {@value #TIGHT_PERCENT}%) or the discharge point agrees — a broker re-sending his own
+ *       enquiry with the same figure or the same discharge is the same enquiry. The laycan
+ *       overlapping is not enough on its own: one broker can carry two parcels from one port
+ *       in one window, and those differ in quantity and discharge; or</li>
  *   <li>the sender is already a source of that cargo and two of the three identifying anchors
  *       agree (quantity within {@value #TIGHT_PERCENT}%, the discharge point, the laycan); or</li>
  *   <li>all three identifying anchors agree <em>and</em> the load point agrees at port level —
@@ -128,6 +133,9 @@ public final class CargoMatcher {
         Strength strength() {
             int identifying = (quantityTight ? 1 : 0) + (dischargeAgrees ? 1 : 0)
                     + (laycanOverlaps ? 1 : 0);
+            // Same firm, and either the figure or the discharge repeats: its own enquiry again.
+            // Laycan alone does not qualify - one broker can carry two parcels from one port.
+            if (sameSender && (quantityTight || dischargeAgrees)) return Strength.CERTAIN;
             if (sameSender && identifying >= 2) return Strength.CERTAIN;
             if (loadAtPort && identifying == 3) return Strength.CERTAIN;
             return Strength.PROBABLE;

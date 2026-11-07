@@ -8,25 +8,26 @@ import org.springframework.stereotype.Component;
  * The Feed tab's deployment facts: whether this instance fetches and summarises, and how it
  * behaves on other people's servers.
  *
- * <p><b>The tab itself is on everywhere; only the analysis is switched.</b> Sources, topics,
- * the prompt and every summary already written are rows in the one database both instances
- * share, so the hosted instance shows and edits them like any other data. Fetching and
- * summarising are what this switch covers, and for two reasons that point the same way: the
- * model is on a GPU in the office, and two instances fetching the same sources would do the
- * same work twice against somebody else's server.
+ * <p><b>One switch for the whole feature, off for now on every deployment.</b> On, the tab is
+ * in the navigation, every enabled source is fetched on the timer (Telegram, RSS, boards) and
+ * topics are summarised. Off, the tab is gone and its own endpoints answer 404 — but what other
+ * features read stays: the source list and its subscriptions, which the Intake tab manages, and
+ * a stored post by id, which is "the original post" behind a cargo or a position. The boards a
+ * desk reads into Intake are still fetched where there is a local parser, and only those
+ * ({@code FeedFetchService}).
  *
  * <p>How often to fetch, how big the model's window is and what the prompt says are runtime
  * settings ({@code FeedSettings}), for the reason the parser's sweep interval is one: they are
  * knobs turned while reading the output, and an environment variable is a redeploy. The model's
- * address is not repeated here — it is {@code PARSER_URL}, so there is one server to point at.
+ * address has its own default here ({@link #llmUrl}), falling back to the parser's.
  */
 @Component
 @ConfigurationProperties(prefix = "chartering.feed")
 @Data
 public class FeedProperties {
 
-    /** Fetching and summarising. Off means those endpoints answer 404 on this deployment. */
-    private boolean analysisEnabled = false;
+    /** The Feed feature ({@code FEED_ENABLED}): the tab, fetching every source, and summarising. */
+    private boolean enabled = false;
 
     /**
      * The chat-completions endpoint that writes summaries. Blank uses the parser's.

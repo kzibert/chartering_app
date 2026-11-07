@@ -14,11 +14,14 @@ import org.springframework.stereotype.Component;
  * wants a GPU, 3GB of weights and a CUDA runtime, none of which belongs in a container whose
  * whole virtue is that it runs anywhere.
  *
- * <p><b>Off by default, and off on the hosted deployment.</b> Render has no GPU and cannot
- * reach a workstation on a home network, so a hosted instance with this switched on would
- * spend a request every sweep proving it. Off, the tab is absent from the navigation and
- * every endpoint behind it answers 404 — the same shape as {@link AnalysisProperties}, and
- * for the same reason: the feature is genuinely not part of that deployment.
+ * <p><b>Two routes, each its own switch, and both facts about the deployment.</b>
+ * {@link #enabled} is the local model: the office GPU, the timers that read mail on their own,
+ * and every person on the desk reading with it. {@link #cloudEnabled} is a hosted model read
+ * with the caller's own key, which the browser holds and sends per request
+ * ({@code ParserRoute}); the server never stores it, and nothing reads with it on a timer. The
+ * office runs both, and a person picks one on the Settings tab; Render has no GPU and no route
+ * to one, so it runs the cloud route alone. With neither on, the tab is absent from the
+ * navigation and every endpoint behind it answers 404, the {@link AnalysisProperties} shape.
  *
  * <p><b>Two settings deliberately live elsewhere.</b> How often the sweep runs, and how many
  * messages it takes at a time, are in {@code app_settings} and on the Settings tab rather
@@ -31,30 +34,21 @@ import org.springframework.stereotype.Component;
 @Data
 public class ParserProperties {
 
-    /** Master switch. Off means the feature is not part of this deployment at all. */
+    /**
+     * The local model ({@code PARSER_ENABLED}). Off means no local reading and no timers here;
+     * the cloud route below may still be offered.
+     */
     private boolean enabled = false;
 
-    /** Where this deployment's reading is done: the office GPU, or a hosted chat API. */
-    public enum Provider { LOCAL, CLOUD }
-
     /**
-     * Which model this deployment reads mail with — a fact about the deployment, so it is an
-     * environment variable and not a setting.
-     *
-     * <p>The office instance and the hosted one share one database, so one {@code app_settings}
-     * table, and they need opposite answers: the office has a GPU running the finetune, Render
-     * has neither a GPU nor a route to one. A setting would send both to the same place, which
-     * is the argument {@code MAIL_REPLY_PROVIDER} already made. What the cloud provider needs to
-     * be <em>called</em> — its address, model and API key — is the installation's and lives on
-     * the Settings tab ({@code ParserSettings}), because that is the same answer for both.
-     *
-     * <p>{@code CLOUD} also changes who may spend it and when. A hosted model is billed per
-     * token against a key somebody pays for, and its free tiers are counted in tokens a day, so
-     * a cloud deployment runs no timers of its own (no sweep, no reconcile pass, no board fetch
-     * for Intake) and reads only when an administrator asks — Parse now, Parse everything, or
-     * the messages picked on the Mailbox tab. See {@code ParserAvailability}.
+     * Whether a person may read with a hosted model under their own key
+     * ({@code PARSER_CLOUD_ENABLED}). The key is never configuration: it arrives with each
+     * request from the browser that holds it. What the cloud model is <em>called</em> — its
+     * address and name — is the installation's and lives on the Settings tab
+     * ({@code ParserSettings.cloudEndpoint}), because that answer is the same for the office and
+     * the hosted instance, which share one {@code app_settings} table.
      */
-    private Provider provider = Provider.LOCAL;
+    private boolean cloudEnabled = false;
 
     /**
      * The hosted chat-completions endpoint used under {@code CLOUD}, the default behind a
@@ -77,8 +71,9 @@ public class ParserProperties {
      */
     private int cloudMaxTokens = 4_096;
 
-    public boolean isCloud() {
-        return provider == Provider.CLOUD;
+    /** Whether either route is part of this deployment. */
+    public boolean isAnyEnabled() {
+        return enabled || cloudEnabled;
     }
 
 

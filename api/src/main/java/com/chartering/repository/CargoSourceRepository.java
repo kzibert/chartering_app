@@ -1,5 +1,6 @@
 package com.chartering.repository;
 
+import com.chartering.model.Cargo;
 import com.chartering.model.CargoSource;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -26,10 +27,40 @@ public interface CargoSourceRepository extends JpaRepository<CargoSource, Long> 
 
     boolean existsByCargoIdAndMailMessageId(Long cargoId, Long mailMessageId);
 
+    /** Whether any of these firms is already a source of the cargo: one row read, not a firm's history. */
+    boolean existsByCargoIdAndReportedByCompanyIdIn(Long cargoId, java.util.Collection<Long> companyIds);
+
     /** The same guard for an arrival that came off a board rather than out of the mailbox. */
     boolean existsByCargoIdAndFeedItemId(Long cargoId, Long feedItemId);
 
     long countByCargoId(Long cargoId);
+
+    /**
+     * The cargoes one mailed email is a source of, whatever their status now.
+     *
+     * <p>The re-read guard in {@code IntakeService.applyCargo} asks this rather than the duplicate
+     * candidates: a cargo the email made and that has since been fixed or withdrawn is still the
+     * cargo the email describes, and the candidates are only the recognised-on-arrival statuses.
+     * The fetch graph is the candidates' own, because the matcher reads the same places on each.
+     */
+    @Query("select distinct c from CargoSource s join s.cargo c "
+            + "left join fetch c.loadPort lp left join fetch lp.tradeArea "
+            + "left join fetch c.loadArea "
+            + "left join fetch c.dischargePort dp left join fetch dp.tradeArea "
+            + "left join fetch c.dischargeArea "
+            + "left join fetch c.chartererCompany "
+            + "where s.mailMessage.id = ?1")
+    List<Cargo> cargoesFromMailMessage(Long mailMessageId);
+
+    /** The same, for an arrival that came off a board. */
+    @Query("select distinct c from CargoSource s join s.cargo c "
+            + "left join fetch c.loadPort lp left join fetch lp.tradeArea "
+            + "left join fetch c.loadArea "
+            + "left join fetch c.dischargePort dp left join fetch dp.tradeArea "
+            + "left join fetch c.dischargeArea "
+            + "left join fetch c.chartererCompany "
+            + "where s.feedItem.id = ?1")
+    List<Cargo> cargoesFromFeedItem(Long feedItemId);
 
     /**
      * The cargoes this firm has already told us about.

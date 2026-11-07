@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useCampaignConfig, useSendingToday } from '../../api/hooks';
 import {
   Alert,
   App,
@@ -235,7 +236,7 @@ export default function CircularsPage() {
 
   const selectedFooter = footersQ.data?.find((f) => f.id === footerId);
 
-  const configQ = useQuery({ queryKey: ['campaign', 'config'], queryFn: campaignsApi.config });
+  const configQ = useCampaignConfig();
   const placeholdersQ = useQuery({
     queryKey: ['campaign', 'placeholders'],
     queryFn: campaignsApi.placeholders,
@@ -310,10 +311,7 @@ export default function CircularsPage() {
    * machine has the tab open. Refetched on a running campaign by the polling effect above,
    * so the figure climbs as the messages leave.
    */
-  const todayQ = useQuery({
-    queryKey: ['circulations', 'today'],
-    queryFn: circulationsApi.today,
-  });
+  const todayQ = useSendingToday();
 
   const cfg = configQ.data;
   const recipients = useMemo(() => entries.map(toRecipient), [entries]);

@@ -5,9 +5,8 @@ import type { PageResponse } from './types';
  * The analysis workbench: incoming mail kept as training data for a model that reads cargo
  * offers and vessel opening positions.
  *
- * A local-only feature — ANALYSIS_ENABLED is false on the hosted deployment, and every
- * endpoint here except `status` answers 404 when it is off. `status` is what the app asks
- * before deciding whether the tab exists at all.
+ * On both deployments (ANALYSIS_ENABLED); where it is off every endpoint here except `status`
+ * answers 404. Whether the tab exists is read from GET /capabilities.
  */
 
 /** What kind of email a sample is. BOTH is a real answer, not a hedge — see the API. */

@@ -155,5 +155,3 @@ export function useToken(): string | null {
     () => token,
   );
 }
-
-export const useIsAuthenticated = () => useToken() !== null;

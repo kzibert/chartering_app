@@ -31,6 +31,7 @@ import { useTableControls } from '../../components/useTableControls';
 import { useAnalysisMutations, useAnalysisSamples, useAnalysisStatus } from '../../analysis/store';
 import CaptureModal from './CaptureModal';
 import RetrievalIndexCard from './RetrievalIndexCard';
+import { useCapabilities } from '../../capabilities/store';
 import PasteSampleModal from './PasteSampleModal';
 import SampleDrawer from './SampleDrawer';
 import { LABELS, STATUSES, labelMeta, statusMeta } from './labels';
@@ -66,6 +67,7 @@ const CLAMP: CSSProperties = {
  */
 export default function AnalysisPage() {
   const status = useAnalysisStatus();
+  const caps = useCapabilities().data;
   const [form] = Form.useForm();
   const [filters, setFilters] = usePersistedFilters<Partial<AnalysisSampleFilter>>(
     'analysis',
@@ -205,7 +207,8 @@ export default function AnalysisPage() {
         onExport={() => exportJsonl.mutate()}
       />
 
-      <RetrievalIndexCard />
+      {/* The retrieval index needs an embedding server, which only the office runs. */}
+      {caps?.retrieval && <RetrievalIndexCard />}
 
       {/* The Form wraps the panel: on a phone these fields render into a drawer portalled
           to the end of <body>, and only a Form above them in the tree still reaches them. */}

@@ -1,4 +1,6 @@
 import { useEffect } from 'react';
+import { useCapabilities } from '../../capabilities/store';
+import { useSendingToday } from '../../api/hooks';
 import {
   Alert,
   App,
@@ -18,11 +20,11 @@ import {
 import { SaveOutlined, UndoOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { settingsApi } from '../../api/settings';
-import { circulationsApi } from '../../api/circulations';
 import { SendingTodayPanel } from '../../components/SendingToday';
 import type { CirculationSettings, CirculationSettingsRequest } from '../../api/types';
 import WhatsappSettingsCard from './WhatsappSettingsCard';
 import ParserSettingsCard from './ParserSettingsCard';
+import ParserRouteCard from './ParserRouteCard';
 import FeedSettingsCard from './FeedSettingsCard';
 import MatchSettingsCard from './MatchSettingsCard';
 import OwnAddressesCard from './OwnAddressesCard';
@@ -77,11 +79,7 @@ export default function SettingsPage() {
   // never quote different totals for the same day. Refetched on an interval rather than once:
   // this panel is read to decide whether there is room to send, and a figure from whenever the
   // tab happened to be opened is the wrong basis for that.
-  const todayQ = useQuery({
-    queryKey: ['circulations', 'today'],
-    queryFn: circulationsApi.today,
-    refetchInterval: 60_000,
-  });
+  const todayQ = useSendingToday({ poll: true });
 
   // Reset the form whenever the server's answer changes, so a save or a reset leaves the
   // fields showing what is actually stored rather than what was typed.
@@ -135,6 +133,9 @@ export default function SettingsPage() {
   });
 
   const usingBrevo = settings?.provider === 'BREVO';
+  // A host that cannot open SMTP (SMTP_BLOCKED, Render): the server sends through Brevo whatever
+  // the desk's row says and refuses SMTP, so the box is shown ticked and cannot be unticked.
+  const smtpBlocked = useCapabilities().data?.smtpBlocked === true;
   // The From and SMTP fields are edited here only by the server mailbox's owner; anybody
   // else's are their own mailbox's or Brevo sender's, shown read-only with where they come from.
   const identityHere = settings?.identitySource === 'SERVER';
@@ -157,7 +158,7 @@ export default function SettingsPage() {
           message={
             session.role === 'USER'
               ? `These are ${session.tenantName}'s settings. A desk administrator changes them; you can read them here.`
-              : `These are ${session.tenantName}'s settings. The parser's and the feed model's servers, the sweep and fetch timers and the context window are shared by every desk and changed by a platform administrator.`
+              : `These are ${session.tenantName}'s settings. The model servers and the timers are shared by every desk and changed by a platform administrator.`
           }
         />
       )}
@@ -178,11 +179,20 @@ export default function SettingsPage() {
       >
         <Checkbox
           checked={!!usingBrevo}
-          disabled={setProvider.isPending || query.isLoading}
+          disabled={smtpBlocked || setProvider.isPending || query.isLoading}
           onChange={(e) => setProvider.mutate(e.target.checked)}
         >
           Use Brevo for circs
         </Checkbox>
+        {smtpBlocked && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginTop: 12 }}
+            message="This server cannot send over SMTP, so circulars and replies go out through Brevo here"
+            description="The choice above is kept for the office deployment, which shares these settings."
+          />
+        )}
         <Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>
           {usingBrevo ? (
             <>
@@ -451,6 +461,7 @@ export default function SettingsPage() {
       <MyBrevoCard />
       <OwnAddressesCard />
 
+      <ParserRouteCard />
       <ParserSettingsCard />
 
       <FeedSettingsCard />

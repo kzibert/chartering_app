@@ -111,6 +111,9 @@ services:
       MAIL_MAX_RETRIES: ${MAIL_MAX_RETRIES:-2}
       MAIL_RETRY_BACKOFF_MS: ${MAIL_RETRY_BACKOFF_MS:-10000}
       MAIL_ABORT_AFTER_FAILURES: ${MAIL_ABORT_AFTER_FAILURES:-5}
+      # A host that cannot open SMTP sends replies and circulars through Brevo. False on an
+      # ordinary network; render.yaml sets it true. See .env.example.
+      SMTP_BLOCKED: ${SMTP_BLOCKED:-false}
       # Reading the mailbox: the Mailbox tab's IMAP sync. Configured separately from the
       # sending block above because the two fail independently — an unreachable IMAP host
       # must not stop a circular going out. The mailbox is opened read-only.
@@ -157,15 +160,20 @@ services:
       # How often it sweeps and how many messages it takes are NOT here: they are runtime
       # settings on the Settings tab, because they are knobs turned while watching the queue.
       PARSER_ENABLED: ${PARSER_ENABLED:-true}
-      # LOCAL reads with the server below; CLOUD with the hosted model whose address, model and
-      # API key are on the Settings tab (no timers, administrators only). See .env.example.
-      PARSER_PROVIDER: ${PARSER_PROVIDER:-LOCAL}
+      # A hosted model read with each person's OWN key, which their browser holds and sends with
+      # their Intake requests; picked per person on the Settings tab beside the local model. The
+      # server never stores the key and no timer reads with it. Its address and model name are
+      # defaults behind the Settings tab.
+      PARSER_CLOUD_ENABLED: ${PARSER_CLOUD_ENABLED:-true}
       PARSER_CLOUD_URL: ${PARSER_CLOUD_URL:-https://api.groq.com/openai/v1/chat/completions}
       PARSER_CLOUD_MODEL: ${PARSER_CLOUD_MODEL:-llama-3.3-70b-versatile}
       PARSER_CLOUD_MAX_TOKENS: ${PARSER_CLOUD_MAX_TOKENS:-4096}
       PARSER_URL: ${PARSER_URL:-http://host.docker.internal:8090/v1/chat/completions}
       PARSER_MODEL: ${PARSER_MODEL:-}
       PARSER_READ_TIMEOUT_MS: ${PARSER_READ_TIMEOUT_MS:-180000}
+      PARSER_CONNECT_TIMEOUT_MS: ${PARSER_CONNECT_TIMEOUT_MS:-5000}
+      PARSER_MAX_BODY_CHARS: ${PARSER_MAX_BODY_CHARS:-20000}
+      PARSER_MAX_TOKENS: ${PARSER_MAX_TOKENS:-6144}
       PARSER_MAX_ATTEMPTS: ${PARSER_MAX_ATTEMPTS:-3}
       # The embedding server for retrieval (CPU, chartering-ml's serve/docker-compose.embed.yml,
       # port 8092). The URL uses ${VAR-default} rather than ${VAR:-default} on purpose: a blank
@@ -175,14 +183,15 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text-v1.5}
       EMBEDDING_PREFIX: "${EMBEDDING_PREFIX:-clustering: }"
       EMBEDDING_MAX_TOKENS: ${EMBEDDING_MAX_TOKENS:-2048}
-      # The Feed tab's fetching and summarising, with the model above. The tab and its data are
-      # on every deployment; this instance is the one that reads the sources and runs the model,
-      # so it is ON here and off on Render.
-      FEED_ANALYSIS_ENABLED: ${FEED_ANALYSIS_ENABLED:-true}
+      # The Feed tab, its fetching of every source and its summaries. OFF for now, here as on
+      # Render. Off, the boards a desk reads into Intake are still fetched here, and only those.
+      FEED_ENABLED: ${FEED_ENABLED:-false}
       # A general model for summaries, apart from the parser's extraction finetune. Blank uses
       # PARSER_URL. See .env.example.
       FEED_LLM_URL: ${FEED_LLM_URL:-}
       FEED_LLM_MODEL: ${FEED_LLM_MODEL:-}
+      FEED_USER_AGENT: ${FEED_USER_AGENT:-CharteringApp-Feed/1.0 (market feed reader)}
+      FEED_REQUEST_GAP_MS: ${FEED_REQUEST_GAP_MS:-1500}
       # Finding a hull on an outside source when the IMO is missing on both sides - which a
       # position list creates constantly, since a circular names a ship and almost never her
       # number. Reads a public ship-database search page.
@@ -196,6 +205,10 @@ services:
       LOOKUP_MIN_INTERVAL_MS: ${LOOKUP_MIN_INTERVAL_MS:-3000}
       LOOKUP_MAX_PER_PASS: ${LOOKUP_MAX_PER_PASS:-10}
       LOOKUP_MIN_CONFIDENCE: ${LOOKUP_MIN_CONFIDENCE:-55}
+      LOOKUP_PROVIDER: ${LOOKUP_PROVIDER:-vesselfinder}
+      LOOKUP_MAX_CANDIDATES: ${LOOKUP_MAX_CANDIDATES:-8}
+      LOOKUP_CONNECT_TIMEOUT_MS: ${LOOKUP_CONNECT_TIMEOUT_MS:-8000}
+      LOOKUP_READ_TIMEOUT_MS: ${LOOKUP_READ_TIMEOUT_MS:-20000}
       # The other circular flow: Brevo's transactional API. Which of the two is used is a
       # runtime setting ("Use Brevo for circs" on the Settings tab), so only the key and
       # Brevo's own pacing baseline come from the environment. An empty key just means the

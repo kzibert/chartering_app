@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Alert, Button, Tag, Tooltip } from 'antd';
 import { MailOutlined } from '@ant-design/icons';
-import { useIntakeStatus, usePendingCompanyItem } from '../../intake/store';
+import { usePendingCompanyItem } from '../../intake/store';
+import { useIntakeOn } from '../../capabilities/store';
 import IntakeItemDrawer from '../intake/IntakeItemDrawer';
 import { MINOR_HINT } from '../intake/labels';
 import type { IntakeItemResponse } from '../../api/intake';
@@ -9,23 +10,22 @@ import type { IntakeItemResponse } from '../../api/intake';
 /**
  * "Update from correspondence" — the company question, offered on the company's own record.
  *
- * <b>Why here as well as on the Intake tab.</b> Every circular a firm sends ends in its full
+ * <b>Why here and not on the Intake tab.</b> Every circular a firm sends ends in its full
  * style, and most of what those blocks say beyond the record is worth having and not worth a
- * morning: a website moved, a new mobile, a colleague's job title. So those questions stopped
- * counting toward Needs review (they wait on Minor updates), and this is where they are meant to
- * be answered — on the record, when somebody has it open, from every email the firm has sent
- * aggregated into one set of details rather than one question per circular.
+ * morning: a website moved, a new mobile, a colleague's job title. Those small updates no longer
+ * reach the Intake tab at all, so this is where they are answered — on the record, when somebody
+ * has it open, from every email the firm has sent aggregated into one set of details rather than
+ * one question per circular.
  *
  * Shown only while there is something the aggregate would still change. The item is compared
  * again with the record every time it is read, so a phone added by hand on the People tab
  * takes the button away rather than leaving it offering a write that changes nothing.
  *
- * Absent where the parser is off (the hosted instance): the questions are rows in the shared
- * database, but answering one goes through the intake endpoints, which answer 404 there.
+ * Absent where Intake does not exist for this person: the questions are rows in the shared
+ * database, but answering one goes through the intake endpoints, which answer 404 then.
  */
 export default function CorrespondenceUpdate({ companyId }: { companyId: number }) {
-  const status = useIntakeStatus();
-  const enabled = status.data?.enabled === true;
+  const enabled = useIntakeOn();
   const pending = usePendingCompanyItem(companyId, enabled);
   const [open, setOpen] = useState(false);
 
@@ -42,7 +42,7 @@ export default function CorrespondenceUpdate({ companyId }: { companyId: number 
         style={{ marginBottom: 12 }}
         message={
           <>
-            Their signatures carry details this record does not have
+            Details from this firm's recent mail can update this record
             {item.minor && (
               <Tooltip title={MINOR_HINT}>
                 <Tag style={{ marginInlineStart: 8 }}>minor</Tag>

@@ -107,7 +107,7 @@ public class IntakeQueryService {
         boolean reachable = client.isReachable();
         ParserSettings.Values values = settings.values();
         IntakeService.Counts counts = intake.counts();
-        long unparsed = parsedEmails.countUnparsed(values.receivedSince());
+        long unparsed = parsedEmails.countUnparsed(values.receivedSince(), values.receivedFloor());
         long unparsedPosts = feedItems.countUnparsedForIntake(values.receivedSince());
         long intakeSources = sources.findReadIntoIntake().stream()
                 .filter(com.chartering.model.FeedSource::isEnabled).count();
@@ -116,15 +116,16 @@ public class IntakeQueryService {
         // Each one is the next thing to do rather than an error, because every one of them is
         // an ordinary state of a feature being set up.
         List<String> warnings = new ArrayList<>();
-        // The address the sweep will actually call: the cloud one under CLOUD, else the office
-        // server. Asking the local endpoint here would describe a server nothing reads from.
+        // The address this caller's reading goes to: the cloud one when they read with their own
+        // key, else the office server. Asking the other would describe a server they do not use.
+        boolean cloud = ParserRoute.current().cloud();
         ModelEndpoint endpoint = settings.activeEndpoint();
         if (!reachable) {
-            // The docker command is a cure for the office server only. Under CLOUD the cure is
-            // the address or the key, which is what the Settings tab is for.
-            warnings.add(props.isCloud()
-                    ? "The cloud model at " + endpoint.url() + " is not answering. Check its "
-                        + "address and API key on the Settings tab."
+            // The docker command is a cure for the office server only. For the cloud the cure is
+            // the key or the address, which is what the Settings tab is for.
+            warnings.add(cloud
+                    ? "The cloud model at " + endpoint.url() + " is not answering. Check your "
+                        + "API key and the model's address on the Settings tab."
                     : "The model server at " + endpoint.url() + " is not answering. Start it "
                         + "with: docker compose -f serve/docker-compose.llamacpp.yml up -d "
                         + "(in the chartering-ml project).");
@@ -145,7 +146,7 @@ public class IntakeQueryService {
                     + "Sources to have them read in too.");
         }
         if (values.sweepMaxAgeDays() > 0 && unparsed == 0
-                && parsedEmails.countUnparsed(ParserSettings.NO_LIMIT_SINCE) > 0) {
+                && parsedEmails.countUnparsed(ParserSettings.NO_LIMIT_SINCE, ParserSettings.NO_LIMIT_SINCE) > 0) {
             // The one case where the counter reads zero and there is genuinely work: older
             // mail outside the window. Worth saying, because widening the window is the fix
             // and nothing else on the screen hints at it.
@@ -154,11 +155,10 @@ public class IntakeQueryService {
                     + "Settings tab to reach it.");
         }
         if (!availability.runsTimers()) {
-            // Only under CLOUD: a local deployment with the switch on runs its timer, and the
-            // interval below says whether it is off. Said here because a cloud deployment
-            // with an interval set would otherwise look as if the timer had been forgotten.
-            warnings.add("This deployment reads mail only when an administrator presses Parse now "
-                    + "— the cloud model is billed per read, so nothing runs on a timer.");
+            // Only where there is no local model: the timers read with it, never with somebody's
+            // key. Said here because an interval on the screen would otherwise look forgotten.
+            warnings.add("This deployment reads mail only when you press Parse now — it reads "
+                    + "with your own cloud key, so nothing runs on a timer.");
         } else if (values.sweepIntervalMinutes() == 0) {
             warnings.add("The timer is off. Mail is only read when you press Parse now.");
         }
@@ -182,7 +182,7 @@ public class IntakeQueryService {
                 sweeps.nextSweepAt(),
                 last == null ? null : last.message(),
                 warnings,
-                props.isCloud() ? "CLOUD" : "LOCAL",
+                cloud ? "CLOUD" : "LOCAL",
                 availability.runsTimers());
     }
 
@@ -196,6 +196,13 @@ public class IntakeQueryService {
             List<Predicate> where = new ArrayList<>();
             if (kind != null) where.add(cb.equal(root.get("kind"), kind));
             if (status != null) where.add(cb.equal(root.get("status"), status));
+            // A minor company question is not in the queue at all. It is a mark on the firm's own
+            // record (CompanyResponse.correspondenceUpdate), answered there, so no list of pending
+            // items shows it whatever minor filter asked. Other statuses are untouched: an
+            // accepted or discarded one stays in history.
+            where.add(cb.not(cb.and(cb.equal(root.get("status"), IntakeItemStatus.PENDING),
+                    cb.equal(root.get("kind"), IntakeItemKind.COMPANY_DETAILS),
+                    cb.isTrue(root.get("minor")))));
             // The queue and the "Minor updates" sub-tab are one table split on this flag; null
             // is both, which is what the answered and discarded views want - history is history.
             if (minor != null) where.add(cb.equal(root.get("minor"), minor));
@@ -361,8 +368,10 @@ public class IntakeQueryService {
     /**
      * What the sweep has yet to read, one door at a time, in the order the sweep takes it.
      *
-     * <p>The same {@code since} the status counts from, so the list and the header number cannot
-     * disagree about what is inside the lookback. Each row is a projection (see
+     * <p>The same {@code since} and {@code floor} the status counts from, taken from one settings
+     * snapshot, so the list and the header number cannot disagree about what is inside the lookback.
+     * Mail's window counts from arrival, capped at twice the lookback (see
+     * {@code ParsedEmailRepository#unparsed}). Each row is a projection (see
      * {@code ParsedEmailRepository#waiting}) and no body crosses the wire.
      *
      * <p>Page size is clamped rather than rejected: a list asking for ten thousand rows gets a
@@ -372,10 +381,10 @@ public class IntakeQueryService {
     public PageResponse<WaitingArrivalResponse> waiting(WaitingSource source, int page, int size) {
         requireEnabled();
         Pageable pageable = PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), 100));
-        LocalDateTime since = settings.values().receivedSince();
+        ParserSettings.Values values = settings.values();
         Page<WaitingArrivalResponse> found = source == WaitingSource.WEB
-                ? feedItems.waitingForIntake(since, pageable)
-                : parsedEmails.waiting(since, pageable);
+                ? feedItems.waitingForIntake(values.receivedSince(), pageable)
+                : parsedEmails.waiting(values.receivedSince(), values.receivedFloor(), pageable);
         return PageResponse.from(found);
     }
 
@@ -383,7 +392,7 @@ public class IntakeQueryService {
     public PageResponse<ParsedEmailResponse> parsed(ParseStatus status, Pageable pageable) {
         requireEnabled();
         Page<ParsedEmail> page = status == null
-                ? parsedEmails.findAllByOrderByParsedAtDesc(pageable)
+                ? parsedEmails.findByStatusNotOrderByParsedAtDesc(ParseStatus.QUEUED, pageable)
                 : parsedEmails.findByStatusOrderByParsedAtDesc(status, pageable);
         // No rawJson in the list: it is the model's whole answer and a page of twenty would
         // be a megabyte of JSON to render a table of counts.
@@ -419,6 +428,21 @@ public class IntakeQueryService {
                 .filter(s -> !SettingsService.isOwn(s.getFromAddress(), own))
                 .map(mapper::toCargoSourceResponse)
                 .toList();
+    }
+
+    /**
+     * The probable duplicates waiting against one cargo, each whole, for its drawer to stack.
+     *
+     * <p>Asked of the cargo the question is stacked on, not of the arrival: the drawer shows what
+     * the other brokers' readings say against this record, and an ACCEPT here merges into it. Each
+     * item goes through {@link #get} so the stack carries the same reading, reasons and sources
+     * the item's own screen does. Empty when nothing is waiting, and a cargo from another desk
+     * finds nothing for the same reason every other lookup by id does.
+     */
+    @Transactional(readOnly = true)
+    public List<IntakeItemResponse> possibleDuplicates(Long cargoId) {
+        requireEnabled();
+        return items.pendingCargoMerge(cargoId).stream().map(i -> get(i.getId())).toList();
     }
 
     // ------------------------------------------------------------------ internals

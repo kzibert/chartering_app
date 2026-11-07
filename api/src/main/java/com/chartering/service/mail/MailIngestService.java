@@ -165,29 +165,40 @@ public class MailIngestService {
                 TenantContext.requireUser(), in.imapFolder(), in.uidValidity(), in.uid()).isPresent();
     }
 
+    /**
+     * Every text column is passed through {@link #withoutNul}: Postgres refuses a NUL character
+     * in text, and a single message carrying one (a UTF-16 part declared as UTF-8, say) would
+     * otherwise fail the whole batch's transaction and, with it, every message behind it.
+     */
     private static MailMessage toEntity(Incoming in) {
         MailMessage m = new MailMessage();
-        m.setMessageId(in.messageId());
+        m.setMessageId(withoutNul(in.messageId()));
         m.setImapUid(in.uid());
         m.setImapValidity(in.uidValidity());
-        m.setImapFolder(in.imapFolder());
-        m.setFromAddress(in.fromAddress());
-        m.setFromName(in.fromName());
-        m.setToAddresses(in.toAddresses());
-        m.setCcAddresses(in.ccAddresses());
-        m.setSubject(in.subject());
+        m.setImapFolder(withoutNul(in.imapFolder()));
+        m.setFromAddress(withoutNul(in.fromAddress()));
+        m.setFromName(withoutNul(in.fromName()));
+        m.setToAddresses(withoutNul(in.toAddresses()));
+        m.setCcAddresses(withoutNul(in.ccAddresses()));
+        m.setSubject(withoutNul(in.subject()));
         m.setSentAt(in.sentAt());
         m.setReceivedAt(in.receivedAt());
-        m.setBodyText(in.bodyText());
-        m.setBodyHtml(in.bodyHtml());
-        m.setSnippet(in.snippet());
+        m.setBodyText(withoutNul(in.bodyText()));
+        m.setBodyHtml(withoutNul(in.bodyHtml()));
+        m.setSnippet(withoutNul(in.snippet()));
         m.setHasAttachments(in.hasAttachments());
-        m.setAttachmentNames(in.attachmentNames());
+        m.setAttachmentNames(withoutNul(in.attachmentNames()));
         m.setSizeBytes(in.sizeBytes());
         // The only time the server's flag is consulted. From here on the app owns it,
         // because the app never writes back and so could never keep the two agreeing.
         m.setRead(in.seen());
         m.setSyncedAt(LocalDateTime.now());
         return m;
+    }
+
+    /** Same rule as the parser's {@code EmailParseRunner.storable}: drop the NULs, keep the rest. */
+    private static String withoutNul(String s) {
+        if (s == null || s.indexOf(0) < 0) return s;
+        return s.replace(String.valueOf((char) 0), "");
     }
 }

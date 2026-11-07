@@ -196,6 +196,11 @@ export interface CompanyResponse {
   legacy: boolean;
   /** derived: the company has emails, but every one is flagged not working */
   noWorkingEmail: boolean;
+  /**
+   * True when its correspondence carries details this record does not have, so the
+   * "Update from correspondence" question is waiting. Absent on responses from older builds.
+   */
+  correspondenceUpdate?: boolean;
 }
 
 export interface CompanyDetailResponse {
@@ -907,6 +912,8 @@ export interface CompanyFilter extends PageParams {
   legacy?: boolean;
   /** true = only companies whose every email is flagged not working */
   noWorkingEmail?: boolean;
+  /** true = only companies with a pending "Update from correspondence" question */
+  correspondenceUpdate?: boolean;
 }
 
 /** People page search. The contact criteria must all be met by the same contact. */

@@ -101,9 +101,9 @@ public class FeedSummaryService {
 
     /** Runs the selected topics. Returns at once; refused while the parser sweep is reading. */
     public void requestRun() {
-        if (!props.isAnalysisEnabled()) {
+        if (!props.isEnabled()) {
             throw new FeatureDisabledException(
-                    "Summarising is not enabled on this deployment (FEED_ANALYSIS_ENABLED).");
+                    "Summarising is not enabled on this deployment (FEED_ENABLED).");
         }
         if (llm.sharesServerWithParser() && parserSweep.isRunning()) {
             throw new IllegalStateException("The email parser is reading mail on the same model right now. "

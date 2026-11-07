@@ -23,7 +23,9 @@ import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Turning what an email said into rows this database already holds.
@@ -74,6 +76,36 @@ public class IntakeResolver {
      * given a ship. Legible on sight, unlike its predecessor.
      */
     private static final String NO_NAME = "~~no~such~name~~";
+
+    /**
+     * The abbreviations a circular uses for a ship it has not named yet. TBN is "to be
+     * nominated", TBA "to be advised", and the rest are the same slot spelled another way.
+     */
+    private static final Set<String> PLACEHOLDER_WORDS = Set.of("TBN", "TBA", "TBC", "TBD", "NOMINATED");
+
+    /** The same idea spelled out in full. Matched as a phrase, not word by word. */
+    private static final List<String> PLACEHOLDER_PHRASES =
+            List.of("TO BE NOMINATED", "TO BE NAMED", "TO BE ADVISED");
+
+    /**
+     * Whether a vessel name is a slot a charterer has not filled, rather than a ship.
+     *
+     * <p><b>A word, not a substring.</b> "TBILISI" and "TABONE" contain the letters but are
+     * ships, and "ATBN STAR" is a name with the abbreviation fused to a word. The name is
+     * split on everything that is not a letter first, so "M/V TBN", "TBN 1" and "TBN-2" all
+     * come out as the abbreviation on its own, and a digit counts as a separator too.
+     */
+    public static boolean isPlaceholderName(String name) {
+        if (name == null) return false;
+        String text = name.strip().toUpperCase(Locale.ROOT);
+        for (String phrase : PLACEHOLDER_PHRASES) {
+            if (text.contains(phrase)) return true;
+        }
+        for (String word : text.split("[^A-Z]+")) {
+            if (PLACEHOLDER_WORDS.contains(word)) return true;
+        }
+        return false;
+    }
 
     private final VesselRepository vessels;
     private final IntakeVesselAliasRepository aliases;

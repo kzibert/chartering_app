@@ -164,14 +164,17 @@ public class AnalysisService {
     }
 
     /**
-     * The rows an export reads. Unpaged on purpose: a training file is one document, not a
-     * page of one, and the corpus is thousands of rows rather than the mailbox's hundreds of
-     * thousands.
+     * The next page of rows an export reads, after {@code afterId} in id order; empty at the end.
+     *
+     * <p>Paged although a training file is one document, because the file is still written as
+     * one: {@code AnalysisExportService} streams the pages out in order. Read whole, a corpus
+     * of twenty-thousand-character emails held every body on the heap at once, which a 512 MB
+     * instance does not have room for.
      */
     @Transactional(readOnly = true)
-    public List<AnalysisSample> readyForExport() {
+    public List<AnalysisSample> readyForExportAfter(long afterId) {
         requireEnabled();
-        return samples.findByStatusOrderByIdAsc(AnalysisStatus.READY);
+        return samples.findTop200ByStatusAndIdGreaterThanOrderByIdAsc(AnalysisStatus.READY, afterId);
     }
 
     // ----------------------------------------------------------------- writing
@@ -211,7 +214,7 @@ public class AnalysisService {
      * onto two boards and a duplicate in a corpus is one example weighted twice with its
      * annotation typed twice.
      *
-     * <p>Not behind the Feed's own switch. {@code FEED_ANALYSIS_ENABLED} governs fetching and
+     * <p>Not behind the Feed's own switch. {@code FEED_ENABLED} governs fetching and
      * summarising — reaching out to somebody else's server — and this reads rows already in
      * the database, which both deployments share. A hosted instance that never fetches a page
      * can still label what the office one collected.

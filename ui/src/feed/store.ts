@@ -31,10 +31,11 @@ export const feedKeys = {
  * Polled every three seconds while a fetch or a summary run is in flight — the stage line
  * ("reading batch 2 of 4") is the only sign a minutes-long run is alive — and left alone otherwise.
  */
-export const useFeedStatus = () =>
+export const useFeedStatus = (enabled = true) =>
   useQuery({
     queryKey: feedKeys.status,
     queryFn: feedApi.status,
+    enabled,
     staleTime: 30_000,
     retry: false,
     refetchInterval: (q) =>
@@ -72,8 +73,8 @@ export const useFeedSummary = (id?: number) =>
     enabled: id != null,
   });
 
-export const useFeedSettings = () =>
-  useQuery({ queryKey: feedKeys.settings, queryFn: feedApi.settings });
+export const useFeedSettings = (enabled = true) =>
+  useQuery({ queryKey: feedKeys.settings, queryFn: feedApi.settings, enabled });
 
 export function useFeedInvalidator() {
   const qc = useQueryClient();
