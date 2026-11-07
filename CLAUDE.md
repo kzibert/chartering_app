@@ -117,7 +117,7 @@ Three things bite here:
   `V33__add_personal_circulation.sql` and `V34__add_feed_intake_subscriptions.sql` and
   `V35__add_desk_aliases.sql` and `V36__enable_row_level_security.sql` and
   `V37__add_personal_brevo_keys.sql`, `V38__add_analysis_sample_embeddings.sql` and
-  `V39__add_search_chunks.sql` exist; the next one is V40.
+  `V40__add_search_chunks.sql` exist; the next one is V41.
 - **Since V36, a migration that reads or writes a desk's rows starts with
   `SET LOCAL app.rls_bypass = 'on';`.** Row-level security is forced on every desk table and
   migrations run as the role it binds; without the line such a migration sees no rows and
@@ -598,7 +598,7 @@ superuser, as they already do for `pg_trgm`, because the application role cannot
 
 ### Ask the desk: questions answered from the desk's own text
 
-Backend only for now; the tab is a later step. `search_chunks` (V39) holds the desk's mail, the
+Backend only for now; the tab is a later step. `search_chunks` (V40) holds the desk's mail, the
 posts of boards it reads into Intake, its cargoes and its vessel positions, each cut into chunks of
 at most 1,500 characters. Every chunk carries its document's header (subject, sender, date; the
 board; the vessel) so it still says what it is about when found alone. A cargo or position is one

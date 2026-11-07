@@ -13,7 +13,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 
 /**
- * The chunks of the desk's text (V39): written by the indexer, and the questions the indexer asks
+ * The chunks of the desk's text (V40): written by the indexer, and the questions the indexer asks
  * of them before it reads anything.
  *
  * <p>Plain JDBC, for the reason {@link SampleEmbeddingStore} is: nothing in the object model holds

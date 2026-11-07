@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Finds the passages a question is answered from: the desk's chunks (V39) asked two ways, fused.
+ * Finds the passages a question is answered from: the desk's chunks (V40) asked two ways, fused.
  *
  * <p><b>Hybrid, because each half fails alone.</b> The vector half finds a passage that says the
  * same thing in other words - "open tonnage Adriatic" against "SPOT ADRIATIC 1/3 SEPT" - and cannot
