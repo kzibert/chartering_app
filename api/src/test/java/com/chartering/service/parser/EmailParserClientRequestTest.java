@@ -117,12 +117,12 @@ class EmailParserClientRequestTest {
     void cloudRequestAsksForAJsonObjectAndPutsTheShapeInTheSystemPrompt() throws Exception {
         String user = "Date: 2026-09-05\nSubject: OPEN\n\nMV EXAMPLE open Constanza.";
 
-        JsonNode root = json.readTree(client.cloudRequestBody(List.of(), user, "llama-3.3-70b-versatile"));
+        JsonNode root = json.readTree(client.cloudRequestBody(List.of(), user, "openai/gpt-oss-120b"));
 
         // A hosted endpoint is asked for plain JSON, never for a grammar it may refuse to compile.
         assertThat(root.path("response_format").path("type").asText()).isEqualTo("json_object");
         assertThat(root.path("response_format").has("json_schema")).isFalse();
-        assertThat(root.path("model").asText()).isEqualTo("llama-3.3-70b-versatile");
+        assertThat(root.path("model").asText()).isEqualTo("openai/gpt-oss-120b");
         assertThat(root.path("max_tokens").asInt()).isEqualTo(props.getCloudMaxTokens());
         assertThat(root.path("temperature").asInt()).isZero();
         assertThat(root.path("stream").asBoolean()).isFalse();

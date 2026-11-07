@@ -284,7 +284,7 @@ chartering:
     # both (a person picks one); Render offers only this - see ParserProperties.
     cloud-enabled: ${PARSER_CLOUD_ENABLED:false}
     cloud-url: ${PARSER_CLOUD_URL:https://api.groq.com/openai/v1/chat/completions}
-    cloud-model: ${PARSER_CLOUD_MODEL:llama-3.3-70b-versatile}
+    cloud-model: ${PARSER_CLOUD_MODEL:openai/gpt-oss-120b}
     cloud-max-tokens: ${PARSER_CLOUD_MAX_TOKENS:4096}
     url: ${PARSER_URL:http://host.docker.internal:8090/v1/chat/completions}
     # llama-server serves one model and ignores this; Ollama refuses the request without

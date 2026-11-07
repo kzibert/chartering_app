@@ -57,14 +57,22 @@ public class ParserProperties {
      */
     private String cloudUrl = "https://api.groq.com/openai/v1/chat/completions";
 
-    /** The hosted model's name, the default behind a Settings-tab override. Always sent. */
-    private String cloudModel = "llama-3.3-70b-versatile";
+    /**
+     * The hosted model's name, the default behind a Settings-tab override. Always sent.
+     *
+     * <p>Was {@code llama-3.3-70b-versatile}, which Groq no longer serves: a key issued in
+     * November 2026 lists only the gpt-oss and qwen chat models, and the old default answered
+     * 404 "model_not_found". gpt-oss-120b read a test circular's vessel, position, cargo and
+     * signature completely through the paste endpoint (2026-11-08). A provider's model list
+     * moves; {@code GET <base>/v1/models} with the key says what it serves today.
+     */
+    private String cloudModel = "openai/gpt-oss-120b";
 
     /**
      * The answer's token ceiling under {@code CLOUD}, apart from {@link #maxTokens}.
      *
      * <p>Lower because a hosted free tier counts the requested ceiling against its tokens a
-     * minute before the model has written anything: Groq's 12,000 a minute for a 70B model,
+     * minute before the model has written anything: a free tier's tokens a minute (8,000 for gpt-oss-120b on Groq),
      * less a 5,000-token prompt, does not leave room for 6,144 more, and the request is
      * refused as too large rather than answered short. 4,096 covers all but the longest
      * position lists in the corpus.
