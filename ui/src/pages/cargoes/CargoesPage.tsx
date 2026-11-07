@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Button, Col, DatePicker, Form, Input, InputNumber, Row, Select, Space, Tag, Tooltip, Typography } from 'antd';
+import { Button, Checkbox, Col, DatePicker, Form, Input, InputNumber, Row, Select, Space, Tag, Tooltip, Typography } from 'antd';
 import { NodeIndexOutlined, PlusOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import type { ReactNode } from 'react';
 import dayjs from 'dayjs';
 import { useCargoes, useCargoMutations } from '../../api/hooks';
 import { useTableControls } from '../../components/useTableControls';
@@ -48,6 +49,31 @@ function sourceTag(kind: SourceKind) {
   if (kind === 'MAIL') return <Tag color="blue">mail</Tag>;
   if (kind === 'WEB') return <Tag color="cyan">web</Tag>;
   return null;
+}
+
+/**
+ * The commission as the broker wrote it, with the total the server counted from it when that
+ * is a different figure.
+ *
+ * The row shows the words because they are what was agreed to be quoted, and a broker
+ * reading "2.5% + 1.25% adcom" should see it as written. The sort and the filter use the
+ * server's total instead, so the total is printed beside the words when the two differ; a
+ * bare "3.75%" needs no second figure and gets none.
+ */
+function renderCommission(c: CargoResponse): ReactNode {
+  if (c.commission == null) return '—';
+  const bare = Number(c.commission.replace(/[%\s]/g, ''));
+  if (c.commissionPct == null || bare === c.commissionPct) return c.commission;
+  return (
+    <Space size={4} wrap>
+      {c.commission}
+      <Tooltip title={`Counted as ${c.commissionPct}% — the total the sort and the filter use`}>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          ({c.commissionPct}%)
+        </Typography.Text>
+      </Tooltip>
+    </Space>
+  );
 }
 
 /** "Oceanic Brokers", or "Oceanic Brokers +2" when others sent it too. */
@@ -133,6 +159,9 @@ export default function CargoesPage() {
     for (const k of DATE_FILTERS) {
       next[k] = values[k] ? (values[k] as dayjs.Dayjs).format('YYYY-MM-DD') : undefined;
     }
+    // Unticked is sent as absence, not as `false`: the API's default is the same, and the
+    // query stays as short as the one that never touched the box.
+    next.commissionNotStated = values.commissionNotStated ? true : undefined;
     setFilters(next);
     tc.resetPage();
   };
@@ -190,6 +219,11 @@ export default function CargoesPage() {
         if (c.maxDraft != null) bits.push(`max ${c.maxDraft}m`);
         return bits.length ? bits.join(', ') : '—';
       },
+    },
+    {
+      title: 'Commission',
+      ...sortable('commissionPct'),
+      render: (_, c) => renderCommission(c),
     },
     {
       title: 'Last sent',
@@ -363,6 +397,33 @@ export default function CargoesPage() {
               </Form.Item>
             </Col>
           </Row>
+          <Row gutter={12}>
+            <Col xs={12} md={4}>
+              <Form.Item
+                name="minCommission"
+                label="Commission min"
+                tooltip="The total commission as read from the text: the figure marked ttl or total, else the % figures added up. A cargo with no figure on file is left out unless Not stated is ticked."
+              >
+                <InputNumber style={{ width: '100%' }} min={0} step={0.25} addonAfter="%" />
+              </Form.Item>
+            </Col>
+            <Col xs={12} md={4}>
+              <Form.Item name="maxCommission" label="Commission max">
+                <InputNumber style={{ width: '100%' }} min={0} step={0.25} addonAfter="%" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={4}>
+              {/* A blank label keeps the checkbox level with the two inputs beside it. */}
+              <Form.Item
+                name="commissionNotStated"
+                valuePropName="checked"
+                label=" "
+                tooltip="Adds cargoes with no commission figure on file. On its own, it finds only those."
+              >
+                <Checkbox>Not stated</Checkbox>
+              </Form.Item>
+            </Col>
+          </Row>
         </FilterPanel>
       </Form>
 
@@ -374,7 +435,7 @@ export default function CargoesPage() {
         dataSource={query.data?.content ?? []}
         pagination={tc.pagination(query.data?.totalElements ?? 0)}
         onChange={tc.onChange}
-        scroll={{ x: 1340 }}
+        scroll={{ x: 1460 }}
         mobile={{
           title: (c) => (
             <Space size={4} wrap>
@@ -397,6 +458,7 @@ export default function CargoesPage() {
             c.minDwt != null && { label: 'DWT min', value: c.minDwt.toLocaleString() },
             c.maxDwt != null && { label: 'DWT max', value: c.maxDwt.toLocaleString() },
             c.freightIdea != null && { label: 'Freight', value: c.freightIdea },
+            c.commission != null && { label: 'Commission', value: renderCommission(c) },
           ],
           actions: (c) => matchButton(c) || null,
         }}
@@ -405,6 +467,7 @@ export default function CargoesPage() {
           { field: 'laycanFrom', label: 'Laycan' },
           { field: 'commodity', label: 'Cargo' },
           { field: 'quantity', label: 'Quantity' },
+          { field: 'commissionPct', label: 'Commission' },
           { field: 'loadPlace', label: 'Load' },
           { field: 'dischargePlace', label: 'Discharge' },
           { field: 'statusRank', label: 'Status' },

@@ -41,9 +41,16 @@ public class CargoController {
                     + "sits in, exactly, without widening to nested areas. loadPlace and "
                     + "dischargePlace are text, matched against the port on file, the words the "
                     + "email used and both areas. sentSince reads lastSentAt: the newest arrival "
-                    + "of the cargo, else its received date, else when it was entered. Besides "
+                    + "of the cargo, else its received date, else when it was entered. "
+                    + "minCommission and maxCommission bound the total commission percentage, "
+                    + "inclusive; commissionNotStated=true adds the cargoes that state no figure "
+                    + "to whichever range is given (or alone, with no range). Besides "
                     + "the columns, sort accepts lastSentAt, statusRank (lifecycle order), "
-                    + "loadPlace and dischargePlace.")
+                    + "loadPlace, dischargePlace and commissionPct. commissionPct is the total "
+                    + "figure read from the broker's words: a percentage marked ttl or total "
+                    + "(the largest such figure), else the sum of the percentages written, else "
+                    + "a bare number, else none. Cargoes with no figure sort last in either "
+                    + "direction.")
     public ResponseEntity<PageResponse<CargoResponse>> search(
             @RequestParam(required = false) String commodity,
             @RequestParam(required = false) List<String> status,
@@ -59,6 +66,9 @@ public class CargoController {
             @RequestParam(required = false) LocalDate sentSince,
             @RequestParam(required = false) Long companyId,
             @RequestParam(required = false) SourceKind sourceKind,
+            @RequestParam(required = false) BigDecimal minCommission,
+            @RequestParam(required = false) BigDecimal maxCommission,
+            @RequestParam(required = false) Boolean commissionNotStated,
             @PageableDefault(size = 20, sort = "id", direction = org.springframework.data.domain.Sort.Direction.DESC)
             Pageable pageable) {
 
@@ -66,7 +76,8 @@ public class CargoController {
                 : status.stream().map(CargoService::parseStatus).toList();
         CargoFilter filter = new CargoFilter(commodity, statuses, loadAreaId, dischargeAreaId,
                 loadPortId, loadPlace, dischargePlace, laycanFrom, laycanTo, minQuantity,
-                maxQuantity, sentSince, companyId, sourceKind);
+                maxQuantity, sentSince, companyId, sourceKind,
+                minCommission, maxCommission, commissionNotStated);
         return ResponseEntity.ok(cargoService.search(filter, pageable));
     }
 
