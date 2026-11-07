@@ -948,6 +948,91 @@ class IntakeServiceTest {
         verify(exNames, never()).save(any());
     }
 
+    // ------------------------------------------- what a manual link teaches the resolver
+
+    /**
+     * Linking a hull by hand is what stops the same list asking again next week.
+     *
+     * <p>A NEW_VESSEL item exists precisely because nothing here matched: the email names a
+     * hull under a name no row carries, or under one two rows carry. Answering it points the
+     * reading at a ship, and the answer has to be written somewhere a later parse will read,
+     * or the identical list raises the identical question every time it arrives.
+     *
+     * <p>Two things are written, and they answer different questions. The former name is a
+     * fact about the <em>ship</em> and is what {@code findByExactName} finds for anybody; the
+     * alias is a fact about one <em>firm's vocabulary</em> and is what settles a name two
+     * hulls share, which no former name can. See {@code IntakeVesselAlias}.
+     */
+    @Test
+    void aManuallyLinkedHullIsRecognisedFromThatFirmAfterwards() {
+        when(vessels.findById(42L)).thenReturn(java.util.Optional.of(pacificDawn));
+        IntakeItem item = namedNewVesselItem(600L, "ALPHA");
+        when(items.findWithEmailById(600L)).thenReturn(java.util.Optional.of(item));
+        IntakeItemSource arrival = new IntakeItemSource();
+        arrival.setIntakeItem(item);
+        arrival.setParsedEmail(parsed);
+        arrival.setReportedByCompany(interscan);
+        when(itemSources.forItem(600L)).thenReturn(List.of(arrival));
+
+        service.resolve(600L, IntakeService.Action.ALTERNATIVE, null, null, 42L, null, "me");
+
+        ArgumentCaptor<com.chartering.model.IntakeVesselAlias> saved =
+                ArgumentCaptor.forClass(com.chartering.model.IntakeVesselAlias.class);
+        verify(aliases).save(saved.capture());
+        assertThat(saved.getValue().getVesselId()).isEqualTo(42L);
+        assertThat(saved.getValue().getNameKey()).isEqualTo("alpha");
+        assertThat(saved.getValue().getReportedByCompany()).isSameAs(interscan);
+        assertThat(saved.getValue().getSource())
+                .isEqualTo(com.chartering.model.IntakeVesselAlias.LINKED);
+        // And the name itself, which any firm's list can now find her by.
+        verify(exNames).save(argThat(e -> e.getName().equals("ALPHA")));
+    }
+
+    /**
+     * One firm's answer is replaced rather than added to.
+     *
+     * <p>An owner sells a ship and takes the name to the next one. The firm's later statement
+     * is the one to act on, and a second row would put the resolver back where it started —
+     * two rows answering to one name, which is the thing it refuses to choose between.
+     */
+    @Test
+    void replacesThatFirmsEarlierAnswerRatherThanAddingToIt() {
+        when(vessels.findById(42L)).thenReturn(java.util.Optional.of(pacificDawn));
+        com.chartering.model.IntakeVesselAlias earlier = new com.chartering.model.IntakeVesselAlias();
+        earlier.setId(31L);
+        earlier.setVesselId(4499L);
+        earlier.setName("ALPHA");
+        earlier.setNameKey("alpha");
+        when(aliases.find(3L, "alpha")).thenReturn(java.util.Optional.of(earlier));
+
+        IntakeItem item = namedNewVesselItem(601L, "ALPHA");
+        when(items.findWithEmailById(601L)).thenReturn(java.util.Optional.of(item));
+        IntakeItemSource arrival = new IntakeItemSource();
+        arrival.setIntakeItem(item);
+        arrival.setParsedEmail(parsed);
+        arrival.setReportedByCompany(interscan);
+        when(itemSources.forItem(601L)).thenReturn(List.of(arrival));
+
+        service.resolve(601L, IntakeService.Action.ALTERNATIVE, null, null, 42L, null, "me");
+
+        verify(aliases).save(argThat(a -> a.getId() != null && a.getId().equals(31L)
+                && a.getVesselId().equals(42L)));
+    }
+
+    /** A NEW_VESSEL item as the sweep leaves one, naming a hull under a name nothing carries. */
+    private IntakeItem namedNewVesselItem(Long id, String name) {
+        IntakeItem item = new IntakeItem();
+        item.setId(id);
+        item.setKind(IntakeItemKind.NEW_VESSEL);
+        item.setStatus(IntakeItemStatus.PENDING);
+        item.setParsedEmail(parsed);
+        item.setSubjectLabel(name);
+        item.setPayload("""
+                {"vessel":{"name":"%s","dwt":32000,"openArea":"MARMARA","openText":"SPOT"},
+                 "searchedBy":"the name %s","suggestions":[]}""".formatted(name, name));
+        return item;
+    }
+
     @Test
     void ignoresAVesselTheModelReturnedWithNoName() {
         IntakeService.ApplyOutcome outcome = service.apply(parsed,
