@@ -126,8 +126,8 @@ Three things bite here:
   `V33__add_personal_circulation.sql` and `V34__add_feed_intake_subscriptions.sql` and
   `V35__add_desk_aliases.sql` and `V36__enable_row_level_security.sql` and
   `V37__add_personal_brevo_keys.sql` and `V38__add_analysis_sample_embeddings.sql` and
-  `V39__drop_stored_cloud_parser_key.sql` exist; the next one is V40. (`feature/ask_the_desk`
-  also carries a V39 and must be renumbered before it merges.)
+  `V39__drop_stored_cloud_parser_key.sql` and `V40__add_search_chunks.sql` exist; the next
+  one is V41.
 - **Since V36, a migration that reads or writes a desk's rows starts with
   `SET LOCAL app.rls_bypass = 'on';`.** Row-level security is forced on every desk table and
   migrations run as the role it binds; without the line such a migration sees no rows and
@@ -608,6 +608,58 @@ from source into its Alpine image rather than using the Debian `pgvector/pgvecto
 directory initialised under musl collations would be opened under glibc, which can misorder indexes
 without an error. The integration tests use `pgvector/pgvector:pg16` and create the extension as the
 superuser, as they already do for `pg_trgm`, because the application role cannot.
+
+### Ask the desk: questions answered from the desk's own text
+
+Backend only for now; the tab is a later step. `search_chunks` (V40) holds the desk's mail, the
+posts of boards it reads into Intake, its cargoes and its vessel positions, each cut into chunks of
+at most 1,500 characters. Every chunk carries its document's header (subject, sender, date; the
+board; the vessel) so it still says what it is about when found alone. A cargo or position is one
+chunk, rendered from its columns, because a split would answer a question about it from half of it.
+Mail in the Junk or Trash folder (by IMAP SPECIAL-USE, never by name) is not indexed. Documents are
+embedded with nomic's `search_document: ` prefix and questions with `search_query: `; it uses the
+embedding server and model name of the corpus, but its own table, so the corpus index is untouched.
+
+**Found by ids, read by batch.** Mail and posts never change once stored, so a source needs indexing
+exactly when it has no chunk for the model. A cargo or position also needs it when its `updated_at` has
+moved past the `source_updated_at` its chunks were made from. Both tests are id queries in SQL, and the
+text is read only for the ids they return. Comparing text to decide what changed would send the desk's
+whole mailbox out on every pass (CLAUDE.md, "Database transfer"). The timer runs every ten minutes per
+desk and does the prune and the id check, and indexes only when something is pending.
+
+**Pruned before indexing.** A deleted cargo, a message since moved to Junk, or a post from a board the
+desk no longer reads loses its chunks on the next pass. Those are local deletes and cost no transfer.
+
+**Hybrid retrieval, because each half fails alone.** The vector side finds a passage that says the same
+thing in other words; the keyword side (`websearch_to_tsquery('simple')`) finds the exact name, port or
+figure, which a vector cannot tell apart from a similar one. Each side ranks 30 candidates, the lists are
+fused by reciprocal rank fusion (k = 60, `SearchFusion`), at most two passages come from one record, and
+the top eight are kept. Only those eight are read as text. Ranks are fused rather than scores, because a
+cosine distance and `ts_rank_cd` are not on one scale.
+
+**Mail visibility is the Mailbox rule, written in SQL.** A mail chunk is visible to its owner, and to
+colleagues only where the message is the source of something the desk shares: a cargo, a position, an
+Intake item or a corpus sample. That is `MailMessageRepository.isSharedSource`, restated as
+`AskRetriever.VISIBLE`. The two must change together. Cargoes, positions and posts are the whole desk's.
+
+**The answer is written by the base model, not the finetune.** `AskModelClient` is a hand-written call
+to the parser's model server (`ParserSettings.endpoint()`), for the same reason `EmailParserClient` is:
+Spring AI cannot send the `lora` field. The server holds the parser finetune as a LoRA adapter that is on
+by default, so the request carries `"lora": [{"id": 0, "scale": 0}]`, which asks for the base model.
+Without that field the finetune answers, in the extraction format, which is not an answer. Temperature
+0.2, `max_tokens` 700, no `response_format`. The sources are numbered, the answer cites them as `[n]`, and
+the system prompt says the sources are data, so an email telling the model to ignore its rules is quoted,
+not obeyed.
+
+**Refusals, each with its reason.** 404 unless `PARSER_ENABLED` and `EMBEDDING_URL` are both set;
+`GET /api/v1/ask/status` always answers. 409 while the parser sweep is running, because the server's
+slots share one KV cache (2026-10-10). 503 when the embedding server does not answer, when the model does
+not, or when the server has no adapter 0 to switch (the message names
+`serve/docker-compose.llamacpp.lora.yml`). A question with no passage on the desk is answered without the
+model. Endpoints: `POST /api/v1/ask`, `GET /api/v1/ask/status`, `POST` and `GET /api/v1/ask/index`.
+
+Every chunk is row-level secured as the other desk tables are (V36 pattern), so a desk never reads
+another's text even through plain SQL.
 
 ### Cargoes, open fleet, and the match between them
 

@@ -19,6 +19,7 @@ import {
   ExperimentOutlined,
   RobotOutlined,
   ReadOutlined,
+  MessageOutlined,
   KeyOutlined,
   SafetyOutlined,
   ApartmentOutlined,
@@ -29,6 +30,7 @@ import { useCurrentList } from '../circulations/store';
 import { useMailboxStatus } from '../mailbox/store';
 import { useIntakeStatus } from '../intake/store';
 import { useCapabilities, useIntakeOn } from '../capabilities/store';
+import { useAskStatus } from '../ask/store';
 import { clearToken } from '../auth/store';
 import { useSession } from '../auth/session';
 import { roleAtLeast } from '../api/auth';
@@ -40,7 +42,7 @@ const { Sider, Header, Content } = Layout;
 // No '/contacts': contacts live inside People now, grouped under the person who owns them.
 const KEYS = [
   '/', '/cargoes', '/open-fleet', '/vessels', '/companies', '/people',
-  '/circulation-lists', '/circulars', '/mailbox', '/feed', '/intake', '/analysis', '/history',
+  '/circulation-lists', '/circulars', '/mailbox', '/feed', '/ask', '/intake', '/analysis', '/history',
   '/settings', '/admin/users', '/admin/tenants',
 ];
 
@@ -73,6 +75,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   const caps = useCapabilities().data;
   const intakeOn = useIntakeOn();
   const intake = useIntakeStatus({ enabled: intakeOn });
+  const ask = useAskStatus();
   const isMobile = useIsMobile();
   const [navOpen, setNavOpen] = useState(false);
   const selected = KEYS.includes(location.pathname) ? location.pathname : '/';
@@ -153,6 +156,12 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       : []),
     // Switched off for now (FEED_ENABLED). The boards Intake reads are managed on the Intake tab.
     ...(caps?.feed ? [{ key: '/feed', icon: <ReadOutlined />, label: 'Feed' }] : []),
+    // Local deployments only, like Intake and Analysis: its answers need the local model and the
+    // embedding server, and neither runs on the hosted instance. Placed after Feed because the
+    // desk's text it searches is what Feed and Intake collect. On a phone it sits in the More drawer.
+    ...(ask.data?.enabled
+      ? [{ key: '/ask', icon: <MessageOutlined />, label: 'Ask the desk' }]
+      : []),
     // Last in the list, and not in the bottom bar on a phone: the change log is where you
     // go when something is already wrong, not somewhere work gets done. It sits above
     // Settings because it is about the data rather than about the application.
