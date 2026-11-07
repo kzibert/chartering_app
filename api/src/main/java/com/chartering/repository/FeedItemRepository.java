@@ -41,8 +41,8 @@ public interface FeedItemRepository
     List<FeedItem> findForSummary(@Param("since") LocalDateTime since);
 
     /**
-     * The intake sweep's queue: posts off the boards marked {@code into_intake} that nobody
-     * has read yet, newest first.
+     * The intake sweep's queue: posts off the boards the desk reads into Intake
+     * ({@code feed_intake_subscriptions}) that nobody has read yet, newest first.
      *
      * <p>{@code parsed_emails} is the dedupe here exactly as it is for mail — an item with a
      * row of any status is read, and the absence of one is the whole of "not read". So a

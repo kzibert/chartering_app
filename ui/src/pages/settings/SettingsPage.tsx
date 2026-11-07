@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { useCapabilities } from '../../capabilities/store';
 import { useSendingToday } from '../../api/hooks';
 import {
   Alert,
@@ -132,6 +133,9 @@ export default function SettingsPage() {
   });
 
   const usingBrevo = settings?.provider === 'BREVO';
+  // A host that cannot open SMTP (SMTP_BLOCKED, Render): the server sends through Brevo whatever
+  // the desk's row says and refuses SMTP, so the box is shown ticked and cannot be unticked.
+  const smtpBlocked = useCapabilities().data?.smtpBlocked === true;
   // The From and SMTP fields are edited here only by the server mailbox's owner; anybody
   // else's are their own mailbox's or Brevo sender's, shown read-only with where they come from.
   const identityHere = settings?.identitySource === 'SERVER';
@@ -175,11 +179,20 @@ export default function SettingsPage() {
       >
         <Checkbox
           checked={!!usingBrevo}
-          disabled={setProvider.isPending || query.isLoading}
+          disabled={smtpBlocked || setProvider.isPending || query.isLoading}
           onChange={(e) => setProvider.mutate(e.target.checked)}
         >
           Use Brevo for circs
         </Checkbox>
+        {smtpBlocked && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginTop: 12 }}
+            message="This server cannot send over SMTP, so circulars and replies go out through Brevo here"
+            description="The choice above is kept for the office deployment, which shares these settings."
+          />
+        )}
         <Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>
           {usingBrevo ? (
             <>

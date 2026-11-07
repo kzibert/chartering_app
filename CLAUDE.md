@@ -36,7 +36,7 @@ touching an unrelated key in the same file turned sending back off, with the mai
 syncing (that is IMAP, and a different switch) so that nothing looked wrong until somebody
 tried to answer a broker. Keys the file does not mention are left alone, which is why the
 credentials survived. So: a value that is a fact about the repository (`ANALYSIS_ENABLED`,
-`MAIL_REPLY_PROVIDER`) is pinned deliberately; a value that is a fact about one deployment
+`SMTP_BLOCKED`) is pinned deliberately; a value that is a fact about one deployment
 gets `sync: false`, which names the key and leaves the dashboard owning it.
 
 ## Commands
@@ -59,6 +59,9 @@ cd ui && npm install && npm run dev
 npx tsc --noEmit                             # typecheck alone (npm run build does this first)
 ```
 
+`.github/workflows/ci.yml` runs `mvn verify` and `npm run build` on every pull request and every
+push to `main`; it deploys nothing and needs no secrets.
+
 `mvn spring-boot:run` does **not** read `.env` — that file belongs to compose. Without
 `AUTH_PASSWORD` in the environment every request comes back 401.
 
@@ -76,7 +79,8 @@ hosted Postgres. A sibling project `../chartering-db` provides a local one on po
 working offline and for trying a migration somewhere harmless. Nothing in this project holds
 state, which is why compose has no `db` service, no volume, and no `down -v`.
 
-**Database transfer.** Neon's free plan allows 5 GB a month of data *sent from* the database, and
+**Database transfer.** The hosted database is Supabase since 2026-10-19 (it was Neon, which is
+where this was learned). Neon's free plan allows 5 GB a month of data *sent from* the database, and
 it stops answering everyone — Render included — once that is spent. It was, on 2026-10-10, by
 a timer: the intake reconcile pass loaded every company and every phone for each unattributed
 board post, 6.6 MB every 150 seconds from the office api. So a timer that runs whether or not
@@ -121,8 +125,9 @@ Three things bite here:
   `V31__scope_data_to_tenants.sql` and `V32__add_personal_mailboxes.sql` and
   `V33__add_personal_circulation.sql` and `V34__add_feed_intake_subscriptions.sql` and
   `V35__add_desk_aliases.sql` and `V36__enable_row_level_security.sql` and
-  `V37__add_personal_brevo_keys.sql` and `V38__add_analysis_sample_embeddings.sql` exist;
-  the next one is V39.
+  `V37__add_personal_brevo_keys.sql` and `V38__add_analysis_sample_embeddings.sql` and
+  `V39__drop_stored_cloud_parser_key.sql` exist; the next one is V40. (`feature/ask_the_desk`
+  also carries a V39 and must be renumbered before it merges.)
 - **Since V36, a migration that reads or writes a desk's rows starts with
   `SET LOCAL app.rls_bypass = 'on';`.** Row-level security is forced on every desk table and
   migrations run as the role it binds; without the line such a migration sees no rows and
@@ -219,7 +224,7 @@ filters), and the query cache is cleared whenever the logged-in person changes, 
 on a shared browser never renders the last one's state. **Feed sources are installation-wide** — fetched once for everybody, added, edited and
 removed by a platform administrator — but **which boards a desk reads into Intake is the
 desk's** (`feed_intake_subscriptions`, V34, replacing `feed_sources.into_intake`), switched by
-its administrators on the Feed tab. Every query asking "boards read into Intake" does so
+its administrators on the Intake tab's Sources card. Every query asking "boards read into Intake" does so
 through a subquery on the subscription, which the tenant filter scopes to the desk on the
 thread; a post is parsed once per desk that reads it.
 
@@ -404,12 +409,15 @@ Sent folder.
   address the correspondent wrote to and thread with what they sent; Brevo is bulk
   infrastructure with its own envelope and reputation. The circulars setting has no bearing
   on it in either direction.
-- **`MAIL_REPLY_PROVIDER=BREVO` is the one exception, and it is a deployment fact, not a
+- **`SMTP_BLOCKED=true` is the one exception, and it is a deployment fact, not a
   preference.** Some hosts do not permit the mailbox flow at all: Render blocks outbound
   ports 25, 465 and 587 on free instances, and the symptom is not a refusal but silence —
-  IMAP 993 is untouched, so the mailbox syncs normally and only replying fails, with
-  "Connect timed out" after fifteen seconds. There the choice is Brevo or no reply, so the
-  variable exists and `render.yaml` sets it. It is **not** a Settings-tab option and must
+  IMAP 993 is untouched, so the mailbox syncs normally and only sending fails, with
+  "Connect timed out" after fifteen seconds. There the choice is Brevo or nothing, so the
+  variable exists and `render.yaml` sets it. It covers circulars too (`SettingsService.provider()`
+  answers BREVO and refuses a switch to SMTP): the circulars provider is a desk's row in the
+  database the office shares, so it used to send Render to SMTP whenever the office sent that way.
+  It replaced `MAIL_REPLY_PROVIDER`, which covered replies only. It is **not** a Settings-tab option and must
   not become one: settings live in `app_settings`, and the hosted instance and the office
   one point at the same database while needing opposite answers. Everything below the
   transport is identical — same composition, footer, merge, quoted original, same
@@ -429,7 +437,7 @@ Sent folder.
   company drawer lists the firm's email addresses — company-wide desk addresses first, then
   people — and a click writes to one while ticks pick several, the first as To and the rest
   on copy. It sends through `POST /mailbox/compose`, which is the reply path less the thread:
-  the same route (the mailbox, or Brevo under `MAIL_REPLY_PROVIDER=BREVO`), the same From,
+  the same route (the mailbox, or Brevo under `SMTP_BLOCKED=true`), the same From,
   footer library starting on the reply default, merge (against the To contact) and row in
   `mail_replies` — with no `mail_message_id` and the copies in `cc_addresses` (V29). The
   From line, the not-configured warning and the footer picker are `pages/mailbox/SendRoute`,
@@ -466,11 +474,11 @@ same Sent folder (Zoho does; not every provider does), so adding them would doub
 an amount only the provider knows. The Sent-folder figure is also only as fresh as the last
 poll, which is why this app's own replies are counted separately from `mail_replies` as
 well — exact and immediate, and inside the folder figure once it syncs. Under
-`MAIL_REPLY_PROVIDER=BREVO` it never joins that figure at all, because the reply does
+`SMTP_BLOCKED=true` it never joins that figure at all, because the reply does
 not pass through the mailbox: there the `mail_replies` count is the whole record, which
 is the clearest reason the two are reported side by side rather than reconciled.
 
-### Analysis: mail kept as training data (local deployments only)
+### Analysis: mail kept as training data (both deployments)
 
 The Analysis tab collects incoming mail as finetuning examples for a model that reads cargo
 offers and vessel opening positions. Nothing here calls a model — it gathers the pairs one
@@ -595,7 +603,7 @@ the desk asking, on one worker thread for the installation, and stops at the fir
 error with what it has written kept. The same desk's vectors from other models are deleted only after
 a run that reached the end, so a run that died halfway never leaves retrieval with nothing to compare.
 
-**pgvector is required now.** Neon has it. The local database in `../chartering-db` builds pgvector
+**pgvector is required now.** Supabase has it, as Neon did. The local database in `../chartering-db` builds pgvector
 from source into its Alpine image rather than using the Debian `pgvector/pgvector` image: a data
 directory initialised under musl collations would be opened under glibc, which can misorder indexes
 without an error. The integration tests use `pgvector/pgvector:pg16` and create the extension as the
@@ -938,9 +946,10 @@ Cargoes — so Match has both sides to work with without anybody typing a circul
 **Mail is not the only door.** ship.gr's Open Cargoes and Open Ships boards are circulars the
 same firms paste by hand — "25,000 MT +/-10% MOLCO Wheat, St Petersburg / Durres", signed with
 a full style — so they are read by the same model on the same corpus and land in the same
-places. The Feed tab already fetched those pages to summarise them, so a source is *marked*
-rather than duplicated (`feed_sources.into_intake`) and the Intake tab's Sources card lists the
-marked ones. Everything downstream works on an `Arrival`: a message or a post, with the four
+places. The Feed tab already fetched those pages to summarise them, so a source is *subscribed*
+rather than duplicated (`feed_intake_subscriptions`, per desk) and the Intake tab's
+Sources card lists them — and, for a desk administrator, every board with the switch beside it,
+since the Feed tab that used to hold the switch is off. Everything downstream works on an `Arrival`: a message or a post, with the four
 questions the rest of the code asks of one — who told us, when, what to file it against, what to
 call the change set. What differs is only where "who told us" comes from. Out of the mail it is
 the envelope, which the sync already matched against the contacts table and which beats any
@@ -962,10 +971,11 @@ lasted.
 
 **The model is not in this application and not in this repository.** It is an HTTP endpoint:
 the sibling `chartering-ml` project serving a finetuned Qwen3-4B through llama.cpp behind a
-JSON schema (`make serve-docker`, port 8090). `PARSER_ENABLED` is the switch, true in compose
-and in `render.yaml`. That instance has no GPU and no route to one, so it reads with the cloud
-model instead (`PARSER_PROVIDER=CLOUD`, below). Off, the tab is absent and every
-endpoint answers 404 except `GET /intake/status`, which the UI asks first.
+JSON schema (`make serve-docker`, port 8090). **Two switches, two routes**: `PARSER_ENABLED` is
+the local model (true in compose, false in `render.yaml` — that instance has no GPU and no route
+to one), and `PARSER_CLOUD_ENABLED` is a hosted model read with each person's own key (true in
+both). With neither, the tab is absent and every endpoint answers 404; `GET /capabilities`
+(configuration only) is what the UI asks first.
 
 **Whether the feature exists is a deployment fact; which server answers it is not.**
 `PARSER_URL` and `PARSER_MODEL` are the defaults behind a runtime setting, and
@@ -976,9 +986,9 @@ changes inside a working day. `ModelEndpoint` holds the rule and the URL check; 
 equal to the configured one is **deleted rather than kept**, the way an unedited feed prompt has
 no row, so `.env` stays the baseline and "customised" means something. The timeouts stay in
 `ParserProperties`, because how long to wait is a fact about a deployment. Both instances share
-`app_settings` and that is safe here for the reason it is not for `MAIL_REPLY_PROVIDER`: the
-hosted instance is `PARSER_PROVIDER=CLOUD` with `FEED_ANALYSIS_ENABLED` false, so it never reads
-the local address at all.
+`app_settings` and that is safe here for the reason it is not for `SMTP_BLOCKED`: the hosted
+instance has `PARSER_ENABLED` and `FEED_ENABLED` false, so it never reads the local address at
+all.
 
 `EmailParserClient` sends `AnalysisAnnotationTemplates.SYSTEM_PROMPT` — the constant, not a
 copy — the same Date/Subject/blank/body user turn `AnalysisExportService` builds, and
@@ -987,34 +997,37 @@ under; a prompt or a layout that drifts from the corpus loses accuracy while eve
 passes. The schema is a copy of chartering-ml's `serve/schema.json`; regenerate it there
 (`make schema`) and copy it back if the templates grow a field.
 
-**The model can also be a hosted one, and which is a deployment fact (`PARSER_PROVIDER`).**
-`LOCAL` is everything above. `CLOUD` sends the same system prompt, user turn and few-shot turns
-to an OpenAI-compatible chat API (Groq by default) with a Bearer key. It is an environment
-variable rather than a setting for `MAIL_REPLY_PROVIDER`'s reason: the office and Render share
-one database and need opposite answers. What the cloud model is *called* is the installation's
-and lives on the Settings tab (`ParserSettings.cloudEndpoint`, `parser.cloudUrl`/`cloudModel`,
-platform keys). The key is in `parser.cloudApiKey`, AES-GCM under `CREDENTIALS_KEY`, so it
-decrypts only where that key matches. It is never returned, only a four-character hint, and
-Reset keeps it. Two things differ in the request, both because a general model is not the
-finetune. The schema goes into the system prompt as text, and the format is `json_object`
-rather than `json_schema`, which only some hosted models accept. The answer ceiling is
-`PARSER_CLOUD_MAX_TOKENS` (4,096), because a free tier counts the requested ceiling against
-its tokens a minute before anything is written. A 429 with a `retry-after` up to a minute is
-waited out. A longer one, or a refused key, stops the run (`ParserUnavailableException`). A
+**The model can also be a hosted one, read with the caller's own key (`ParserRoute`).** The
+key is the person's and lives in their browser (`ui/src/parser/route.ts`, under
+`userStorageKey`), typed on Settings › Your parser. It is sent as `X-Parser-Provider: CLOUD` and
+`X-Parser-Key` on `/api/v1/intake/**` only; `ParserRouteFilter` binds it to the request thread as
+a `ParserRoute`, `ParserSweepService` carries it into a run that request started
+(`ParserRoute.carry`), and nothing stores or logs it — V39 deleted the installation key
+`app_settings` used to hold. A thread with nothing bound is `ParserRoute.LOCAL`, so **timers
+always read with the local model** and run only where there is one (`ParserAvailability.runsTimers`
+is `PARSER_ENABLED`). Where both routes exist (the office) the person picks one; where only the
+cloud does (Render) saving a key is what brings the Intake tab in. The cloud route sends the same
+system prompt, user turn and few-shot turns to an OpenAI-compatible chat API (Groq by default)
+with the key as a Bearer token. What the cloud model is *called* is the installation's and lives
+on the Settings tab (`ParserSettings.cloudEndpoint`, `parser.cloudUrl`/`cloudModel`, platform
+keys). Two things differ in the request, both because a general model is not the finetune. The
+schema goes into the system prompt as text, and the format is `json_object` rather than
+`json_schema`, which only some hosted models accept. The answer ceiling is
+`PARSER_CLOUD_MAX_TOKENS` (4,096), because a free tier counts the requested ceiling against its
+tokens a minute before anything is written. A 429 with a `retry-after` up to a minute is waited
+out. A longer one, or a refused key, stops the run (`ParserUnavailableException`). A
 400/413/422 fails that one email only. The local request is byte-identical to before, and
 `EmailParserClientRequestTest` pins it.
 
-**`CLOUD` runs no timers and is an administrator's** (`ParserAvailability`). The tokens are
-billed against somebody's key, and the office instance already runs the timed passes on the
-same rows. So there is no sweep tick, no reconcile pass and no board fetch for Intake.
-`isAvailable()` is false for anyone below `TENANT_ADMIN`, who gets `enabled: false` on status
-and 404 everywhere else, the "not part of this deployment" answer. Reading happens when asked.
-*Parse now* reads one batch. *Parse everything* (`POST /intake/sweep?all=true`) reads batches
-until one reads nothing, the model stops answering, Stop is pressed
-(`POST /intake/sweep/stop`) or 5,000 messages have been read. *Read into Intake* on the Mailbox
-tab (`POST /intake/parse`, at most 200 ids) reads the picked messages, ignoring the lookback.
-It skips those already parsed or skipped and re-reads failed and ignored ones. These modes
-exist under `LOCAL` too. Render pins `PARSER_ENABLED=true` and `PARSER_PROVIDER=CLOUD`.
+**Anybody holding a key may read with the cloud** (`ParserAvailability`). It used to be
+administrators only, because the key was the desk's and billed to whoever paid for it; now what is
+spent is the spender's own. Reading happens when asked. *Parse now* reads one batch. *Parse
+everything* (`POST /intake/sweep?all=true`) reads batches until one reads nothing, the model stops
+answering, Stop is pressed (`POST /intake/sweep/stop`) or 5,000 messages have been read. *Read
+into Intake* on the Mailbox tab (`POST /intake/parse`, at most 200 ids) reads the picked
+messages, ignoring the lookback. It skips those already parsed or skipped and re-reads failed and
+ignored ones. These modes exist on the local route too. Every Intake endpoint that writes checks
+availability before it writes, not only the read that ends it.
 *Add to waiting list* (`POST /intake/queue`) reads nothing now: it writes a `QUEUED` row for each
 picked message, and the sweep takes those first on its next pass whatever their age, because a
 person chose them. With `reread` an already-read message is queued again and its new reading replaces the old one on the same parse row. Leave out turns a queued row into `IGNORED`.
@@ -1116,7 +1129,7 @@ So three things stop and become `intake_items`:
   Needs review count, with minor rows starting unticked and their reason printed beside them.
   The flag is recomputed when another arrival merges in and by a timed pass every half hour
   (`IntakeService.reweighPending`, from `IntakeReconcileRunner`), because the record moves on
-  its own. Not every tick: the pass reads in proportion to the queue, and on Neon that read is
+  its own. Not every tick: the pass reads in proportion to the queue, and on a metered database that read is
   billed as network transfer (see "Database transfer" below).
 - **`COMPANY_DETAILS`** — the firm that signed it, against the firm on file. Every circular
   ends in a full style, and it is the one part of the mail that is *about the sender* rather
@@ -1364,23 +1377,25 @@ Hellenic Shipping News is not one because it answers 403 to anything but a brows
 robots.txt says `ai-train=no, use=reference`: the reader names itself (`FEED_USER_AGENT`) and a
 source that refuses that is dropped, not worked around.
 
-- **A source can be read twice over, and is fetched once.** `feed_sources.into_intake` marks a
-  board whose posts the *parser* reads as circulars — ship.gr's two pages are exactly that, and
+- **A source can be read twice over, and is fetched once.** A desk's `feed_intake_subscriptions`
+  row marks a board whose posts the *parser* reads as circulars — ship.gr's two pages are exactly that, and
   a trade-press feed is not, since running the extraction model over a news article spends GPU
   to produce nothing. It is separate from `enabled`, which is whether the page is fetched at
   all. One fetch, one stored copy of each post, two readers of it: a second source at the same
   address would read somebody else's server twice for the same bytes. It also means the fetch
-  timer runs when `FEED_ANALYSIS_ENABLED` is off but the parser's timers run
-  (`ParserAvailability.runsTimers`: enabled and `LOCAL`) and a source is marked — otherwise the
-  Intake queue would be permanently empty with nothing on screen saying why. On the hosted
-  instance the feed switch is false and the parser is `CLOUD`, so neither half holds there. Deleting a source that still has unanswered Intake questions is refused, because the
+  timer runs when `FEED_ENABLED` is off but the parser's timers run
+  (`ParserAvailability.runsTimers`: a local model) and a board is subscribed — otherwise the
+  Intake queue would be permanently empty with nothing on screen saying why — and then it reads
+  **only the subscribed boards**, never every enabled Telegram channel and RSS feed. On the hosted
+  instance both switches are false, so it fetches nothing. Deleting a source that still has unanswered Intake questions is refused, because the
   delete cascades through its posts to the parse records and the items behind them; disabling
   is the reversible way to stop a board.
-- **The tab is on every deployment; only the analysis is switched.** Sources, topics, the prompts
-  and summaries are rows in the shared database, so the hosted instance reads and edits them.
-  `FEED_ANALYSIS_ENABLED` covers fetching, summarising and `detect-context` — pinned false in
-  `render.yaml`, both because the model is in the office and because a second fetcher would read
-  somebody else's server twice. Off, those endpoints 404 and the page omits their buttons.
+- **The Feed is switched off for now, on both deployments (`FEED_ENABLED`, which replaced
+  `FEED_ANALYSIS_ENABLED`).** Off, the tab and its settings card are gone and its own endpoints —
+  items, topics, summaries, fetching every source, `detect-context` — answer 404. What Intake and
+  Analysis read stays: the source list and its subscriptions (switched on the Intake tab), a stored
+  post by id (`GET /feed/items/{id}`, "the original post"), the parser keys and the settings, which
+  hold the board fetch interval (shown on the parser's card meanwhile).
 - **Readers are by kind, not by site.** `RssReader` (RSS and Atom through Jsoup's XML parser — no
   feed library) and `TelegramReader` serve every feed and channel; `WEBSITE` hands the page to the
   `WebsiteParser` its `parser_key` names (`ship-gr-board`, `shipoffer`). A new site is one class. A
