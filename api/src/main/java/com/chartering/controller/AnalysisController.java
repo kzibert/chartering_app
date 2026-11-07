@@ -220,12 +220,17 @@ public class AnalysisController {
                     + "the one a real caller would send), the email as the user turn, and the "
                     + "annotation as the assistant turn. Only READY samples are written, in "
                     + "id order, so two exports of the same corpus are the same file.")
-    public ResponseEntity<String> exportJsonl() {
-        String body = export.toJsonl();
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION,
-                        "attachment; filename=\"" + export.filename() + "\"")
-                .contentType(MediaType.parseMediaType("application/x-ndjson"))
-                .body(body);
+    public void exportJsonl(jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
+        // Written straight to the response on the request thread, and so not a ResponseEntity:
+        // the file is streamed page by page (AnalysisExportService.writeJsonl) rather than held
+        // whole, and a StreamingResponseBody would run on another thread, outside the request's
+        // desk binding and under the async timeout. Headers go first; the status is 200 because
+        // nothing has been written that could fail before it.
+        response.setStatus(HttpStatus.OK.value());
+        response.setHeader(HttpHeaders.CONTENT_DISPOSITION,
+                "attachment; filename=\"" + export.filename() + "\"");
+        response.setContentType("application/x-ndjson");
+        response.setCharacterEncoding("UTF-8");
+        export.writeJsonl(response.getOutputStream());
     }
 }

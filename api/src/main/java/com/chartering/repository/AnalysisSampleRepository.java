@@ -70,6 +70,13 @@ public interface AnalysisSampleRepository
      */
     List<AnalysisSample> findByStatusOrderByIdAsc(AnalysisStatus status);
 
+    /**
+     * One page of the export: the next rows after {@code afterId}, in the same id order, so the
+     * pages concatenate into exactly the file the unpaged read produced. Keyset rather than
+     * offset, because an offset page re-reads every row before it.
+     */
+    List<AnalysisSample> findTop200ByStatusAndIdGreaterThanOrderByIdAsc(AnalysisStatus status, Long afterId);
+
     long countByStatus(AnalysisStatus status);
 
     /**

@@ -20,9 +20,10 @@ import java.net.URI;
  * this instance is pointed somewhere unusual.
  *
  * <p><b>Both instances share one {@code app_settings} table, and that is safe here in a way it is
- * not for {@code MAIL_REPLY_PROVIDER}.</b> The hosted deployment has {@code PARSER_ENABLED} and
- * {@code FEED_ANALYSIS_ENABLED} false, so it never reads this: there is no model call to point
- * anywhere. The address only matters where the feature is switched on, which is one machine.
+ * not for {@code SMTP_BLOCKED}.</b> The hosted deployment has {@code PARSER_ENABLED} and
+ * {@code FEED_ENABLED} false, so it never reads the local addresses: its only model call is the
+ * cloud one, whose address is the same answer on both machines. The local address only matters
+ * where the local model is switched on, which is one machine.
  *
  * @param url             the chat-completions endpoint in force
  * @param model           the model name to send, or blank to send none

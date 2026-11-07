@@ -9,7 +9,7 @@ import java.time.OffsetDateTime;
 
 /**
  * One person's own Brevo account: the API key their circulars (and, under
- * {@code MAIL_REPLY_PROVIDER=BREVO}, their replies) go out through, and the verified sender
+ * {@code SMTP_BLOCKED=true}, their replies) go out through, and the verified sender
  * they go out as.
  *
  * <p>Per person for the reason a mailbox is: circulars are sent per person, and a key is a

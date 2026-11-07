@@ -84,14 +84,20 @@ public class MailCampaignProperties {
     private String logFile = "logs/campaign-current.log";
 
     /**
-     * Which transport a <em>reply</em> leaves by — {@code SMTP} (the default, and the only
-     * one before this existed) or {@code BREVO}.
+     * Whether this host can open an outbound SMTP connection at all ({@code SMTP_BLOCKED}).
+     * True sends every reply and every circular through Brevo's API, whatever the circulars
+     * setting says, and refuses switching circulars to SMTP.
      *
-     * <p><b>Why this is an environment variable and not a setting</b>, when the same choice
-     * for circulars deliberately is one. The circulars provider is a preference: a person
-     * decides on Tuesday that this list should go through Brevo, and unticks it on Thursday.
-     * This is not that. It answers "can this machine open an SMTP connection at all", which
-     * is a fact about where the app is running and nothing the user gets an opinion about.
+     * <p>It replaced {@code MAIL_REPLY_PROVIDER}, which covered replies only: the circulars
+     * provider is a desk's row in {@code app_settings}, which the office and the hosted
+     * instance share, so a desk that sent circulars over SMTP from the office had them try SMTP
+     * on Render too and time out there. One fact, one key, both routes.
+     *
+     * <p><b>Why this is an environment variable and not a setting</b>, when the circulars
+     * choice deliberately is one. The circulars provider is a preference: a person decides on
+     * Tuesday that this list should go through Brevo, and unticks it on Thursday. This is not
+     * that. It answers "can this machine open an SMTP connection at all", which is a fact about
+     * where the app is running and nothing the user gets an opinion about.
      *
      * <p>It also could not be a setting even if it wanted to be. Settings live in
      * {@code app_settings}, and the hosted deployment and the office one point at the
@@ -106,5 +112,5 @@ public class MailCampaignProperties {
      * Brevo gives up the last of those outright and part of the second — read that class
      * before switching a deployment over.
      */
-    private String replyProvider;
+    private boolean smtpBlocked;
 }

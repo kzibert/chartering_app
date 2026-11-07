@@ -103,6 +103,13 @@ public class SampleEmbeddingIndexer {
         requireEnabled();
         Progress p = progressFor(TenantContext.require());
         long ready = samples.countByStatus(AnalysisStatus.READY);
+        if (!client.isEnabled()) {
+            // No embedding server here (the hosted instance): nothing can be indexed, so the
+            // count of what is stale would load every READY body to answer a question nobody
+            // can act on.
+            return new AnalysisEmbeddingStatusResponse(false, client.model(), ready, 0, 0,
+                    false, 0, 0, null, null);
+        }
         long stale = stale(client.model()).size();
         return new AnalysisEmbeddingStatusResponse(
                 client.isEnabled(),

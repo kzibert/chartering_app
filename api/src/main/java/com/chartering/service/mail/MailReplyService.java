@@ -62,7 +62,7 @@ import java.util.UUID;
  *
  * <p><b>The one exception is a deployment that cannot reach an SMTP port at all</b>, which
  * is not a preference and is not read from Settings — see
- * {@code MailCampaignProperties#replyProvider} and {@link BrevoReplySender}. There the choice
+ * {@code MailCampaignProperties#smtpBlocked} and {@link BrevoReplySender}. There the choice
  * is between Brevo and no reply at all, and it is made per environment because the hosted
  * instance and the office one share a database and must answer it differently. Everything
  * below the transport is identical either way: the same composition, the same merge, the
@@ -103,14 +103,7 @@ public class MailReplyService {
      * than one that boots and says on the reply screen which route it is actually using.
      */
     public CircularProvider replyProvider() {
-        String configured = props.getReplyProvider();
-        CircularProvider parsed = CircularProvider.parse(configured);
-        if (configured != null && !configured.isBlank() && parsed == CircularProvider.SMTP
-                && !configured.trim().equalsIgnoreCase(CircularProvider.SMTP.name())) {
-            log.warn("MAIL_REPLY_PROVIDER is set to '{}', which is not a transport this app has."
-                    + " Replies will go out over SMTP.", configured);
-        }
-        return parsed;
+        return props.isSmtpBlocked() ? CircularProvider.BREVO : CircularProvider.SMTP;
     }
 
     /** What is stopping a reply going out by the route in force, in words the user can act on. */

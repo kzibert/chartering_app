@@ -116,15 +116,16 @@ public class IntakeQueryService {
         // Each one is the next thing to do rather than an error, because every one of them is
         // an ordinary state of a feature being set up.
         List<String> warnings = new ArrayList<>();
-        // The address the sweep will actually call: the cloud one under CLOUD, else the office
-        // server. Asking the local endpoint here would describe a server nothing reads from.
+        // The address this caller's reading goes to: the cloud one when they read with their own
+        // key, else the office server. Asking the other would describe a server they do not use.
+        boolean cloud = ParserRoute.current().cloud();
         ModelEndpoint endpoint = settings.activeEndpoint();
         if (!reachable) {
-            // The docker command is a cure for the office server only. Under CLOUD the cure is
-            // the address or the key, which is what the Settings tab is for.
-            warnings.add(props.isCloud()
-                    ? "The cloud model at " + endpoint.url() + " is not answering. Check its "
-                        + "address and API key on the Settings tab."
+            // The docker command is a cure for the office server only. For the cloud the cure is
+            // the key or the address, which is what the Settings tab is for.
+            warnings.add(cloud
+                    ? "The cloud model at " + endpoint.url() + " is not answering. Check your "
+                        + "API key and the model's address on the Settings tab."
                     : "The model server at " + endpoint.url() + " is not answering. Start it "
                         + "with: docker compose -f serve/docker-compose.llamacpp.yml up -d "
                         + "(in the chartering-ml project).");
@@ -154,11 +155,10 @@ public class IntakeQueryService {
                     + "Settings tab to reach it.");
         }
         if (!availability.runsTimers()) {
-            // Only under CLOUD: a local deployment with the switch on runs its timer, and the
-            // interval below says whether it is off. Said here because a cloud deployment
-            // with an interval set would otherwise look as if the timer had been forgotten.
-            warnings.add("This deployment reads mail only when an administrator presses Parse now "
-                    + "— the cloud model is billed per read, so nothing runs on a timer.");
+            // Only where there is no local model: the timers read with it, never with somebody's
+            // key. Said here because an interval on the screen would otherwise look forgotten.
+            warnings.add("This deployment reads mail only when you press Parse now — it reads "
+                    + "with your own cloud key, so nothing runs on a timer.");
         } else if (values.sweepIntervalMinutes() == 0) {
             warnings.add("The timer is off. Mail is only read when you press Parse now.");
         }
@@ -182,7 +182,7 @@ public class IntakeQueryService {
                 sweeps.nextSweepAt(),
                 last == null ? null : last.message(),
                 warnings,
-                props.isCloud() ? "CLOUD" : "LOCAL",
+                cloud ? "CLOUD" : "LOCAL",
                 availability.runsTimers());
     }
 

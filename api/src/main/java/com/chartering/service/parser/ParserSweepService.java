@@ -244,7 +244,9 @@ public class ParserSweepService {
             }
             throw new IllegalStateException("A sweep is already running.");
         }
-        worker.submit(() -> sweepIfIdle(onlyTenant, mode, mailMessageIds));
+        // The route travels with the run: "Parse everything" from a browser holding a key reads
+        // with that key on the worker, and a timer tick carries the local one.
+        worker.submit(ParserRoute.carry(() -> sweepIfIdle(onlyTenant, mode, mailMessageIds)));
     }
 
     public boolean isRunning() {

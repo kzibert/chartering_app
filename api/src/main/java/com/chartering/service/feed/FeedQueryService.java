@@ -49,7 +49,7 @@ public class FeedQueryService {
         long enabled = all.stream().filter(FeedSource::isEnabled).count();
         long topicCount = topics.count();
         long selected = topics.findBySelectedTrueOrderBySortOrderAscIdAsc().size();
-        boolean analysis = props.isAnalysisEnabled();
+        boolean analysis = props.isEnabled();
         Boolean reachable = analysis ? llm.isReachable() : null;
 
         List<String> warnings = new ArrayList<>();
@@ -113,8 +113,8 @@ public class FeedQueryService {
 
     /** The window the model server reports, for the Settings card's Detect button. Local only. */
     public Integer detectContextWindow() {
-        if (!props.isAnalysisEnabled()) {
-            throw new FeatureDisabledException("There is no model on this deployment (FEED_ANALYSIS_ENABLED).");
+        if (!props.isEnabled()) {
+            throw new FeatureDisabledException("There is no model on this deployment (FEED_ENABLED).");
         }
         Integer window = llm.contextWindow();
         if (window == null) {

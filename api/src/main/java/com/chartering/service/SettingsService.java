@@ -152,9 +152,16 @@ public class SettingsService {
 
     // ---------------------------------------------------------------- reading
 
-    /** Which flow circulars go out through right now. */
+    /**
+     * Which flow circulars go out through right now.
+     *
+     * <p>Brevo on a host that cannot open SMTP ({@code SMTP_BLOCKED}), whatever the desk's row
+     * says: that row is shared with the office instance, where SMTP works, so it cannot be the
+     * answer here too.
+     */
     @Transactional(readOnly = true)
     public CircularProvider provider() {
+        if (props.isSmtpBlocked()) return CircularProvider.BREVO;
         return repository.findById(PROVIDER)
                 .map(AppSetting::getValue)
                 .map(CircularProvider::parse)
@@ -356,6 +363,12 @@ public class SettingsService {
      */
     @Transactional
     public CirculationSettings updateProvider(CircularProvider provider) {
+        if (props.isSmtpBlocked() && provider == CircularProvider.SMTP) {
+            // Refused rather than stored: the row is the desk's on every instance, and writing
+            // SMTP here would change what the office sends through without changing anything here.
+            throw new IllegalArgumentException("This deployment cannot open SMTP connections "
+                    + "(SMTP_BLOCKED), so circulars go out through Brevo here.");
+        }
         put(PROVIDER, provider.name());
         log.info("Circulars will now be sent via {}", provider.label());
         return circulation();

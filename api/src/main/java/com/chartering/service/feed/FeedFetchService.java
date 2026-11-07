@@ -67,15 +67,36 @@ public class FeedFetchService {
         int minutes = settings.fetchIntervalMinutes();
         if (minutes <= 0) return;
         if (Duration.between(lastFetch, OffsetDateTime.now()).toMinutes() < minutes) return;
-        submit(null);
+        if (props.isEnabled()) {
+            submit(null);
+            return;
+        }
+        // The Feed is off and only Intake wants pages: the boards some desk reads in, and none of
+        // the rest. Reading every enabled source here used to fetch Telegram channels and RSS
+        // feeds nobody was going to look at, because one desk had subscribed one board.
+        List<Long> boards = subscribedBoards();
+        if (boards.isEmpty()) return;
+        if (running.get()) return;
+        worker.submit(() -> fetchIfIdle(boards, true));
+    }
+
+    /** Every enabled board some active desk reads into Intake, each once. Asked desk by desk. */
+    private List<Long> subscribedBoards() {
+        return tenants.activeIds().stream()
+                .flatMap(desk -> TenantContext.callAs(desk, sources::findReadIntoIntake).stream())
+                .filter(FeedSource::isEnabled)
+                .map(FeedSource::getId)
+                .distinct()
+                .sorted()
+                .toList();
     }
 
     /**
      * Whether this deployment reads other people's pages at all.
      *
      * <p><b>Two features want the same fetch, and either of them is reason enough.</b>
-     * {@code FEED_ANALYSIS_ENABLED} is about summarising — the model is in the office, and two
-     * instances summarising the same sources would do the work twice. The Intake tab wants the
+     * {@code FEED_ENABLED} is the Feed itself — every source fetched, topics summarised, and
+     * the model for that is in the office. The Intake tab wants the
      * same pages for a different purpose, and it has its own switch already: with
      * {@code PARSER_ENABLED} on and a source marked to be read in, the boards have to be
      * fetched or the queue is permanently empty and nothing on screen says why.
@@ -85,7 +106,7 @@ public class FeedFetchService {
      * is an or of two falses.
      */
     private boolean fetches() {
-        if (props.isAnalysisEnabled()) return true;
+        if (props.isEnabled()) return true;
         // Any desk reading any enabled board into Intake. Asked desk by desk: the timer has no
         // desk of its own, and the subscriptions are each desk's.
         return availability.runsTimers() && tenants.activeIds().stream()
@@ -107,7 +128,7 @@ public class FeedFetchService {
     /**
      * Fetch the boards the Intake tab reads, from the Intake tab.
      *
-     * <p>Behind {@code PARSER_ENABLED} rather than {@code FEED_ANALYSIS_ENABLED}, because that
+     * <p>Behind {@code PARSER_ENABLED} rather than {@code FEED_ENABLED}, because that
      * is the switch the button is under: a deployment that reads circulars off the web but does
      * not summarise anything is an ordinary shape, and the Fetch button on a tab that exists
      * should not refuse on the strength of a feature the user is not looking at.
@@ -124,7 +145,7 @@ public class FeedFetchService {
             log.debug("A feed fetch is already running; this request is skipped");
             return;
         }
-        worker.submit(() -> fetchIfIdle(boards));
+        worker.submit(() -> fetchIfIdle(boards, false));
     }
 
     private void submit(Long onlySource) {
@@ -132,7 +153,7 @@ public class FeedFetchService {
             log.debug("A feed fetch is already running; this request is skipped");
             return;
         }
-        worker.submit(() -> fetchIfIdle(onlySource == null ? null : List.of(onlySource)));
+        worker.submit(() -> fetchIfIdle(onlySource == null ? null : List.of(onlySource), onlySource == null));
     }
 
     public boolean isRunning() {
@@ -153,8 +174,11 @@ public class FeedFetchService {
         return lastFetch.plusMinutes(minutes);
     }
 
-    /** @param only the sources to read, or null for every enabled one (the timer's pass) */
-    private void fetchIfIdle(List<Long> only) {
+    /**
+     * @param only      the sources to read, or null for every enabled one
+     * @param timerPass whether this is the timed pass, which is what moves the clock
+     */
+    private void fetchIfIdle(List<Long> only, boolean timerPass) {
         if (!running.compareAndSet(false, true)) return;
         try {
             lastReport = fetch(only);
@@ -162,7 +186,7 @@ public class FeedFetchService {
             log.error("Feed fetch failed", e);
             lastReport = new FetchReport(0, 0, 0, "The fetch failed: " + e.getMessage(), OffsetDateTime.now());
         } finally {
-            if (only == null) lastFetch = OffsetDateTime.now();
+            if (timerPass) lastFetch = OffsetDateTime.now();
             running.set(false);
         }
     }
@@ -198,9 +222,9 @@ public class FeedFetchService {
     }
 
     private void requireEnabled() {
-        if (!props.isAnalysisEnabled()) {
+        if (!props.isEnabled()) {
             throw new FeatureDisabledException(
-                    "Fetching feed sources is not enabled on this deployment (FEED_ANALYSIS_ENABLED).");
+                    "Fetching feed sources is not enabled on this deployment (FEED_ENABLED).");
         }
     }
 }
