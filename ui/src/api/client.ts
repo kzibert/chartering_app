@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { notification } from 'antd';
 import { clearToken, getToken } from '../auth/store';
+import { parserHeaders } from '../parser/route';
 
 /**
  * Relative by default — Vite proxies /api in dev, nginx proxies it in the container, and a
@@ -35,6 +36,12 @@ export const client = axios.create({
 client.interceptors.request.use((config) => {
   const token = getToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;
+  // The person's own cloud key rides on Intake requests and nowhere else: those are the only
+  // ones that can read with it, and a key on every request is a key in every server log that
+  // records headers. See parser/route.ts.
+  if ((config.url ?? '').startsWith('/intake')) {
+    Object.entries(parserHeaders()).forEach(([name, value]) => config.headers.set(name, value));
+  }
   return config;
 });
 

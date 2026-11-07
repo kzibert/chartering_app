@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useSendingToday } from '../../api/hooks';
 import {
   Alert,
   App,
@@ -49,9 +50,8 @@ import {
   useMailboxStatus,
   useMailboxSync,
 } from '../../mailbox/store';
-import { useIntakeMutations, useIntakeStatus } from '../../intake/store';
-import { useQuery } from '@tanstack/react-query';
-import { circulationsApi } from '../../api/circulations';
+import { useIntakeMutations } from '../../intake/store';
+import { useIntakeOn } from '../../capabilities/store';
 import { SendingTodayTags } from '../../components/SendingToday';
 import { usePersistedState } from '../../components/usePersistedState';
 import { useTableControls } from '../../components/useTableControls';
@@ -151,14 +151,13 @@ export default function MailboxPage() {
   const status = useMailboxStatus();
   const sync = useMailboxSync();
   const { setReadBulk, markAllRead, moveBulk } = useMailMessageMutations();
-  // Shared with the Intake tab and the shell, so the button appears with the tab and not
-  // before. Absent on a deployment without the parser, where it is simply not offered.
-  const intakeStatus = useIntakeStatus();
-  const intakeOn = intakeStatus.data?.enabled === true;
+  // The same rule the shell draws the Intake tab by, so the button appears with the tab and not
+  // before: a local model, or a cloud key in this browser.
+  const intakeOn = useIntakeOn();
   const { parseMessages, queueMessages } = useIntakeMutations();
   // The same key the Circulars and Settings tabs read the day's volume from, so a reply
   // sent here moves the number there without either tab counting anything itself.
-  const todayQ = useQuery({ queryKey: ['circulations', 'today'], queryFn: circulationsApi.today });
+  const todayQ = useSendingToday();
 
   /**
    * Which mail is being looked at — the rail's folder and the search box, and nothing about

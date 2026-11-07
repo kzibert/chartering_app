@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Button, Tag, Tooltip, Typography } from 'antd';
 import { FileTextOutlined, LinkOutlined } from '@ant-design/icons';
-import { useIntakeStatus, usePendingCompanyForPosition } from '../../intake/store';
+import { usePendingCompanyForPosition } from '../../intake/store';
+import { useIntakeOn } from '../../capabilities/store';
 import CompanyDrawer from '../companies/CompanyDrawer';
 import IntakeItemDrawer from '../intake/IntakeItemDrawer';
 import AttachCompanyModal from '../vessels/AttachCompanyModal';
@@ -53,7 +54,7 @@ export default function ReportedBy({
   /** Printed before the name — the drawer says "by", the table's column header already does. */
   prefix?: string;
 }) {
-  const intakeEnabled = useIntakeStatus().data?.enabled ?? false;
+  const intakeEnabled = useIntakeOn();
   // Only asked where nobody is named: a named reporter is an answer, and the table would
   // otherwise ask once per row.
   const pending = usePendingCompanyForPosition(positionId, intakeEnabled && companyId == null);

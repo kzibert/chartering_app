@@ -31,18 +31,12 @@ export const intakeKeys = {
     [...KEY, 'waiting', source, page, size] as const,
   sweep: [...KEY, 'sweep'] as const,
   settings: [...KEY, 'settings'] as const,
-  vesselFields: [...KEY, 'vessel-fields'] as const,
   cargoSources: (cargoId: number) => [...KEY, 'cargo-sources', cargoId] as const,
   possibleDuplicates: (cargoId: number) => [...KEY, 'possible-duplicates', cargoId] as const,
   companyPending: (companyId: number) => [...KEY, 'company-pending', companyId] as const,
   positionCompanyPending: (positionId: number) =>
     [...KEY, 'position-company-pending', positionId] as const,
 };
-
-export function useIntakeInvalidator() {
-  const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: KEY });
-}
 
 /**
  * Whether this deployment reads its mail with a model, and how that is going.
@@ -53,10 +47,14 @@ export function useIntakeInvalidator() {
  * change while somebody is looking at the screen. PARSER_ENABLED cannot change without a
  * restart, but it is the cheapest field on a response that has to be fresh anyway.
  */
-export const useIntakeStatus = (options?: { poll?: boolean }) =>
+export const useIntakeStatus = (options?: { poll?: boolean; enabled?: boolean }) =>
   useQuery({
     queryKey: intakeKeys.status,
     queryFn: intakeApi.status,
+    // Off where Intake does not exist for this person (capabilities/store useIntakeOn): the
+    // status would only answer enabled:false, and on the hosted instance it is the one call the
+    // shell made that counted tables.
+    enabled: options?.enabled ?? true,
     // A minute: long enough that the shell's own render does not reach the model server on
     // every navigation, short enough that starting the container is noticed without a
     // reload.
@@ -147,20 +145,6 @@ export const useParserSettings = (enabled: boolean) =>
     queryKey: intakeKeys.settings,
     queryFn: intakeApi.settings,
     enabled,
-  });
-
-/**
- * The labels the vessel's own edit form uses.
- *
- * `staleTime: Infinity` because it is derived from a constant list in the API and cannot
- * change without a deploy — unlike everything else here.
- */
-export const useVesselFieldLabels = (enabled: boolean) =>
-  useQuery({
-    queryKey: intakeKeys.vesselFields,
-    queryFn: intakeApi.vesselFields,
-    enabled,
-    staleTime: Infinity,
   });
 
 /**

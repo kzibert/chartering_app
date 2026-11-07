@@ -128,7 +128,10 @@ export default function IntakePage() {
             neither of nor a route to.
             <br />
             <br />
-            Start it in the <Typography.Text code>chartering-ml</Typography.Text> project with{' '}
+            Where this deployment offers a cloud model instead, save your own API key under{' '}
+            <Typography.Text strong>Settings › Your parser</Typography.Text> and this tab reads
+            with it. Otherwise start the local model in the{' '}
+            <Typography.Text code>chartering-ml</Typography.Text> project with{' '}
             <Typography.Text code>make serve-docker</Typography.Text>, then set{' '}
             <Typography.Text code>PARSER_ENABLED=true</Typography.Text> and restart the api.
           </>

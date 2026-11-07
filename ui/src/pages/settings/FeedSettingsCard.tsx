@@ -18,6 +18,7 @@ import {
 import { AimOutlined, SaveOutlined, UndoOutlined } from '@ant-design/icons';
 import { feedApi } from '../../api/feed';
 import { useFeedMutations, useFeedSettings, useFeedStatus } from '../../feed/store';
+import { useCapabilities } from '../../capabilities/store';
 
 interface FormValues {
   contextWindowTokens: number;
@@ -58,9 +59,12 @@ const hint = (text: ReactNode) => (
 export default function FeedSettingsCard() {
   const { message: toast } = App.useApp();
   const [form] = Form.useForm<FormValues>();
-  const status = useFeedStatus();
-  const enabled = status.data?.analysisEnabled === true;
-  const query = useFeedSettings();
+  // Asked only where the Feed is part of this deployment (FEED_ENABLED): off, the card is gone
+  // and the one setting other features need - the board fetch interval - is on the parser's card.
+  const feedOn = useCapabilities().data?.feed === true;
+  const status = useFeedStatus(feedOn);
+  const enabled = feedOn && status.data?.analysisEnabled === true;
+  const query = useFeedSettings(feedOn);
   const { updateSettings, resetSettings } = useFeedMutations();
   const [detecting, setDetecting] = useState(false);
   const settings = query.data;

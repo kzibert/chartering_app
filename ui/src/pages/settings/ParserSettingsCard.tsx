@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   App,
   Alert,
@@ -16,7 +16,6 @@ import {
   Typography,
 } from 'antd';
 import {
-  DeleteOutlined,
   SaveOutlined,
   ThunderboltOutlined,
   UndoOutlined,
@@ -28,6 +27,9 @@ import {
   useParserSettings,
   useSweep,
 } from '../../intake/store';
+import { useCapabilities, useIntakeOn } from '../../capabilities/store';
+import { readsWithCloud, useParserRoute } from '../../parser/route';
+import { useFeedMutations, useFeedSettings } from '../../feed/store';
 
 interface FormValues {
   sweepIntervalMinutes: number;
@@ -37,8 +39,6 @@ interface FormValues {
   modelName: string;
   cloudUrl: string;
   cloudModel: string;
-  /** Typed here and never loaded from the server: the stored key is not sent back. */
-  cloudApiKey?: string;
   fewShotExamples: number;
   fewShotMaxChars: number;
 }
@@ -63,22 +63,25 @@ interface FormValues {
  * something else. The card says so rather than treating it as an error, and the button is
  * right here so turning the timer off does not mean navigating away to use it.
  *
- * <p>Absent when the feature is off, like the tab: a deployment that cannot reach a model
- * has nothing to schedule.
+ * <p>Absent when Intake does not exist for this person, like the tab. The cloud key is not
+ * here: it is the person's own and lives in their browser ({@code ParserRouteCard}).
  */
 export default function ParserSettingsCard() {
   const { message: toast } = App.useApp();
   const [form] = Form.useForm<FormValues>();
-  const status = useIntakeStatus();
-  const enabled = status.data?.enabled === true;
+  const enabled = useIntakeOn();
+  const caps = useCapabilities().data;
+  const local = caps?.parserLocal === true;
+  const route = useParserRoute();
+  const status = useIntakeStatus({ enabled });
   const query = useParserSettings(enabled);
   const sweep = useSweep(enabled);
   const { updateSettings, resetSettings, startSweep } = useIntakeMutations();
 
   const settings = query.data;
-  // Which model reads the mail is an install-time fact; the cloud section is editable either
-  // way so a key can be prepared before the switch is flipped.
-  const cloud = settings?.provider === 'CLOUD';
+  // Which model reads this person's mail: the cloud one when their browser holds a key and they
+  // chose it (Settings > Your parser), else the office one.
+  const cloud = readsWithCloud(route);
 
   // Reset from the server's answer so a save or a reset leaves the fields showing what is
   // actually stored, not what was typed.
@@ -139,7 +142,7 @@ export default function ParserSettingsCard() {
               settings?.defaultSweepMaxAgeDays ?? 30
             } days, the model at ${settings?.defaultModelUrl ?? 'the configured address'}, the cloud model at ${
               settings?.defaultCloudUrl ?? 'its default address'
-            } (the saved key stays), and no retrieved examples.`}
+            }, and no retrieved examples.`}
             onConfirm={() => resetSettings.mutate(undefined, {
               onSuccess: () => toast.success('Back to the defaults'),
             })}
@@ -181,16 +184,8 @@ export default function ParserSettingsCard() {
       <Form<FormValues>
         form={form}
         layout="vertical"
-        onFinish={({ cloudApiKey, ...v }) => {
-          // Only a typed key is sent: the field is empty on load, and an empty one must not
-          // clear or replace the stored key. The field is cleared once the save has taken.
-          const key = cloudApiKey?.trim();
-          updateSettings.mutate(key ? { ...v, cloudApiKey: key } : v, {
-            onSuccess: () => {
-              toast.success('Saved');
-              form.setFieldValue('cloudApiKey', undefined);
-            },
-          });
+        onFinish={(v) => {
+          updateSettings.mutate(v, { onSuccess: () => toast.success('Saved') });
         }}
       >
         <Row gutter={16}>
@@ -200,12 +195,12 @@ export default function ParserSettingsCard() {
               label="Read the mail every"
               rules={[{ required: true, message: 'A number of minutes is required' }]}
               extra={
-                cloud ? (
+                !local ? (
                   // Still shown and still saved: the office deployment reads on this same
                   // setting, and the two share one row.
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    Not used on this deployment. This deployment reads only when asked — Parse
-                    now, Parse everything, or messages picked on the Mailbox tab.
+                    Not used on this deployment, which has no timer: it reads only when asked —
+                    Parse now, Parse everything, or messages picked on the Mailbox tab.
                   </Typography.Text>
                 ) : (
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -252,6 +247,9 @@ export default function ParserSettingsCard() {
           </Col>
         </Row>
 
+        {local && <BoardFetchInterval />}
+
+        {local && (<>
         <Divider style={{ marginTop: 0 }} orientation="left" plain>
           <Space size={4} wrap>
             Which model reads it
@@ -309,18 +307,18 @@ export default function ParserSettingsCard() {
             </Form.Item>
           </Col>
         </Row>
+        </>)}
 
         <Divider style={{ marginTop: 0 }} orientation="left" plain>
           <Space size={4} wrap>
             Cloud model
-            {cloud ? <Tag color="blue">reads the mail</Tag> : <Tag>not used here</Tag>}
+            {cloud ? <Tag color="blue">reads your mail</Tag> : <Tag>not chosen</Tag>}
           </Space>
         </Divider>
 
         <Typography.Paragraph type="secondary" style={{ marginTop: -8, marginBottom: 16 }}>
-          {cloud
-            ? 'This deployment reads with the cloud model below (PARSER_PROVIDER=CLOUD).'
-            : 'This deployment reads with the office model (PARSER_PROVIDER=LOCAL). The cloud model is set up here ahead of time and takes over when PARSER_PROVIDER is switched to CLOUD.'}
+          The address and model a cloud read goes to, for everybody on the installation. Each
+          person reads with their own API key, saved under Your parser and kept in their browser.
         </Typography.Paragraph>
 
         <Row gutter={16}>
@@ -372,63 +370,8 @@ export default function ParserSettingsCard() {
           </Col>
         </Row>
 
-        <Form.Item
-          name="cloudApiKey"
-          label="API key"
-          extra={
-            <Space size={8} wrap>
-              {settings?.cloudApiKeySet ? (
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  Saved key{settings.cloudApiKeyHint ? ` ${settings.cloudApiKeyHint}` : ''} — type a
-                  new one to replace it.
-                </Typography.Text>
-              ) : (
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  No key saved.
-                </Typography.Text>
-              )}
-              {settings?.cloudApiKeySet && (
-                <Popconfirm
-                  title="Remove the saved key?"
-                  description="A cloud read will fail until a new key is saved."
-                  okText="Remove"
-                  okButtonProps={{ danger: true }}
-                  onConfirm={() =>
-                    updateSettings.mutate(
-                      { clearCloudApiKey: true },
-                      { onSuccess: () => toast.success('Key removed') },
-                    )
-                  }
-                >
-                  <Button
-                    size="small"
-                    danger
-                    icon={<DeleteOutlined />}
-                    loading={updateSettings.isPending}
-                  >
-                    Remove key
-                  </Button>
-                </Popconfirm>
-              )}
-            </Space>
-          }
-        >
-          {settings?.cloudApiKeyStorable === false && (
-            <Alert
-              type="warning"
-              showIcon
-              style={{ marginBottom: 8 }}
-              message="A key cannot be saved on this server"
-              description="CREDENTIALS_KEY is not set in the server's environment, so a key cannot be stored. Set it and restart the api."
-            />
-          )}
-          <Input.Password
-            placeholder={settings?.cloudApiKeySet ? 'Leave empty to keep the saved key' : 'Paste the API key'}
-            autoComplete="new-password"
-            disabled={settings?.cloudApiKeyStorable === false}
-          />
-        </Form.Item>
 
+        {caps?.retrieval && (<>
         <Divider style={{ marginTop: 0 }} orientation="left" plain>
           <Space size={4} wrap>
             Retrieved examples
@@ -474,6 +417,7 @@ export default function ParserSettingsCard() {
             </Form.Item>
           </Col>
         </Row>
+        </>)}
       </Form>
 
       <Space wrap>
@@ -504,9 +448,65 @@ export default function ParserSettingsCard() {
         positions onto the Open fleet tab, cargoes onto the Cargoes tab. Anything it will not
         decide alone — a particular that disagrees with a vessel's record, a hull nobody has
         heard of, a cargo that looks like one already in hand — waits on the <b>Intake</b> tab.
-        Whether the feature exists at all (<code>PARSER_ENABLED</code>) and how long to wait for
-        an answer are set in <code>.env</code>, not here.
+        Whether a local and a cloud model exist at all (<code>PARSER_ENABLED</code>,{' '}
+        <code>PARSER_CLOUD_ENABLED</code>) and how long to wait for an answer are set in{' '}
+        <code>.env</code>, not here.
       </Typography.Paragraph>
     </Card>
+  );
+}
+
+/**
+ * How often the boards a desk reads into Intake are fetched.
+ *
+ * Here because the Feed is switched off, and its settings card with it: the interval is still a
+ * Feed setting on the server (FeedSettings, one installation row), and the timer still runs on
+ * the office deployment for the boards Intake reads. Its own small save, so it never rides on
+ * the parser's form.
+ */
+function BoardFetchInterval() {
+  const { message: toast } = App.useApp();
+  const settings = useFeedSettings().data;
+  const { updateSettings } = useFeedMutations();
+  const [minutes, setMinutes] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (settings) setMinutes(settings.fetchIntervalMinutes);
+  }, [settings]);
+
+  if (!settings) return null;
+  return (
+    <Form.Item
+      label="Fetch the boards read into Intake every"
+      extra={
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          Minutes. <b>0 turns it off</b>; the Fetch button on the Intake tab still works. Only the
+          boards a desk reads in are fetched while the Feed is off.
+        </Typography.Text>
+      }
+    >
+      <Space.Compact>
+        <InputNumber
+          min={0}
+          max={1440}
+          step={15}
+          value={minutes}
+          onChange={(v) => setMinutes(v)}
+          addonAfter="min"
+        />
+        <Button
+          loading={updateSettings.isPending}
+          disabled={minutes == null || minutes === settings.fetchIntervalMinutes}
+          onClick={() =>
+            updateSettings.mutate(
+              { fetchIntervalMinutes: minutes ?? 0 },
+              { onSuccess: () => toast.success('Saved') },
+            )
+          }
+        >
+          Save
+        </Button>
+      </Space.Compact>
+    </Form.Item>
   );
 }

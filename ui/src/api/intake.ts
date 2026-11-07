@@ -295,9 +295,9 @@ export interface IntakeStatusResponse {
   nextSweepAt?: string;
   lastSweepSummary?: string;
   warnings?: string[];
-  /** LOCAL reads on the office GPU; CLOUD reads with the hosted model. */
+  /** Which model this caller's reading goes to: LOCAL the office one, CLOUD the hosted one under their key. */
   provider?: 'LOCAL' | 'CLOUD';
-  /** False where the timer does not run on this deployment (CLOUD): reading is only ever asked for. */
+  /** False where the timer does not run on this deployment (no local model): reading is only ever asked for. */
   scheduled?: boolean;
 }
 
@@ -351,8 +351,6 @@ export interface ParserSettingsResponse {
   fewShotMaxChars: number;
   defaultFewShotExamples: number;
   defaultFewShotMaxChars: number;
-  /** Which model reads the mail on this deployment — PARSER_PROVIDER. */
-  provider: 'LOCAL' | 'CLOUD';
   /** The hosted model's endpoint and name in force, installation-wide. */
   cloudUrl: string;
   cloudModel: string;
@@ -360,11 +358,6 @@ export interface ParserSettingsResponse {
   cloudModelCustomised: boolean;
   defaultCloudUrl: string;
   defaultCloudModel: string;
-  cloudApiKeySet: boolean;
-  /** The last few characters of the stored key, e.g. "…a1B2". Absent when no key is saved. */
-  cloudApiKeyHint?: string;
-  /** False when CREDENTIALS_KEY is unset on the server, so a key cannot be saved. */
-  cloudApiKeyStorable: boolean;
 }
 
 export interface ParserSettingsRequest {
@@ -384,9 +377,6 @@ export interface ParserSettingsRequest {
   cloudUrl?: string;
   /** Blank restores the default cloud model name. */
   cloudModel?: string;
-  /** Non-blank replaces the stored key. The key is never sent back. */
-  cloudApiKey?: string;
-  clearCloudApiKey?: boolean;
 }
 
 /** Messages picked on the Mailbox tab to be read now, whatever the lookback says. */
@@ -700,8 +690,6 @@ export const intakeApi = {
     client.post<IntakeItemResponse>(`/intake/items/${id}/resolve`, body).then((r) => r.data),
 
   /** Field name -> the label the vessel's own edit form uses, so the two screens agree. */
-  vesselFields: () =>
-    client.get<Record<string, string>>('/intake/vessel-fields').then((r) => r.data),
 
   /** Run one search now, replacing whatever was found before. */
   lookup: (id: number) =>

@@ -9,6 +9,8 @@ import { matchesApi } from './matches';
 import { dataChangesApi, type DataChangeFilter } from './dataChanges';
 import { lookupsApi } from './lookups';
 import { settingsApi } from './settings';
+import { circulationsApi } from './circulations';
+import { campaignsApi } from './campaigns';
 import { forgetRecent, type RecentKind } from '../recent/store';
 import type {
   CargoFilter,
@@ -176,14 +178,6 @@ export const usePosition = (id?: number) =>
     enabled: id != null,
   });
 
-/** A vessel's whole reporting history — read from her drawer, not from the fleet list. */
-export const useVesselPositionHistory = (vesselId?: number) =>
-  useQuery({
-    queryKey: ['positions', 'vessel', vesselId],
-    queryFn: () => positionsApi.history(vesselId as number),
-    enabled: vesselId != null,
-  });
-
 export function usePositionMutations() {
   const invalidate = useInvalidator();
   // 'vessel' is touched because her drawer shows the position history; 'matches' because
@@ -258,20 +252,6 @@ export const useVessels = (filter: VesselFilter) =>
 
 export const useVessel = (id?: number) =>
   useQuery({ queryKey: ['vessel', id], queryFn: () => vesselsApi.get(id!), enabled: id != null });
-
-/**
- * Whether the web-lookup card exists at all.
- *
- * A deployment fact rather than a piece of data, so it is fetched once and kept: it cannot
- * change without a redeploy, and refetching it on every vessel opened would be a request per
- * drawer to be told the same thing.
- */
-export const useVesselLookupStatus = () =>
-  useQuery({
-    queryKey: ['vessel-lookup-status'],
-    queryFn: vesselsApi.lookupStatus,
-    staleTime: Infinity,
-  });
 
 export function useVesselMutations() {
   const invalidate = useInvalidator();
@@ -588,3 +568,20 @@ export function useDataChangeMutations() {
   });
   return { revert };
 }
+
+/**
+ * What went out today, by route. One hook for the three screens that print it (Circulars,
+ * Mailbox, Settings), so they share one cached answer and can never quote different totals for
+ * the same day. `poll` refetches every minute, for a screen read to decide whether there is room
+ * to send.
+ */
+export const useSendingToday = (options?: { poll?: boolean }) =>
+  useQuery({
+    queryKey: ['circulations', 'today'],
+    queryFn: circulationsApi.today,
+    refetchInterval: options?.poll ? 60_000 : false,
+  });
+
+/** How circulars and replies are sent here, and what is missing. Shared by Circulars and both composers. */
+export const useCampaignConfig = () =>
+  useQuery({ queryKey: ['campaign', 'config'], queryFn: campaignsApi.config });

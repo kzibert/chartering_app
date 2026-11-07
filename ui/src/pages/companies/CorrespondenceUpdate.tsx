@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Alert, Button, Tag, Tooltip } from 'antd';
 import { MailOutlined } from '@ant-design/icons';
-import { useIntakeStatus, usePendingCompanyItem } from '../../intake/store';
+import { usePendingCompanyItem } from '../../intake/store';
+import { useIntakeOn } from '../../capabilities/store';
 import IntakeItemDrawer from '../intake/IntakeItemDrawer';
 import { MINOR_HINT } from '../intake/labels';
 import type { IntakeItemResponse } from '../../api/intake';
@@ -20,12 +21,11 @@ import type { IntakeItemResponse } from '../../api/intake';
  * again with the record every time it is read, so a phone added by hand on the People tab
  * takes the button away rather than leaving it offering a write that changes nothing.
  *
- * Absent where the parser is off (the hosted instance): the questions are rows in the shared
- * database, but answering one goes through the intake endpoints, which answer 404 there.
+ * Absent where Intake does not exist for this person: the questions are rows in the shared
+ * database, but answering one goes through the intake endpoints, which answer 404 then.
  */
 export default function CorrespondenceUpdate({ companyId }: { companyId: number }) {
-  const status = useIntakeStatus();
-  const enabled = status.data?.enabled === true;
+  const enabled = useIntakeOn();
   const pending = usePendingCompanyItem(companyId, enabled);
   const [open, setOpen] = useState(false);
 
