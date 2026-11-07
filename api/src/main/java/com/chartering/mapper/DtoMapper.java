@@ -161,14 +161,18 @@ public class DtoMapper {
      * cannot see — callers must resolve it (batched, for lists) and pass it in. There is
      * deliberately no single-argument overload: defaulting it to false would quietly
      * under-report dead companies wherever someone forgot.
+     *
+     * <p>{@code correspondenceUpdate} is the same kind of fact, read from the Intake queue, and
+     * is resolved the same way: batched for a list ({@code CompanyService#search}), one lookup for
+     * a single record.
      */
-    public CompanyResponse toCompanyResponse(Company c, boolean noWorkingEmail) {
+    public CompanyResponse toCompanyResponse(Company c, boolean noWorkingEmail, boolean correspondenceUpdate) {
         return new CompanyResponse(
                 c.getId(), c.getName(),
                 c.isShipowner(), c.isCharterer(), c.isBroker(), c.isAgent(), c.isSolo(),
                 c.getCityName(), c.getCountry(), c.getWebsite(), c.getNotes(),
                 c.isConfirmed(), c.getConfirmedAt(), c.getConfirmedBy(), c.getConfirmNotes(),
-                c.isBanned(), c.isLegacy(), noWorkingEmail);
+                c.isBanned(), c.isLegacy(), noWorkingEmail, correspondenceUpdate);
     }
 
     public ContactResponse toContactResponse(Contact ct) {
@@ -366,7 +370,7 @@ public class DtoMapper {
                 c.getMaxDraft(), c.getMinDwt(), c.getMaxDwt(), c.getMaxAgeYears(),
                 c.getRequiresGeared(), c.getRequiresGrainFitted(), c.getRequiresImoFitted(),
                 c.getMaxBallastDays(),
-                c.getFreightIdea(), c.getCommission(), c.getTerms(),
+                c.getFreightIdea(), c.getCommission(), c.getCommissionPct(), c.getTerms(),
                 c.getLoadRate(), c.getDischargeRate(),
                 charterer != null ? charterer.getId() : null,
                 charterer != null ? charterer.getName() : null,

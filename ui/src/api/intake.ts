@@ -44,7 +44,7 @@ export type IntakeItemKind =
 
 export type IntakeItemStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED';
 
-export type ParseStatus = 'PARSED' | 'FAILED' | 'SKIPPED' | 'IGNORED';
+export type ParseStatus = 'PARSED' | 'FAILED' | 'SKIPPED' | 'IGNORED' | 'QUEUED';
 
 /**
  * ACCEPT does the proposed thing; ALTERNATIVE does the other one and also writes — keeping
@@ -295,9 +295,9 @@ export interface IntakeStatusResponse {
   nextSweepAt?: string;
   lastSweepSummary?: string;
   warnings?: string[];
-  /** LOCAL reads on the office GPU; CLOUD reads with the hosted model. */
+  /** Which model this caller's reading goes to: LOCAL the office one, CLOUD the hosted one under their key. */
   provider?: 'LOCAL' | 'CLOUD';
-  /** False where the timer does not run on this deployment (CLOUD): reading is only ever asked for. */
+  /** False where the timer does not run on this deployment (no local model): reading is only ever asked for. */
   scheduled?: boolean;
 }
 
@@ -351,8 +351,6 @@ export interface ParserSettingsResponse {
   fewShotMaxChars: number;
   defaultFewShotExamples: number;
   defaultFewShotMaxChars: number;
-  /** Which model reads the mail on this deployment — PARSER_PROVIDER. */
-  provider: 'LOCAL' | 'CLOUD';
   /** The hosted model's endpoint and name in force, installation-wide. */
   cloudUrl: string;
   cloudModel: string;
@@ -360,11 +358,6 @@ export interface ParserSettingsResponse {
   cloudModelCustomised: boolean;
   defaultCloudUrl: string;
   defaultCloudModel: string;
-  cloudApiKeySet: boolean;
-  /** The last few characters of the stored key, e.g. "…a1B2". Absent when no key is saved. */
-  cloudApiKeyHint?: string;
-  /** False when CREDENTIALS_KEY is unset on the server, so a key cannot be saved. */
-  cloudApiKeyStorable: boolean;
 }
 
 export interface ParserSettingsRequest {
@@ -384,15 +377,54 @@ export interface ParserSettingsRequest {
   cloudUrl?: string;
   /** Blank restores the default cloud model name. */
   cloudModel?: string;
-  /** Non-blank replaces the stored key. The key is never sent back. */
-  cloudApiKey?: string;
-  clearCloudApiKey?: boolean;
 }
 
 /** Messages picked on the Mailbox tab to be read now, whatever the lookback says. */
 export interface ParseMessagesRequest {
   /** 1..200 mailbox message ids. */
   mailMessageIds: number[];
+}
+
+/**
+ * The waiting list's request. `reread` is for an email already read: without it the answer is
+ * ALREADY_READ and nothing is queued; with it the email is queued again and the new reading
+ * replaces the old one. Absent means false.
+ */
+export interface QueueMessagesRequest {
+  mailMessageIds: number[];
+  reread?: boolean;
+}
+
+/**
+ * What the waiting list took from a set of picked messages. Already-read messages and ones
+ * with no text are skipped rather than failing the whole call, so the caller can say how many
+ * of the picked ones actually joined the list.
+ */
+export type QueueOutcome =
+  | 'QUEUED'
+  | 'REQUEUED'
+  | 'ALREADY_QUEUED'
+  | 'ALREADY_READ'
+  /** Only with `reread`: an email already read, queued again. */
+  | 'REREAD'
+  | 'NO_TEXT'
+  | 'NOT_FOUND';
+
+/** What happened to one picked email. `parseStatus` and `parsedAt` come only with ALREADY_READ. */
+export interface QueueMessageOutcome {
+  mailMessageId: number;
+  subject?: string;
+  fromAddress?: string;
+  outcome: QueueOutcome;
+  parseStatus?: 'PARSED' | 'SKIPPED';
+  parsedAt?: string;
+}
+
+export interface QueueMessagesResponse {
+  queued: number;
+  skipped: number;
+  /** One entry per picked email, in pick order. */
+  messages: QueueMessageOutcome[];
 }
 
 /**
@@ -658,8 +690,6 @@ export const intakeApi = {
     client.post<IntakeItemResponse>(`/intake/items/${id}/resolve`, body).then((r) => r.data),
 
   /** Field name -> the label the vessel's own edit form uses, so the two screens agree. */
-  vesselFields: () =>
-    client.get<Record<string, string>>('/intake/vessel-fields').then((r) => r.data),
 
   /** Run one search now, replacing whatever was found before. */
   lookup: (id: number) =>
@@ -690,6 +720,13 @@ export const intakeApi = {
    */
   parseMessages: (body: ParseMessagesRequest) =>
     client.post<SweepResponse>('/intake/parse', body, { quiet: true }).then((r) => r.data),
+
+  /**
+   * Put picked messages on the waiting list instead of reading them now. Whatever their age,
+   * the timed sweep picks them up on its next pass.
+   */
+  queueMessages: (body: QueueMessagesRequest) =>
+    client.post<QueueMessagesResponse>('/intake/queue', body).then((r) => r.data),
 
   /** Asks the running sweep to stop after the message it is on. 204. */
   stopSweep: () => client.post<void>('/intake/sweep/stop').then((r) => r.data),
@@ -768,6 +805,22 @@ export const intakeApi = {
 
   cargoSources: (cargoId: number) =>
     client.get<CargoSourceResponse[]>(`/intake/cargoes/${cargoId}/sources`).then((r) => r.data),
+
+  /**
+   * The pending duplicate-cargo questions stacked on one cargo: a list, empty when there are none.
+   *
+   * A 404 is the answer where Intake is not part of this deployment or this login (parser off,
+   * or the cloud parser and not an administrator), and it reads as "none" rather than as an
+   * error: the cargo drawer asks for every cargo it opens. It is accepted through validateStatus
+   * so the shared client does not raise its notification for it, while any other failure still
+   * reaches the user the usual way.
+   */
+  possibleDuplicates: (cargoId: number) =>
+    client
+      .get<IntakeItemResponse[]>(`/intake/cargoes/${cargoId}/possible-duplicates`, {
+        validateStatus: (status) => (status >= 200 && status < 300) || status === 404,
+      })
+      .then((r) => (r.status === 404 ? [] : r.data)),
 
   settings: () =>
     client.get<ParserSettingsResponse>('/intake/settings').then((r) => r.data),

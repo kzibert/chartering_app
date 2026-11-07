@@ -36,6 +36,25 @@ class CompanyMatcherTest {
     }
 
     @Test
+    void sameFirmReadsTradeWordsPunctuationAndOfficeAsOneFirm() {
+        assertThat(CompanyMatcher.sameFirm("Harlow&Bulk", "HARLOWBULK")).isTrue();
+        assertThat(CompanyMatcher.sameFirm("Damarax Example Chartering", "Damarax Example")).isTrue();
+        assertThat(CompanyMatcher.sameFirm("Corvane Lines", "Corvane Chartering & Operations")).isTrue();
+        assertThat(CompanyMatcher.sameFirm("Seafright Example", "Seafright Example Chartring")).isTrue();
+        assertThat(CompanyMatcher.sameFirm("Bermuda Example Shipping", "Bermuda Example -Istanbul")).isTrue();
+        assertThat(CompanyMatcher.sameFirm("Corvane Example Ltd", "CORVANE EXAMPLE")).isTrue();
+    }
+
+    @Test
+    void aDifferentNameIsARenameAndAShortNameContainsNothing() {
+        assertThat(CompanyMatcher.sameFirm("Oceanic Example Ltd", "Blue Example Shipping")).isFalse();
+        // "Alba" has four letters: too short to be evidence that "Albatross" is the same firm.
+        assertThat(CompanyMatcher.sameFirm("Alba", "Albatross Example")).isFalse();
+        // Nothing but trade words on either side: compared on legal forms alone, and these differ.
+        assertThat(CompanyMatcher.sameFirm("Shipping Chartering", "Maritime Operations")).isFalse();
+    }
+
+    @Test
     void phonesCompareOnTheirLastNineDigits() {
         assertThat(CompanyMatcher.tail("+45-00000001")).isEqualTo(CompanyMatcher.tail("0045 0000 0001"));
         assertThat(CompanyMatcher.tail("12345")).isNull();

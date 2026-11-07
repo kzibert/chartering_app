@@ -21,6 +21,7 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -96,6 +97,14 @@ public class IntakeService {
      */
     private final Map<Long, CompanyDirectoryVersion.Version> postsCheckedAt = new ConcurrentHashMap<>();
 
+    /** Why a placeholder slot was closed without a person looking at it. */
+    static final String PLACEHOLDER_CLOSED =
+            "Placeholder name — not a ship yet. Closed automatically.";
+
+    /** Why a particulars question was closed with nothing left on it. */
+    static final String NOTHING_LEFT =
+            "Nothing left to decide — every row was settled by earlier answers. Closed automatically.";
+
     /** What one email produced, for the parse row and the sweep's log line. */
     public record ApplyOutcome(int positionsApplied, int cargoesApplied, int itemsRaised) {
     }
@@ -129,6 +138,7 @@ public class IntakeService {
 
         for (Extraction.ExtractedVessel v : extraction.vesselsOrEmpty()) {
             if (!v.isUsable()) continue;
+            if (unnominated(v)) continue;
             VesselOutcome outcome = applyVessel(parsed, arrival, v);
             positionsApplied += outcome.positionApplied() ? 1 : 0;
             itemsRaised += outcome.itemsRaised();
@@ -144,6 +154,26 @@ public class IntakeService {
         if (raiseCompanyDetails(parsed, arrival, signature)) itemsRaised++;
 
         return new ApplyOutcome(positionsApplied, cargoesApplied, itemsRaised);
+    }
+
+    /**
+     * A slot a charterer has not filled yet, rather than a ship.
+     *
+     * <p>"TBN" is a berth on a fixture, not a hull: nothing has been nominated, so there is no
+     * position to file and no particular to disagree about. Skipped before anything is raised
+     * or recorded, so the vessel never reaches the queue, the reports or the positions.
+     *
+     * <p>The IMO is what keeps this from being over-broad. Some legacy hulls here are literally
+     * named TBN or "TBC PROGRESS"; once one carries an IMO it is a real ship and goes through
+     * as any other. Without the exemption every broker's TBN line would be filed against that
+     * one row, which is the failure the placeholder rule is there to stop.
+     *
+     * <p>Not {@link Extraction.ExtractedVessel#isUsable()}, which the paste screen shares and
+     * which has no business knowing what a placeholder is.
+     */
+    static boolean unnominated(Extraction.ExtractedVessel v) {
+        return IntakeResolver.isPlaceholderName(Extraction.text(v.name()))
+                && IntakeResolver.normaliseImo(v.imo()) == null;
     }
 
     /**
@@ -519,6 +549,18 @@ public class IntakeService {
      *
      * <p>Superseding is scoped to the same reporter, here as everywhere: when GN says she is
      * open Adriatic and Interscan says the Aegean, both are what we were told.
+     *
+     * <p><b>"Previous" means earlier-dated.</b> The sweep reads newest first, so after a backlog
+     * an older email from a broker is read after a newer one from that same broker. Its reading is
+     * not a later statement, so it must not displace the newer one on Open Fleet. A reading
+     * therefore supersedes only the reporter's LIVE rows reported at or before its own date (a row
+     * with no date counts as older, and an equal date is replaced, so a re-read of the same email
+     * replaces its own earlier reading). If the reporter already has a LIVE row reported after this
+     * arrival, the arrival is still recorded, as a SUPERSEDED row so that it reads as history
+     * ("she was said to be open X"), and the newer row is left LIVE.
+     *
+     * @return whether a LIVE row was written, which is whether Open Fleet changed. A history-only
+     *         row is false: the parse's positions-applied count means positions that landed there.
      */
     private boolean recordPosition(Vessel vessel, Extraction.ExtractedVessel v, Arrival arrival) {
         Port openPort = resolver.resolvePort(v.openPort());
@@ -547,15 +589,19 @@ public class IntakeService {
             return false;
         }
 
+        boolean newerOnFile = false;
         for (VesselPosition p : existing) {
-            if (p.getStatus() == PositionStatus.LIVE && sameReporter(p, reporter)) {
-                p.setStatus(PositionStatus.SUPERSEDED);
-            }
+            if (p.getStatus() != PositionStatus.LIVE || !sameReporter(p, reporter)) continue;
+            // A row this reading is older than is the newer statement, and stays live. Only rows at
+            // or before this reading's date are what it replaces.
+            if (reportedAfter(p, reportedAt)) newerOnFile = true;
+            else p.setStatus(PositionStatus.SUPERSEDED);
         }
 
         VesselPosition p = new VesselPosition();
         p.setVessel(vessel);
-        p.setStatus(PositionStatus.LIVE);
+        // An older reading that arrives late is kept on her record as history, not as the position.
+        p.setStatus(newerOnFile ? PositionStatus.SUPERSEDED : PositionStatus.LIVE);
         p.setOpenPort(openPort);
         p.setOpenPortText(Extraction.text(v.openPort()));
         p.setOpenArea(openArea);
@@ -572,7 +618,7 @@ public class IntakeService {
         p.setReportedAt(reportedAt);
         p.setNotes(Extraction.text(v.notes()));
         positions.save(p);
-        return true;
+        return !newerOnFile;
     }
 
     /**
@@ -586,14 +632,22 @@ public class IntakeService {
                                     Extraction.ExtractedCargo c) {
         ResolvedCargo resolved = resolve(c);
 
+        // This very arrival, read again. Asked first, and of every cargo the arrival is already a
+        // source of, whatever its status now. Asking only the recognised-on-arrival statuses (below)
+        // missed a cargo this email made and that has since been fixed, failed or withdrawn, and the
+        // re-read then made a second cargo with this email as its only source. The sender anchor is
+        // not needed here: only whether anything agrees is asked. A second cargo in the same email
+        // differs on commodity or load point, so it is not taken for the first and is still created.
+        if (CargoMatcher.findDuplicate(resolved, cargoesFromArrival(arrival), Set.of()).isPresent()) {
+            return new CargoOutcome(false, 0);
+        }
+
         List<Cargo> candidates = cargoes.findDuplicateCandidates(CargoService.RECOGNISED_ON_ARRIVAL_STATUSES);
         Optional<CargoMatcher.Candidate> duplicate =
                 CargoMatcher.findDuplicate(resolved, candidates, sourcedBy(arrival));
 
         if (duplicate.isPresent()) {
             CargoMatcher.Candidate candidate = duplicate.get();
-            // This very arrival, read again: it is already on the cargo and asks nothing.
-            if (alreadySourced(candidate.cargo(), arrival)) return new CargoOutcome(false, 0);
             if (candidate.certain()) {
                 mergeOnArrival(candidate, resolved, arrival);
                 return new CargoOutcome(false, 0);
@@ -605,6 +659,16 @@ public class IntakeService {
         Cargo cargo = createCargo(resolved, arrival);
         addSource(cargo, arrival, null);
         return new CargoOutcome(true, 0);
+    }
+
+    /**
+     * The cargoes this arrival is already a source of, of any status — the re-read guard in
+     * {@link #applyCargo}.
+     */
+    private List<Cargo> cargoesFromArrival(Arrival arrival) {
+        if (arrival.message() != null) return cargoSources.cargoesFromMailMessage(arrival.message().getId());
+        if (arrival.post() != null) return cargoSources.cargoesFromFeedItem(arrival.post().getId());
+        return List.of();
     }
 
     /**
@@ -658,6 +722,13 @@ public class IntakeService {
                                    Extraction.ExtractedVessel v) {
         String name = Extraction.text(v.name());
         if (!items.pendingNewVessel(name).isEmpty()) return false;
+        // The discard memory. A name the reviewer turned down as a ship to create is not asked
+        // again every morning it appears on a list. Six months, not forever: an owner does name
+        // a ship after one that was once a placeholder or a one-off, and a stale "no" should
+        // stop mattering eventually.
+        if (!items.rejectedNewVesselSince(name, OffsetDateTime.now().minusDays(180)).isEmpty()) {
+            return false;
+        }
 
         String searchedBy = IntakeResolver.normaliseImo(v.imo()) != null
                 ? "IMO " + IntakeResolver.normaliseImo(v.imo()) + " and the name \"" + name + "\""
@@ -703,7 +774,7 @@ public class IntakeService {
             IntakePayloads.VesselFields existing =
                     read(pending, IntakePayloads.VesselFields.class);
             if (existing == null) continue;
-            mergeInto(pending, existing, how, v, diff);
+            mergeInto(pending, existing, matchNote(how), v, diff);
             addSource(pending, parsed, arrival);
             // Not a new question, so the sweep's "raised" count does not grow. The email is on
             // the item and the reviewer will see it; the queue is no longer than it was.
@@ -764,7 +835,7 @@ public class IntakeService {
     }
 
     /**
-     * Put every waiting particulars and company question on the right side of the queue again.
+     * Put every waiting particulars, company and cargo question on the right side of the queue again.
      *
      * <p><b>Why it runs on a timer rather than only when mail arrives.</b> Whether a question is
      * minor depends on the record as much as on the email, and the record moves on its own: a
@@ -773,18 +844,48 @@ public class IntakeService {
      * weighed again here, the same way the drawer re-asks its rows each time it opens — and the
      * items that were waiting when this rule arrived are weighed for the first time.
      *
+     * <p>The same pass also tidies what the rules no longer allow to wait: placeholder slots are
+     * closed, a hull with two particulars questions is folded into one, and a particulars question
+     * with nothing left to decide is closed rather than left as an empty card. Those closures are
+     * not counted, because they do not move anything between the queue and Minor updates.
+     *
      * @return how many items changed sides
      */
     @Transactional
     public int reweighPending() {
         int moved = 0;
-        for (IntakeItem item : items.pendingOfKind(IntakeItemKind.VESSEL_FIELDS)) {
+        // A placeholder slot that reached the queue before it was skipped at intake (or that a
+        // lookup or an older rule let through): nothing to decide about a ship that is not named.
+        // Closed as a discard, so the same name is not raised again either.
+        for (IntakeItem item : items.pendingOfKind(IntakeItemKind.NEW_VESSEL)) {
             try {
+                IntakePayloads.NewVessel payload = read(item, IntakePayloads.NewVessel.class);
+                if (payload == null || payload.vessel() == null || !unnominated(payload.vessel())) continue;
+                closeWithNote(item, IntakeItemStatus.REJECTED, PLACEHOLDER_CLOSED);
+                items.save(item);
+            } catch (Exception e) {
+                log.warn("Could not close placeholder intake item {}: {}", item.getId(), e.toString());
+            }
+        }
+        List<IntakeItem> particulars = items.pendingOfKind(IntakeItemKind.VESSEL_FIELDS);
+        foldDuplicateParticulars(particulars);
+        for (IntakeItem item : particulars) {
+            try {
+                // Folded into an older question just above; nothing left to weigh on it.
+                if (item.getStatus() != IntakeItemStatus.PENDING) continue;
                 IntakePayloads.VesselFields payload = read(item, IntakePayloads.VesselFields.class);
                 if (payload == null || payload.vesselId() == null || payload.vessel() == null) continue;
                 Vessel vessel = vessels.findById(payload.vesselId()).orElse(null);
                 if (vessel == null) continue;
-                boolean minor = VesselReviewPolicy.allMinor(shown(item, vessel, payload));
+                List<FieldDiff> rows = shown(item, vessel, payload);
+                // Every row settled by an earlier answer: the item would be an empty card, and
+                // allMinor() reads empty as "not minor", so it would sit in Needs review forever.
+                if (rows.isEmpty()) {
+                    closeWithNote(item, IntakeItemStatus.ACCEPTED, NOTHING_LEFT);
+                    items.save(item);
+                    continue;
+                }
+                boolean minor = VesselReviewPolicy.allMinor(rows);
                 if (minor != item.isMinor()) {
                     item.setMinor(minor);
                     moved++;
@@ -808,7 +909,158 @@ public class IntakeService {
                 log.warn("Could not re-weigh intake item {}: {}", item.getId(), e.toString());
             }
         }
+        for (IntakeItem item : items.pendingOfKind(IntakeItemKind.CARGO_MERGE)) {
+            try {
+                if (reweighCargoMerge(item)) moved++;
+            } catch (Exception e) {
+                log.warn("Could not re-weigh intake item {}: {}", item.getId(), e.toString());
+            }
+        }
         return moved;
+    }
+
+    /**
+     * One waiting cargo merge, against the cargo it is stacked on as it stands now.
+     *
+     * <p>Every such question is minor, because the cargo's drawer is where it gets answered. And
+     * one whose anchors have since come out CERTAIN is merged here rather than left to be asked:
+     * the sender can become certain after the fact, when the same firm's earlier enquiry is
+     * folded in or the cargo gains the figure this reading carries. The merge is the same one an
+     * ACCEPT makes, and the item is closed as answered with a note saying it was automatic, so
+     * the person reviewing sees what was done rather than a question that was never asked.
+     *
+     * <p>Only the item's own cargo is read, by id, and its sources: the cost scales with the
+     * waiting merges, not with the cargoes table.
+     *
+     * @return whether the item changed side (minor flipped, or merged and answered)
+     */
+    private boolean reweighCargoMerge(IntakeItem item) {
+        boolean changed = !item.isMinor();
+        item.setMinor(true);
+
+        IntakePayloads.CargoMerge payload = read(item, IntakePayloads.CargoMerge.class);
+        Cargo existing = item.getCargoId() == null ? null
+                : cargoes.findById(item.getCargoId()).orElse(null);
+        // A cargo since fixed, failed or withdrawn is no longer one the desk is working, so
+        // nothing is folded into it; the question stays for a person to look at.
+        if (payload == null || payload.cargo() == null || existing == null
+                || !existing.getStatus().isRecognisedOnArrival()) {
+            if (changed) items.save(item);
+            return changed;
+        }
+
+        ResolvedCargo resolved = resolve(payload.cargo());
+        // Who sent it is asked of the item's own source rows, which carry the firm, and then of
+        // this one cargo's sources. Not through arrivalsOf: that loads every source's message,
+        // both bodies and all, and this runs on a timer over every waiting merge - the read that
+        // is billed as transfer (CLAUDE.md, "Database transfer"). The messages are loaded only
+        // below, for the rare item that is actually merged.
+        List<Long> senderIds = sendersOf(item).stream()
+                .filter(java.util.Objects::nonNull).map(Company::getId).toList();
+        Set<Long> sourced = !senderIds.isEmpty()
+                && cargoSources.existsByCargoIdAndReportedByCompanyIdIn(existing.getId(), senderIds)
+                ? Set.of(existing.getId()) : Set.of();
+
+        Optional<CargoMatcher.Candidate> found =
+                CargoMatcher.findDuplicate(resolved, List.of(existing), sourced);
+        if (found.isEmpty() || !found.get().certain()) {
+            if (changed) items.save(item);
+            return changed;
+        }
+
+        ChangeContext.describe("Intake: CARGO_MERGE merged automatically");
+        String note = truncateNote("Merged automatically: "
+                + String.join("; ", found.get().reasons()));
+        mergeCargoMerge(existing, resolved, arrivalsOf(item), note);
+        item.setStatus(IntakeItemStatus.ACCEPTED);
+        item.setResolvedAt(OffsetDateTime.now());
+        item.setResolvedBy(null);
+        item.setResolutionNote(note);
+        items.save(item);
+        return true;
+    }
+
+    /**
+     * Fold any second or later particulars question about one hull into the oldest of them.
+     *
+     * <p><b>Why this pass exists alongside the checks on the way in.</b> The checks stop a second
+     * question being raised, but they cannot touch rows already waiting. Live data had three
+     * hulls with two or three pending particulars questions each, carrying identical diffs, from
+     * before the checks covered every path. This pass brings those rows into line, and the checks
+     * keep new ones from appearing.
+     *
+     * <p>The newer question's figures and sources go into the oldest through the same merge an
+     * arriving email uses, so nothing a reviewer had to read is lost, and the newer row is closed
+     * with a note saying where it went.
+     *
+     * <p>Loads each parse only to copy its sources, which is the one place the reweigh pass needs
+     * one; the lazy reference costs nothing where no duplicate exists.
+     *
+     * @param waiting the pending particulars questions, oldest first
+     */
+    private void foldDuplicateParticulars(List<IntakeItem> waiting) {
+        Map<Long, List<IntakeItem>> byVessel = new LinkedHashMap<>();
+        for (IntakeItem item : waiting) {
+            if (item.getVesselId() != null) {
+                byVessel.computeIfAbsent(item.getVesselId(), k -> new ArrayList<>()).add(item);
+            }
+        }
+        for (List<IntakeItem> group : byVessel.values()) {
+            if (group.size() < 2) continue;
+            IntakeItem oldest = group.get(0);
+            for (IntakeItem newer : group.subList(1, group.size())) {
+                try {
+                    IntakePayloads.VesselFields keep = read(oldest, IntakePayloads.VesselFields.class);
+                    IntakePayloads.VesselFields later = read(newer, IntakePayloads.VesselFields.class);
+                    if (keep == null || later == null || later.vessel() == null) continue;
+                    mergeInto(oldest, keep, later.matchedBy(), later.vessel(),
+                            new VesselFieldDiff.Result(
+                                    later.diffs() == null ? List.of() : later.diffs(),
+                                    later.filled() == null ? List.of() : later.filled()));
+                    foldSources(newer, oldest);
+                    closeWithNote(newer, IntakeItemStatus.ACCEPTED, mergedInto(oldest.getId()));
+                    items.save(newer);
+                } catch (Exception e) {
+                    log.warn("Could not fold intake item {} into {}: {}",
+                            newer.getId(), oldest.getId(), e.toString());
+                }
+            }
+        }
+    }
+
+    /**
+     * Give every email behind one item to another, as sources of that item.
+     *
+     * <p>The sources of the old item are kept — its history is still what it was — and the
+     * emails are added to the new one, which is what makes both originals readable from the
+     * question that is still open.
+     */
+    private void foldSources(IntakeItem from, IntakeItem into) {
+        List<ParsedEmail> emails = new ArrayList<>();
+        if (from.getParsedEmail() != null) emails.add(from.getParsedEmail());
+        for (IntakeItemSource source : itemSources.forItem(from.getId())) {
+            if (source.getParsedEmail() != null && !emails.contains(source.getParsedEmail())) {
+                emails.add(source.getParsedEmail());
+            }
+        }
+        for (ParsedEmail parsedEmail : emails) addSource(into, parsedEmail, arrivalOf(parsedEmail));
+    }
+
+    /**
+     * Close an item the system, not a person, has finished with.
+     *
+     * <p>{@code resolvedBy} is left null: nobody answered it, and a name would read in the
+     * History as a decision somebody made. The note carries what closed it.
+     */
+    private static void closeWithNote(IntakeItem item, IntakeItemStatus status, String note) {
+        item.setStatus(status);
+        item.setResolvedAt(OffsetDateTime.now());
+        item.setResolvedBy(null);
+        item.setResolutionNote(note);
+    }
+
+    private static String mergedInto(Long itemId) {
+        return "Merged into the waiting question about this vessel (#" + itemId + ")";
     }
 
     private boolean convertToFieldsReview(IntakeItem item) {
@@ -821,20 +1073,45 @@ public class IntakeService {
         if (payload == null || payload.vessel() == null) return false;
 
         VesselFieldDiff.Result diff = VesselFieldDiff.compare(vessel, payload.vessel());
-        item.setKind(IntakeItemKind.VESSEL_FIELDS);
-        item.setVesselId(vessel.getId());
-        item.setSubjectLabel(truncate(vessel.getName()));
-        item.setPayload(write(new IntakePayloads.VesselFields(
-                vessel.getId(), vessel.getName(),
-                matchNote(IntakeResolver.VesselMatch.LOOKUP_IMO), payload.vessel(),
-                diff.conflicts(), diff.filled())));
-        items.save(item);
+        // One pending particulars question per vessel, on this path too. A hull already asking
+        // a question about her particulars takes this one as a merge: the same rule the email
+        // path applies, or a lookup that lands a week after the list would open a second row
+        // about the same ship.
+        IntakeItem waiting = oldestPendingParticulars(vessel.getId());
+        IntakePayloads.VesselFields existing = waiting == null ? null : read(waiting, IntakePayloads.VesselFields.class);
+        if (existing != null) {
+            mergeInto(waiting, existing, matchNote(IntakeResolver.VesselMatch.LOOKUP_IMO), payload.vessel(), diff);
+            foldSources(item, waiting);
+            closeWithNote(item, IntakeItemStatus.ACCEPTED, mergedInto(waiting.getId()));
+            items.save(item);
+        } else {
+            item.setKind(IntakeItemKind.VESSEL_FIELDS);
+            item.setVesselId(vessel.getId());
+            item.setSubjectLabel(truncate(vessel.getName()));
+            item.setPayload(write(new IntakePayloads.VesselFields(
+                    vessel.getId(), vessel.getName(),
+                    matchNote(IntakeResolver.VesselMatch.LOOKUP_IMO), payload.vessel(),
+                    diff.conflicts(), diff.filled())));
+            items.save(item);
+        }
 
         // Her position, now that there is a hull to file it against. An add, and the half of
         // the email that goes stale — the particulars can wait for a reviewer, "where is she
-        // open" cannot.
+        // open" cannot. Filed whether or not the question was merged.
         recordPosition(vessel, payload.vessel(), arrivalOf(item.getParsedEmail()));
         return true;
+    }
+
+    /**
+     * The oldest particulars question still waiting about this hull, or null.
+     *
+     * <p>Oldest rather than newest, so every fold in the queue lands on the same row: the one
+     * that has been on the Intake tab longest, which is the one a reviewer already has open in
+     * their head.
+     */
+    private IntakeItem oldestPendingParticulars(Long vesselId) {
+        List<IntakeItem> waiting = items.pendingForVessel(IntakeItemKind.VESSEL_FIELDS, vesselId);
+        return waiting.isEmpty() ? null : waiting.get(waiting.size() - 1);
     }
 
     /**
@@ -846,7 +1123,7 @@ public class IntakeService {
      * ever stated.
      */
     private void mergeInto(IntakeItem pending, IntakePayloads.VesselFields existing,
-                           IntakeResolver.VesselMatch how, Extraction.ExtractedVessel v,
+                           String matchedBy, Extraction.ExtractedVessel v,
                            VesselFieldDiff.Result diff) {
         Map<String, FieldDiff> byField = new LinkedHashMap<>();
         // A stored row for a field no longer compared (the vessel type was, until the column
@@ -862,7 +1139,7 @@ public class IntakeService {
         for (String f : diff.filled()) if (!filled.contains(f)) filled.add(f);
 
         pending.setPayload(write(new IntakePayloads.VesselFields(
-                existing.vesselId(), existing.vesselName(), matchNote(how), v,
+                existing.vesselId(), existing.vesselName(), matchedBy, v,
                 List.copyOf(byField.values()), List.copyOf(filled))));
         // Recomputed on the union: one significant row from a new arrival puts a minor item
         // back on the queue, which is the point of it being a flag rather than a status.
@@ -899,14 +1176,21 @@ public class IntakeService {
         // One question per cargo, however many brokers raise it - the vessel rule. The newest
         // reading is the one shown and the one a merge fills from; every arrival stays on the
         // item and goes onto the cargo as a source whichever way it is answered.
+        // Minor from the start. A probable duplicate is answered from the cargo it is stacked on
+        // (its drawer lists these), so it does not hold up the Needs review count; the reweigh
+        // pass merges it by itself the moment the anchors say it is the same cargo.
         for (IntakeItem pending : items.pendingCargoMerge(existing.getId())) {
             pending.setPayload(write(payload));
+            pending.setMinor(true);
             items.save(pending);
             addSource(pending, parsed, arrival);
             return false;
         }
-        addSource(save(parsed, IntakeItemKind.CARGO_MERGE, null, existing.getId(),
-                Extraction.text(resolved.parsed().commodity()), payload), parsed, arrival);
+        IntakeItem raised = save(parsed, IntakeItemKind.CARGO_MERGE, null, existing.getId(),
+                Extraction.text(resolved.parsed().commodity()), payload);
+        raised.setMinor(true);
+        items.save(raised);
+        addSource(raised, parsed, arrival);
         return true;
     }
 
@@ -1478,8 +1762,18 @@ public class IntakeService {
 
         Cargo existing = cargoes.findById(payload.candidateId()).orElseThrow(() ->
                 new com.chartering.exception.ResourceNotFoundException("Cargo", payload.candidateId()));
+        return mergeCargoMerge(existing, resolved, arrivals, null);
+    }
+
+    /**
+     * The merge an ACCEPT makes, shared by the answer and by the reweigh pass: gap-fill from the
+     * reading, and every arrival onto the cargo as a source. Nothing is overwritten, so a
+     * disagreement between two brokers stays where it was; the sources carry the rest.
+     */
+    private String mergeCargoMerge(Cargo existing, ResolvedCargo resolved, List<Arrival> arrivals,
+                                   String sourceNote) {
         CargoFieldDiff.Result merged = CargoFieldDiff.merge(existing, resolved, true);
-        for (Arrival a : arrivals) addSource(existing, a, null);
+        for (Arrival a : arrivals) addSource(existing, a, sourceNote);
         return merged.filled().isEmpty()
                 ? "Merged; the cargo already held everything this email said."
                 : "Merged, filling " + merged.filled().size() + " empty field(s).";
@@ -1826,6 +2120,14 @@ public class IntakeService {
                 resolver.resolveCompany(c.charterer()));
     }
 
+    /**
+     * Whether a row was reported after this reading. A row with no date is older than any reading,
+     * so an undated row never blocks a dated one from superseding it.
+     */
+    private static boolean reportedAfter(VesselPosition p, OffsetDateTime at) {
+        return p.getReportedAt() != null && at != null && p.getReportedAt().isAfter(at);
+    }
+
     private static boolean sameReporter(VesselPosition p, Company reporter) {
         Long existing = p.getReportedByCompany() == null ? null : p.getReportedByCompany().getId();
         Long incoming = reporter == null ? null : reporter.getId();
@@ -1931,7 +2233,9 @@ public class IntakeService {
 
     /**
      * Numbers the tab's header prints. {@code pending} is the queue alone — what "Needs review"
-     * means — and {@code minor} the questions kept for the record on their own sub-tab.
+     * means — and {@code minor} the questions kept for the record on their own sub-tab. Minor
+     * company details are in neither: they are a mark on the firm's record, not a queue item
+     * (see {@link IntakeItemRepository#countPendingMinorUpdates}).
      */
     public record Counts(long pending, long minor, long accepted, long rejected) {
     }
@@ -1940,7 +2244,7 @@ public class IntakeService {
     public Counts counts() {
         return new Counts(
                 items.countByStatusAndMinor(IntakeItemStatus.PENDING, false),
-                items.countByStatusAndMinor(IntakeItemStatus.PENDING, true),
+                items.countPendingMinorUpdates(),
                 items.countByStatus(IntakeItemStatus.ACCEPTED),
                 items.countByStatus(IntakeItemStatus.REJECTED));
     }

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button, Checkbox, Col, Form, Input, Row, Select, Space, Tag, Tooltip, Typography } from 'antd';
-import { PlusOutlined, WarningOutlined } from '@ant-design/icons';
+import { PlusOutlined, SyncOutlined, WarningOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useCompanies, useRegions, usePorts, useTonnageCategories, useCompanyMutations } from '../../api/hooks';
 import { useTableControls } from '../../components/useTableControls';
@@ -14,6 +14,24 @@ import { collectApi } from '../../api/circulations';
 import CompanyDrawer from './CompanyDrawer';
 import CompanyForm from './CompanyForm';
 import type { CompanyFilter, CompanyResponse } from '../../api/types';
+
+/**
+ * A firm whose correspondence has details its record does not.
+ *
+ * <b>Why a tag and not a count.</b> The question is answered on the firm's own record, one firm
+ * at a time, so the list's job is only to say which firms are waiting. The tooltip names where
+ * the answer is, because the tag alone reads as a status rather than as something to do.
+ * Shared by the table and the phone card so the two layouts cannot word it differently.
+ */
+function UpdateAvailableTag() {
+  return (
+    <Tooltip title="Its correspondence carries details this record does not have — open the firm and use Update from correspondence">
+      <Tag color="gold" icon={<SyncOutlined />}>
+        Update available
+      </Tag>
+    </Tooltip>
+  );
+}
 
 export default function CompaniesPage() {
   const [form] = Form.useForm();
@@ -36,7 +54,7 @@ export default function CompaniesPage() {
   const applyFilters = (values: Partial<CompanyFilter>) => {
     // unchecked role booleans come through as false; drop them so they don't over-filter
     const cleaned = { ...values };
-    (['shipowner', 'charterer', 'broker', 'agent'] as const).forEach((k) => {
+    (['shipowner', 'charterer', 'broker', 'agent', 'correspondenceUpdate'] as const).forEach((k) => {
       if (!cleaned[k]) delete cleaned[k];
     });
     setFilters(cleaned);
@@ -64,6 +82,7 @@ export default function CompaniesPage() {
           )}
           {!c.legacy && <Tag color="green">new</Tag>}
           {c.banned && <Tag color="red">banned</Tag>}
+          {c.correspondenceUpdate && <UpdateAvailableTag />}
         </Space>
       ),
     },
@@ -171,6 +190,9 @@ export default function CompaniesPage() {
               <Form.Item name="includeBanned" valuePropName="checked" noStyle>
                 <Checkbox>Include banned (Russian-rooted)</Checkbox>
               </Form.Item>
+              <Form.Item name="correspondenceUpdate" valuePropName="checked" noStyle>
+                <Checkbox>Update available from correspondence</Checkbox>
+              </Form.Item>
             </>
           }
         >
@@ -234,6 +256,7 @@ export default function CompaniesPage() {
               {c.solo && <Tag color="geekblue">solo</Tag>}
               {!c.legacy && <Tag color="green">new</Tag>}
               {c.banned && <Tag color="red">banned</Tag>}
+              {c.correspondenceUpdate && <UpdateAvailableTag />}
             </Space>
           ),
           subtitle: (c) => c.cityName ?? 'No city on file',

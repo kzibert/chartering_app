@@ -8,12 +8,12 @@ import org.springframework.stereotype.Component;
  * The email-analysis feature: keeping incoming mail as training data for a model that reads
  * cargo offers and vessel opening positions.
  *
- * <p><b>Off by default, and off on the hosted deployment on purpose.</b> This is a workbench,
- * not a desk tool — it accumulates a corpus, it is worked through in long sessions, and what
- * comes out of it is a file that goes somewhere else entirely. None of that wants to happen
- * on a free instance that sleeps after fifteen minutes, and a half-labelled corpus on a
- * server nobody is sitting at is a liability rather than an asset. {@code ANALYSIS_ENABLED}
- * is true in the local compose environment and explicitly false in {@code render.yaml}.
+ * <p><b>Off by default, on in compose and in {@code render.yaml}.</b> This is a workbench, not
+ * a desk tool — it accumulates a corpus, it is worked through in long sessions, and what comes
+ * out of it is a file that goes somewhere else entirely. It runs on the free hosted instance
+ * because the corpus is a table in the shared database rather than state on the instance: a
+ * sleep costs a cold start in front of a labelling session and nothing else. The retrieval index
+ * beside it needs an embedding server ({@code EMBEDDING_URL}), which only the office runs.
  *
  * <p>The switch is runtime, not build-time: the schema is the same everywhere (Flyway builds
  * one schema, not one per deployment), the code ships everywhere, and turning it on is one

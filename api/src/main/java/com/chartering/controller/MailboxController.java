@@ -108,7 +108,7 @@ public class MailboxController {
                     + "whichever provider circulars are using: a reply has to come from the "
                     + "address the correspondent wrote to and land in their thread. A "
                     + "deployment whose host blocks outbound SMTP can set "
-                    + "MAIL_REPLY_PROVIDER=BREVO, which sends the identical message through "
+                    + "SMTP_BLOCKED=true, which sends the identical message through "
                     + "Brevo as the mailbox address instead — GET /campaigns/config reports "
                     + "which route is in force. The chosen footer is appended and the "
                     + "original is quoted "
@@ -147,7 +147,7 @@ public class MailboxController {
     @Operation(summary = "Write a new message from the app",
             description = "What a company's Reach out sends: one message to one address with "
                     + "any others on copy, by the same route a reply takes (the mailbox over "
-                    + "SMTP, or Brevo under MAIL_REPLY_PROVIDER=BREVO) and with the same footer "
+                    + "SMTP, or Brevo under SMTP_BLOCKED=true) and with the same footer "
                     + "and merge. No quote and no thread headers - there is nothing to answer. "
                     + "Placeholders merge against contactId when it is the To address. Recorded "
                     + "and counted like a reply once sent; a refusal is a 503 and is not stored.")

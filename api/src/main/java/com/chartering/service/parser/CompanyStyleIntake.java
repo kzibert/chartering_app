@@ -5,7 +5,6 @@ import com.chartering.dto.IntakePasteCompanyComparison;
 import com.chartering.dto.IntakePasteDraftResponse;
 import com.chartering.dto.CompanyRequest;
 import com.chartering.model.Company;
-import com.chartering.service.CompanyNames;
 import com.chartering.repository.CompanyRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -212,17 +211,23 @@ public class CompanyStyleIntake {
      * <p>The rule is the desk's: <b>the name and the email addresses are what the contacts
      * database is for</b>, and everything else in a signature — a website, a city, a phone, a
      * new face, a job title — is worth having and not worth a morning. So it is minor unless the
-     * firm's name has actually changed (not merely its legal form: "Fednav Ltd." is FEDNAV), or
-     * the block carries an email address the firm does not have. A firm not on file is never
-     * minor; that is the question the whole kind exists for.
+     * firm's name has actually changed, or the block carries an email address the firm does not
+     * have. A firm not on file is never minor; that is the question the whole kind exists for.
+     *
+     * <p>"Changed" is {@link CompanyMatcher#sameFirm}'s meaning, and it is generous on purpose.
+     * A legal form ("Fednav Ltd." is FEDNAV), a trade word ("Damarax Chartering" is Damarax),
+     * punctuation ("Steel&amp;Bulk" is STEELBULK) or the office a name is written with ("Bermuda
+     * Shipping -Istanbul") is the same firm written another way, and a spelling of the firm on
+     * file is not news. Those were all raised as questions before, one per circular, for firms
+     * whose record was already right. A phone-only difference is minor for the same reason as
+     * every other non-name one: this method never reads a phone at all.
      */
     static boolean isMinor(Long companyId, IntakePasteDraftResponse.CompanyDraft draft,
                            IntakePasteCompanyComparison comparison) {
         if (companyId == null || comparison == null) return false;
         if (comparison.fields() != null) {
             for (IntakePasteCompanyComparison.FieldRow f : comparison.fields()) {
-                if ("name".equals(f.field()) && !CompanyNames.similarityKey(f.current())
-                        .equals(CompanyNames.similarityKey(f.parsed()))) {
+                if ("name".equals(f.field()) && !CompanyMatcher.sameFirm(f.current(), f.parsed())) {
                     return false;
                 }
             }

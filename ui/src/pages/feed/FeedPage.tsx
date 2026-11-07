@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { useCapabilities } from '../../capabilities/store';
 import { Alert, App, Button, Card, Space, Tabs, Tag, Typography } from 'antd';
 import { CloudDownloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -17,6 +18,22 @@ import ItemsTab from './ItemsTab';
  * `analysisEnabled` says this instance can do them, rather than as buttons that 404.
  */
 export default function FeedPage() {
+  const caps = useCapabilities();
+  if (!caps.data) return null;
+  if (!caps.data.feed) {
+    return (
+      <Alert
+        type="info"
+        showIcon
+        message="The Feed is switched off on this deployment"
+        description="FEED_ENABLED is off. The boards read into Intake are managed on the Intake tab."
+      />
+    );
+  }
+  return <FeedPageBody />;
+}
+
+function FeedPageBody() {
   const { message: toast } = App.useApp();
   const status = useFeedStatus();
   const invalidate = useFeedInvalidator();

@@ -151,16 +151,9 @@ class MailReplyRoutingTest {
         verify(brevo, never()).send(any(), any(), any(), any(), any(), any(), any());
     }
 
-    /** A value nothing recognises must not silently pick the route that cannot work. */
-    @Test
-    void anUnreadableValueFallsBackToTheMailbox() {
-        props.setReplyProvider("brevoo");
-        assertThat(service.replyProvider()).isEqualTo(CircularProvider.SMTP);
-    }
-
     @Test
     void brevoSendsAsTheMailboxAndReferencesTheAnsweredMessage() {
-        props.setReplyProvider("BREVO");
+        props.setSmtpBlocked(true);
         when(brevo.send(any(), any(), any(), any(), any(), any(), any())).thenReturn("<brevo-99@maritella.com>");
 
         service.reply(7L, request());
@@ -179,7 +172,7 @@ class MailReplyRoutingTest {
      */
     @Test
     void brevosOwnMessageIdIsWhatGetsRecorded() {
-        props.setReplyProvider("BREVO");
+        props.setSmtpBlocked(true);
         when(brevo.send(any(), any(), any(), any(), any(), any(), any())).thenReturn("<brevo-99@maritella.com>");
 
         service.reply(7L, request());
@@ -195,7 +188,7 @@ class MailReplyRoutingTest {
     /** Missing settings are reported for the route in force, not the other one. */
     @Test
     void brevoRouteAsksBrevoWhatIsMissing() {
-        props.setReplyProvider("BREVO");
+        props.setSmtpBlocked(true);
         when(brevo.missingSettings(MAILBOX)).thenReturn(List.of("BREVO_API_KEY"));
 
         assertThatThrownBy(() -> service.reply(7L, request()))
@@ -207,7 +200,7 @@ class MailReplyRoutingTest {
     /** MAIL_ENABLED is the master switch and outranks the route entirely. */
     @Test
     void theMasterSwitchStillStopsEverything() {
-        props.setReplyProvider("BREVO");
+        props.setSmtpBlocked(true);
         props.setEnabled(false);
 
         assertThatThrownBy(() -> service.reply(7L, request()))
@@ -225,7 +218,7 @@ class MailReplyRoutingTest {
      */
     @Test
     void aNewMessageCopiesTheRestOnceAndThreadsNothing() {
-        props.setReplyProvider("BREVO");
+        props.setSmtpBlocked(true);
         when(brevo.send(any(), any(), any(), any(List.class), any(), any(), any(), any()))
                 .thenReturn("<brevo-100@maritella.com>");
 

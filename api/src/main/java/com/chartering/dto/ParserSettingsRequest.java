@@ -1,6 +1,5 @@
 package com.chartering.dto;
 
-import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 /**
@@ -60,7 +59,7 @@ public class ParserSettingsRequest {
     private Integer fewShotMaxChars;
 
     /**
-     * The hosted model's chat-completions endpoint, used under {@code PARSER_PROVIDER=CLOUD}. Blank
+     * The hosted model's chat-completions endpoint, used when a person reads with their own key. Blank
      * restores {@code PARSER_CLOUD_URL}. Refused unless it is an http(s) URL with a host, as
      * {@link #modelUrl} is.
      */
@@ -68,16 +67,4 @@ public class ParserSettingsRequest {
 
     /** The hosted model's name, sent on every request. Blank restores {@code PARSER_CLOUD_MODEL}. */
     private String cloudModel;
-
-    /**
-     * A new API key for the hosted provider. Absent or blank leaves the stored key alone.
-     *
-     * <p>Write-only: the response carries its last four characters and never the key itself. Stored
-     * encrypted, and refused on a deployment without {@code CREDENTIALS_KEY}.
-     */
-    @Size(max = 500, message = "The API key is longer than 500 characters.")
-    private String cloudApiKey;
-
-    /** True removes the stored API key. Cannot be combined with a new key in the same request. */
-    private Boolean clearCloudApiKey;
 }

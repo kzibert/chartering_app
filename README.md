@@ -86,7 +86,7 @@ instants, so changing `TZ` re-reads existing history in the new zone rather than
 ```bash
 # in .env
 TZ=Europe/Athens
-docker compose up -d --force-recreate api db
+docker compose up -d --force-recreate api
 ```
 
 ## Layout
@@ -107,15 +107,14 @@ logs/                    # campaign send log, bind-mounted from the api containe
 ## The login
 
 Every endpoint under `/api` refuses a request that does not carry a valid token, and the SPA
-shows a login screen until it has one. There is **one account**, configured from the
-environment — no users table, no registration, no password reset.
+shows a login screen until it has one. Accounts live in the database (`users`, V30), each on
+one desk (`tenants`), and every desk's data is its own (V31, enforced again by row-level
+security from V36). There is no self-registration: an administrator makes every account on
+Admin › Users. CLAUDE.md, "Tenancy" and "Auth", has the whole design.
 
-That is the right shape for what this is. The database has no concept of an owner: every row
-is visible to whoever is logged in, and nothing in it is attributed to an account. A users
-table would add a schema, a migration and an admin screen while changing nothing about who
-can see what. The login exists to stop the internet reaching the data, and one credential
-does that. `AuthProperties` is where a second account would start if one is ever needed —
-nothing else in the app asks who the caller is.
+The environment credential below only **seeds the first account** — a platform administrator
+on desk 1 — when there are none, and `AUTH_RESET_PASSWORD=true` re-applies it for one restart
+as the way back in.
 
 ```bash
 # in .env
@@ -856,18 +855,17 @@ Endpoints: `GET /api/v1/mailbox/messages` (the search above), `GET /mailbox/mess
 thread), plus CRUD on `/api/v1/mailbox/folders` and `/api/v1/mailbox/rules` and
 `POST /mailbox/rules/apply`.
 
-## Analysis (training data for reading offers) — local only
+## Analysis (training data for reading offers)
 
 The Analysis tab keeps incoming mail as **training data for a model that reads cargo offers
 and vessel opening positions**. Nothing in it calls a model: it collects the examples one
 would be finetuned on, and hands them over as a file.
 
-**It is off on Render and on by default in compose.** `ANALYSIS_ENABLED=false` in
-`render.yaml`, `true` in `docker-compose.yml`. That is the intended split rather than a
-staged rollout: a corpus is accumulated over months, worked through in long labelling
-sittings, and ends in a file given to a training job somewhere else — none of which belongs
-on a free instance that sleeps after fifteen minutes idle, and a half-labelled corpus sitting
-on a server nobody is at is a liability rather than an asset. With it off the tab is absent
+**It is on in both compose and `render.yaml`.** It was off on Render until 2026-08-27; what
+settled it is that the corpus is a table in the shared database rather than state on the
+instance, so a sleeping free instance costs a cold start in front of a labelling session and
+nothing else. The retrieval index beside it needs an embedding server, which only the office
+runs, so that card is absent on Render. With `ANALYSIS_ENABLED` off the tab is absent
 from the navigation and every endpoint behind it answers **404** (not 403, not 503: the
 feature genuinely is not part of that deployment). `GET /api/v1/analysis/status` is the one
 endpoint that always answers, because it is what the UI asks in order to decide whether the
@@ -927,7 +925,7 @@ a message you half remember), `GET|PATCH|DELETE /analysis/samples/{id}`,
 Tuning: `ANALYSIS_MAX_BODY_CHARS` (default 20000 — a cap, not a target; past it an email is a
 quoted chain and a disclaimer) and `ANALYSIS_MAX_CAPTURE` (default 500 per run).
 
-## Intake (mail read into cargoes and positions) — local only
+## Intake (mail read into cargoes and positions)
 
 The other half of the Analysis tab, and what the corpus was collected for. A model reads
 incoming mail and the app files what it found: **open positions onto the Open fleet tab,
@@ -944,9 +942,15 @@ curl localhost:8090/health
 ```
 
 Then `PARSER_ENABLED=true` (and `PARSER_URL`, which defaults to the host from inside the api
-container). On Render it is pinned **false**: no GPU, and no route to one on a home network.
-Off, the tab is gone from the navigation and every endpoint answers 404 — except
-`GET /intake/status`, which is what the UI asks before deciding the tab exists.
+container). On Render it is pinned **false**: no GPU, and no route to one on a home network —
+and so no timers there either.
+
+**A hosted model, under your own key, is the other route** (`PARSER_CLOUD_ENABLED`, true in
+both). Paste a Groq key under Settings › Your parser: it stays in your browser, is sent only
+with your Intake requests, and is never stored on the server. At the office it is a choice beside
+the local model; on Render it is the only way in, and saving a key is what brings the Intake tab
+there. Mail is then read when you ask — Parse now, Parse everything, or messages picked on the
+Mailbox tab. With neither route, the tab is gone and every endpoint answers 404.
 
 ### What lands on its own, and what waits for you
 
@@ -1232,16 +1236,21 @@ how compose runs the ui locally, and still the way back if this moves to a paid 
   and a circular cannot go out to a sleeping instance. That is the actual cost of the free
   tier here, and it is fine for a desk that gets opened deliberately. `plan: starter` is the
   same file with one word changed.
-- **`ANALYSIS_ENABLED=false`.** The Analysis tab is a local workbench — see its section
-  above. Off, its tab is not in the navigation and its endpoints answer 404; the table exists
-  in the database either way.
+- **What runs here, and what does not.** Analysis is on (gathering and labelling training
+  data). Intake has no local model (`PARSER_ENABLED=false`) and reads with each person's own
+  cloud key (`PARSER_CLOUD_ENABLED=true`). The Feed is off everywhere for now
+  (`FEED_ENABLED=false`). `SMTP_BLOCKED=true` sends replies and circulars through Brevo, since
+  Render drops outbound SMTP. The office deployment runs the timers on the same database.
+- **Sized for 512 MB.** `JAVA_TOOL_OPTIONS` gives the heap half the container (the rest is
+  metaspace, the code cache and thread stacks) and stops at the C1 compiler for a faster cold
+  start; `TOMCAT_MAX_THREADS=20`.
 - **`SWAGGER_ENABLED=false`.** No published map of the API from a public instance. The
   endpoints refuse anonymous callers either way; this is just not advertising them.
 - **Redeploys log you out unless `JWT_SECRET` is fixed.** The blueprint's `generateValue`
   generates it once and keeps it, which is the point.
 - **Pool settings assume a database that sleeps.** The blueprint ships `DB_POOL_MAX=5`,
   `DB_POOL_MIN_IDLE=0`, `DB_POOL_IDLE_TIMEOUT_MS=30000`, so the pool drains to nothing and a
-  serverless Postgres (Neon, Supabase) is actually allowed to suspend. The cost is a cold
+  serverless Postgres (Supabase, Neon) is actually allowed to suspend. The cost is a cold
   start on the first query after a quiet spell. Against an always-on database, raise the
   minimum back to 5 and lengthen the timeout.
 - **`DB_HEALTH_CHECK=false`, for the same reason.** With the database in the health check,

@@ -24,7 +24,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Optional;
 import java.util.OptionalDouble;
 
 /**
@@ -168,12 +167,13 @@ public class EmailParserClient {
      */
     public Completion complete(String subject, LocalDateTime sentAt, String bodyText,
                                List<FewShotRetriever.Example> examples) {
+        ParserRoute route = ParserRoute.current();
         ModelEndpoint endpoint = settings.activeEndpoint();
-        boolean cloud = props.isCloud();
+        boolean cloud = route.cloud();
         String user = userTurn(subject, sentAt, bodyText);
         // Checked before anything is built or sent: without a key the cloud call cannot succeed,
-        // and the message is the thing the administrator needs to read.
-        String apiKey = cloud ? requireCloudKey() : null;
+        // and the message is the thing the person needs to read.
+        String apiKey = cloud ? route.apiKey() : null;
         String payload = cloud
                 ? cloudRequestBody(examples, user, endpoint.model())
                 : requestBody(examples, user, endpoint.model());
@@ -226,8 +226,9 @@ public class EmailParserClient {
      * than two that can point at different servers.
      */
     public boolean isReachable() {
-        if (props.isCloud()) {
-            return cloudReachable();
+        ParserRoute route = ParserRoute.current();
+        if (route.cloud()) {
+            return cloudReachable(route.apiKey());
         }
         String health = settings.endpoint().base() + "/health";
         try {
@@ -374,7 +375,7 @@ public class EmailParserClient {
      * where this one stopped, so it is thrown as {@link ParserUnavailableException}. A wait of up to
      * a minute is absorbed here, because a free tier's window is often a few seconds and stopping the
      * whole sweep for that would be the wrong size of response. A wait longer than that is the
-     * provider saying "come back later", which is for the administrator to act on.
+     * provider saying "come back later", which is for the person whose key it is to act on.
      */
     private HttpResponse<String> waitOutRateLimit(ModelEndpoint endpoint, String payload, String apiKey,
                                                   HttpResponse<String> first) {
@@ -431,11 +432,6 @@ public class EmailParserClient {
         };
     }
 
-    private String requireCloudKey() {
-        return settings.cloudApiKey().orElseThrow(() -> new ParserUnavailableException(
-                "No API key for the cloud model is saved — add one on Settings › Intake parser."));
-    }
-
     /**
      * The Retry-After header as seconds: the value when it is a non-negative number, else empty.
      *
@@ -457,20 +453,15 @@ public class EmailParserClient {
     }
 
     /**
-     * Whether the cloud answers with the key we hold: GET the model list, which every provider serves
+     * Whether the cloud answers with the caller's key: GET the model list, which every provider serves
      * and which costs no tokens. Reachability and authentication are one question here, since a bad key
      * is the commonest way the cloud is "down".
      */
-    private boolean cloudReachable() {
-        Optional<String> apiKey = settings.cloudApiKey();
-        if (apiKey.isEmpty()) {
-            lastError = "No API key saved";
-            return false;
-        }
+    private boolean cloudReachable(String apiKey) {
         String models = settings.cloudEndpoint().base() + "/v1/models";
         try {
             HttpRequest request = HttpRequest.newBuilder(URI.create(models))
-                    .header("Authorization", "Bearer " + apiKey.get())
+                    .header("Authorization", "Bearer " + apiKey)
                     .timeout(Duration.ofMillis(props.getConnectTimeoutMs()))
                     .GET().build();
             HttpResponse<Void> response = http.send(request, HttpResponse.BodyHandlers.discarding());

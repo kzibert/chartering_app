@@ -2,8 +2,12 @@ package com.chartering.specification;
 
 import com.chartering.model.Company;
 import com.chartering.model.Contact;
+import com.chartering.model.IntakeItem;
+import com.chartering.model.IntakeItemKind;
+import com.chartering.model.IntakeItemStatus;
 import com.chartering.model.Person;
 import jakarta.persistence.criteria.JoinType;
+import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
 import jakarta.persistence.criteria.Subquery;
 import org.springframework.data.jpa.domain.Specification;
@@ -65,6 +69,27 @@ public final class CompanySpecification {
             return noWorkingEmail
                     ? cb.and(cb.exists(anyEmail), cb.not(cb.exists(workingEmail)))
                     : cb.exists(workingEmail);
+        };
+    }
+
+    /**
+     * Firms with a question waiting in Intake about their own details, minor or not: the mark the
+     * list shows. An EXISTS subquery, for the same reason as {@link #hasPersonNamed}: one row per
+     * company. The intake table is tenant-scoped by Hibernate, so this sees only the desk's own
+     * questions. Passing false inverts it. Not gated on the parser switch: the table exists on
+     * every deployment, and a firm with no question simply has none.
+     */
+    public static Specification<Company> correspondenceUpdate(Boolean waiting) {
+        return (root, query, cb) -> {
+            if (waiting == null) return null;
+            Subquery<Long> pending = query.subquery(Long.class);
+            Root<IntakeItem> item = pending.from(IntakeItem.class);
+            Predicate open = cb.and(
+                    cb.equal(item.get("status"), IntakeItemStatus.PENDING),
+                    cb.equal(item.get("kind"), IntakeItemKind.COMPANY_DETAILS),
+                    cb.equal(item.get("companyId"), root.get("id")));
+            pending.select(item.get("id")).where(open);
+            return waiting ? cb.exists(pending) : cb.not(cb.exists(pending));
         };
     }
 

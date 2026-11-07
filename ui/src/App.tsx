@@ -17,6 +17,7 @@ import AnalysisPage from './pages/analysis/AnalysisPage';
 import IntakePage from './pages/intake/IntakePage';
 import HistoryPage from './pages/history/HistoryPage';
 import FeedPage from './pages/feed/FeedPage';
+import AskPage from './pages/ask/AskPage';
 import SettingsPage from './pages/settings/SettingsPage';
 import LoginPage from './pages/login/LoginPage';
 import ChangePasswordPage from './pages/login/ChangePasswordPage';
@@ -105,6 +106,9 @@ function AuthenticatedApp() {
             <Route path="/analysis" element={<AnalysisPage />} />
             <Route path="/intake" element={<IntakePage />} />
             <Route path="/feed" element={<FeedPage />} />
+            {/* Registered whether or not the feature is on, for the same reason as Analysis and Intake:
+                the nav entry is hidden when it is off, and a bookmarked URL should explain itself. */}
+            <Route path="/ask" element={<AskPage />} />
             <Route path="/history" element={<HistoryPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             {/* Only routed for an administrator; anybody else lands on the dashboard, and the

@@ -69,10 +69,11 @@ import type {
  * kinds it does not read.
  *
  * <b>Three views, because there are three questions.</b> The queue answers "what needs me": the
- * disagreements, the unknown hulls, the cargoes that look like duplicates. Minor updates holds
- * what is real but not urgent — a firm whose name and addresses have not changed, particulars
- * that differ by a rounding or by a value already decided — so the queue's count is the number
- * of things that genuinely want a person this morning. The log answers the one a queue cannot
+ * disagreements and the unknown hulls. Minor updates holds what is real but not urgent —
+ * particulars that differ by a rounding or by a value already decided, and possible duplicate
+ * cargoes, which are also answered on each cargo's own drawer. Small company updates are not
+ * here at all; they wait on the company, so the queue's count is the number of things that
+ * genuinely want a person this morning. The log answers the one a queue cannot
  * — "was this morning's mail read at all, and what was made of it" — which is how you notice a
  * broker's daily list being classified as *neither* and quietly producing nothing. Most days
  * only the first is opened, which is why it is the default.
@@ -82,7 +83,7 @@ import type {
  * "how much mail is waiting" is what makes Parse now worth pressing or not.
  */
 export default function IntakePage() {
-  const status = useIntakeStatus();
+  const status = useIntakeStatus({ poll: true });
   const [view, setView] = useState<'queue' | 'minor' | 'log'>('queue');
   const [kind, setKind] = useState<IntakeItemKind>();
   const [itemStatus, setItemStatus] = useState<IntakeItemStatus>('PENDING');
@@ -127,7 +128,10 @@ export default function IntakePage() {
             neither of nor a route to.
             <br />
             <br />
-            Start it in the <Typography.Text code>chartering-ml</Typography.Text> project with{' '}
+            Where this deployment offers a cloud model instead, save your own API key under{' '}
+            <Typography.Text strong>Settings › Your parser</Typography.Text> and this tab reads
+            with it. Otherwise start the local model in the{' '}
+            <Typography.Text code>chartering-ml</Typography.Text> project with{' '}
             <Typography.Text code>make serve-docker</Typography.Text>, then set{' '}
             <Typography.Text code>PARSER_ENABLED=true</Typography.Text> and restart the api.
           </>
@@ -242,6 +246,13 @@ export default function IntakePage() {
           )}
         </Space>
       </Card>
+
+      {view === 'minor' && (
+        <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
+          Possible duplicate cargoes wait here and on each cargo&apos;s drawer. Small company
+          updates are not listed here: they are on the company, under Update from correspondence.
+        </Typography.Paragraph>
+      )}
 
       {view !== 'log' ? (
         <QueueTable

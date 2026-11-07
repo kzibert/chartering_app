@@ -52,7 +52,6 @@ public class SettingsStore {
             ParserSettings.FEW_SHOT_MAX_CHARS,
             ParserSettings.CLOUD_URL,
             ParserSettings.CLOUD_MODEL,
-            ParserSettings.CLOUD_API_KEY,
             FeedSettings.MODEL_URL,
             FeedSettings.MODEL_NAME,
             FeedSettings.FETCH_INTERVAL_MINUTES,

@@ -147,7 +147,7 @@ public class SampleEmbeddingStore {
      * float4 storage. NaN and infinities are refused here: pgvector would reject them with a
      * message about the literal, and a model that produced one has a bug worth naming.
      */
-    static String toVectorLiteral(float[] v) {
+    public static String toVectorLiteral(float[] v) {
         if (v == null || v.length == 0) throw new IllegalArgumentException("embedding is empty");
         StringBuilder sb = new StringBuilder("[");
         for (int i = 0; i < v.length; i++) {

@@ -35,10 +35,12 @@ import java.util.Map;
 /**
  * The Feed: outside sources, topics, and the local model's summaries of what the sources say.
  *
- * <p><b>Visible everywhere, analysis local.</b> Unlike Intake and Analysis this tab is part of
- * every deployment: sources, topics, the prompt and the summaries are rows in the shared database,
- * so the hosted instance reads and edits them. Fetching, summarising and asking the model its
- * window are what {@code FEED_ANALYSIS_ENABLED} switches, and only those answer 404 when it is off.
+ * <p><b>Switched off for now ({@code FEED_ENABLED}), except what other features read.</b> Off,
+ * the tab is gone and its own endpoints — items, topics, summaries, fetching every source, the
+ * model's window — answer 404. What stays is what Intake and Analysis use: the source list and
+ * its subscriptions (managed from the Intake tab), a stored post by id (the original behind a
+ * cargo or a position), the parser keys for adding a board, and the settings, which hold the
+ * board fetch interval.
  */
 @RestController
 @RequestMapping("/api/v1/feed")
@@ -52,6 +54,7 @@ public class FeedController {
     private final FeedFetchService fetch;
     private final FeedSummaryService summary;
     private final FeedSettings settings;
+    private final com.chartering.config.FeedProperties feedProps;
 
     // ------------------------------------------------------------------ status
 
@@ -112,7 +115,7 @@ public class FeedController {
 
     @PostMapping("/fetch")
     @Operation(summary = "Fetch every enabled source now",
-            description = "Returns at once; watch GET /status for fetchRunning. 404 where FEED_ANALYSIS_ENABLED is off.")
+            description = "Returns at once; watch GET /status for fetchRunning. 404 where FEED_ENABLED is off.")
     public ResponseEntity<FeedStatusResponse> fetchAll() {
         fetch.requestFetch();
         return ResponseEntity.accepted().body(queries.status());
@@ -136,6 +139,7 @@ public class FeedController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int size) {
+        requireFeed();
         return ResponseEntity.ok(queries.items(sourceId, q, from, to, page, size));
     }
 
@@ -156,24 +160,28 @@ public class FeedController {
     @GetMapping("/topics")
     @Operation(summary = "The topics, in their order")
     public ResponseEntity<List<FeedTopicResponse>> topics() {
+        requireFeed();
         return ResponseEntity.ok(topicService.list());
     }
 
     @PostMapping("/topics")
     @Operation(summary = "Add a topic")
     public ResponseEntity<FeedTopicResponse> createTopic(@Valid @RequestBody FeedTopicRequest req) {
+        requireFeed();
         return ResponseEntity.status(HttpStatus.CREATED).body(topicService.create(req));
     }
 
     @PutMapping("/topics/{id}")
     @Operation(summary = "Change a topic")
     public ResponseEntity<FeedTopicResponse> updateTopic(@PathVariable Long id, @Valid @RequestBody FeedTopicRequest req) {
+        requireFeed();
         return ResponseEntity.ok(topicService.update(id, req));
     }
 
     @DeleteMapping("/topics/{id}")
     @Operation(summary = "Remove a topic", description = "Its summaries stay, under the name they were written with.")
     public ResponseEntity<Void> deleteTopic(@PathVariable Long id) {
+        requireFeed();
         topicService.delete(id);
         return ResponseEntity.noContent().build();
     }
@@ -181,6 +189,7 @@ public class FeedController {
     @PutMapping("/topics/selection")
     @Operation(summary = "Select exactly these topics for the next Summarise")
     public ResponseEntity<List<FeedTopicResponse>> selectTopics(@Valid @RequestBody FeedTopicSelectionRequest req) {
+        requireFeed();
         return ResponseEntity.ok(topicService.select(req.getSelectedIds()));
     }
 
@@ -192,19 +201,21 @@ public class FeedController {
             @RequestParam(required = false) Long topicId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size) {
+        requireFeed();
         return ResponseEntity.ok(queries.summaries(topicId, page, size));
     }
 
     @GetMapping("/summaries/{id}")
     @Operation(summary = "One summary with the items it was written from")
     public ResponseEntity<FeedSummaryResponse> summary(@PathVariable Long id) {
+        requireFeed();
         return ResponseEntity.ok(queries.summary(id));
     }
 
     @PostMapping("/summaries/run")
     @Operation(summary = "Summarise the selected topics now",
             description = "Returns at once; watch GET /status for summaryRunning and the stage. 409 while the "
-                    + "email parser is reading on the same model; 404 where FEED_ANALYSIS_ENABLED is off.")
+                    + "email parser is reading on the same model; 404 where FEED_ENABLED is off.")
     public ResponseEntity<FeedStatusResponse> run() {
         summary.requestRun();
         return ResponseEntity.accepted().body(queries.status());
@@ -245,6 +256,7 @@ public class FeedController {
     @DeleteMapping("/settings/prompts")
     @Operation(summary = "Both prompts back to their defaults")
     public ResponseEntity<FeedSettingsResponse> resetPrompts() {
+        requireFeed();
         return ResponseEntity.ok(toResponse(settings.resetPrompts()));
     }
 
@@ -252,6 +264,14 @@ public class FeedController {
     @Operation(summary = "Ask the model server how large its context window is (local only)")
     public ResponseEntity<Map<String, Integer>> detectContext() {
         return ResponseEntity.ok(Map.of("contextWindowTokens", queries.detectContextWindow()));
+    }
+
+    /** The Feed's own endpoints: 404 where the feature is not part of this deployment. */
+    private void requireFeed() {
+        if (!feedProps.isEnabled()) {
+            throw new com.chartering.exception.FeatureDisabledException(
+                    "The Feed is not enabled on this deployment (FEED_ENABLED).");
+        }
     }
 
     private FeedSettingsResponse toResponse(FeedSettings.Values v) {

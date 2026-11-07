@@ -7,6 +7,7 @@ import type {
   LeaveOutRequest,
   LinkSenderRequest,
   ParseStatus,
+  QueueMessagesRequest,
   ParserSettingsRequest,
 } from '../api/intake';
 
@@ -30,17 +31,12 @@ export const intakeKeys = {
     [...KEY, 'waiting', source, page, size] as const,
   sweep: [...KEY, 'sweep'] as const,
   settings: [...KEY, 'settings'] as const,
-  vesselFields: [...KEY, 'vessel-fields'] as const,
   cargoSources: (cargoId: number) => [...KEY, 'cargo-sources', cargoId] as const,
+  possibleDuplicates: (cargoId: number) => [...KEY, 'possible-duplicates', cargoId] as const,
   companyPending: (companyId: number) => [...KEY, 'company-pending', companyId] as const,
   positionCompanyPending: (positionId: number) =>
     [...KEY, 'position-company-pending', positionId] as const,
 };
-
-export function useIntakeInvalidator() {
-  const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: KEY });
-}
 
 /**
  * Whether this deployment reads its mail with a model, and how that is going.
@@ -51,14 +47,24 @@ export function useIntakeInvalidator() {
  * change while somebody is looking at the screen. PARSER_ENABLED cannot change without a
  * restart, but it is the cheapest field on a response that has to be fresh anyway.
  */
-export const useIntakeStatus = () =>
+export const useIntakeStatus = (options?: { poll?: boolean; enabled?: boolean }) =>
   useQuery({
     queryKey: intakeKeys.status,
     queryFn: intakeApi.status,
+    // Off where Intake does not exist for this person (capabilities/store useIntakeOn): the
+    // status would only answer enabled:false, and on the hosted instance it is the one call the
+    // shell made that counted tables.
+    enabled: options?.enabled ?? true,
     // A minute: long enough that the shell's own render does not reach the model server on
     // every navigation, short enough that starting the container is noticed without a
     // reload.
     staleTime: 60_000,
+    // Only the Intake tab polls. Staleness alone never refetches a query that stays mounted,
+    // so the "waiting to be read" count stood still while mail arrived underneath it, and the
+    // only way to see the mailbox feeding the queue was to leave the tab and come back. The
+    // shell and the other screens keep the old behaviour: they read whether the feature exists,
+    // which does not move, and a request a minute from every open page is not worth that.
+    refetchInterval: options?.poll ? 60_000 : false,
     // A deployment without the feature answers enabled:false rather than failing, so a retry
     // here would only ever be retrying a real outage — which the rest of the app already
     // reports.
@@ -142,20 +148,6 @@ export const useParserSettings = (enabled: boolean) =>
   });
 
 /**
- * The labels the vessel's own edit form uses.
- *
- * `staleTime: Infinity` because it is derived from a constant list in the API and cannot
- * change without a deploy — unlike everything else here.
- */
-export const useVesselFieldLabels = (enabled: boolean) =>
-  useQuery({
-    queryKey: intakeKeys.vesselFields,
-    queryFn: intakeApi.vesselFields,
-    enabled,
-    staleTime: Infinity,
-  });
-
-/**
  * The company question waiting about one firm, for its own record to offer. Under the intake
  * key, so answering the item anywhere takes the button away.
  */
@@ -183,6 +175,21 @@ export const useCargoSources = (cargoId?: number) =>
     queryKey: intakeKeys.cargoSources(cargoId ?? 0),
     queryFn: () => intakeApi.cargoSources(cargoId!),
     enabled: cargoId != null,
+  });
+
+/**
+ * The duplicate-cargo questions waiting on one cargo, for its drawer to stack.
+ *
+ * Not retried: a deployment without Intake answers 404, which the API function reads as an
+ * empty list rather than an error, so there is nothing a retry could fix. Under the intake
+ * prefix, so answering one anywhere (the Intake tab too) takes it off every cargo's drawer.
+ */
+export const usePossibleDuplicates = (cargoId?: number) =>
+  useQuery({
+    queryKey: intakeKeys.possibleDuplicates(cargoId ?? 0),
+    queryFn: () => intakeApi.possibleDuplicates(cargoId!),
+    enabled: cargoId != null,
+    retry: false,
   });
 
 export function useIntakeMutations() {
@@ -220,6 +227,16 @@ export function useIntakeMutations() {
    */
   const parseMessages = useMutation({
     mutationFn: (mailMessageIds: number[]) => intakeApi.parseMessages({ mailMessageIds }),
+    onSuccess: invalidate,
+  });
+
+  /**
+   * Put the picked messages on the waiting list. Nothing is read yet, so the sweep is not
+   * started, but the Intake header's waiting count and the waiting list both move, and that
+   * is what the same invalidation covers.
+   */
+  const queueMessages = useMutation({
+    mutationFn: (body: QueueMessagesRequest) => intakeApi.queueMessages(body),
     onSuccess: invalidate,
   });
 
@@ -288,6 +305,7 @@ export function useIntakeMutations() {
     startSweep,
     stopSweep,
     parseMessages,
+    queueMessages,
     reopen,
     ignoreParsed,
     leaveOut,

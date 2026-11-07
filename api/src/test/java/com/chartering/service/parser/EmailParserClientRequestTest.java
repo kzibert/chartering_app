@@ -115,7 +115,6 @@ class EmailParserClientRequestTest {
 
     @Test
     void cloudRequestAsksForAJsonObjectAndPutsTheShapeInTheSystemPrompt() throws Exception {
-        props.setProvider(ParserProperties.Provider.CLOUD);
         String user = "Date: 2026-09-05\nSubject: OPEN\n\nMV EXAMPLE open Constanza.";
 
         JsonNode root = json.readTree(client.cloudRequestBody(List.of(), user, "llama-3.3-70b-versatile"));
@@ -141,7 +140,6 @@ class EmailParserClientRequestTest {
 
     @Test
     void cloudRequestWithNoSchemaOmitsTheAddendum() throws Exception {
-        props.setProvider(ParserProperties.Provider.CLOUD);
         EmailParserClient unloaded = new EmailParserClient(props, mock(ParserSettings.class), json);
 
         JsonNode messages = json.readTree(unloaded.cloudRequestBody(List.of(), "question", "m"))

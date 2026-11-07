@@ -19,7 +19,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * One message, read and written, in one transaction.
@@ -158,9 +160,12 @@ public class EmailParseRunner {
         } catch (EmailParserClient.ParserUnavailableException e) {
             row.setStatus(ParseStatus.FAILED);
             row.setError(e.getMessage());
-            // Saved and flushed before the throw, so the failure is on record even though
-            // the caller is about to abandon the sweep. Nothing else in this transaction has
-            // written, so there is nothing for the rollback to take with it.
+            // Flushed and then rolled back with the rest of the transaction: the exception is
+            // a RuntimeException, so the row does not survive and the message stays in the
+            // queue with its attempts untouched. That is the right outcome, whatever this
+            // once claimed. A server that is down says nothing about the email, and recording
+            // it would spend one of the message's attempts per outage until the ceiling took
+            // it out of the queue for good. The sweep's report is where an outage is told.
             parsedEmails.saveAndFlush(row);
             throw e;
         }
@@ -290,6 +295,153 @@ public class EmailParseRunner {
     }
 
     /**
+     * Add messages to the waiting list: the sweep reads them on its next pass, whatever their age.
+     *
+     * <p>The same act as "Read into Intake" with the reading left to later. That one starts a run
+     * now, and is refused while another run is going; this writes a {@link ParseStatus#QUEUED} row
+     * per message and returns, works whether or not a sweep is running, and the timer does the
+     * reading on its own terms. The row is what the sweep's queue finds, and
+     * it finds queued rows first and outside the lookback, which is the whole point of asking.
+     *
+     * <p>Per id, in the order given and each once:
+     * <ul>
+     *   <li>not on this desk, or no text body → skipped. A body is what the model reads, and a
+     *       queued row for a message with none would sit outside the sweep's queue for ever.</li>
+     *   <li>already {@code PARSED} or {@code SKIPPED} → skipped; it has been read. With
+     *       {@code reread} it is turned to {@code QUEUED} instead, as a first attempt, and reported as
+     *       {@link QueueOutcome.Result#REREAD}. The reading fields are deliberately left as they are:
+     *       the sweep overwrites them when it reads the row, so until then the row still shows the
+     *       reading it had, and nothing is lost by asking for a second look.</li>
+     *   <li>already {@code QUEUED} → queued, and left as it is.</li>
+     *   <li>{@code FAILED} or {@code IGNORED} → turned back to {@code QUEUED} with the attempt count
+     *       and error cleared, so the sweep reads it as a first attempt. A person asking again is a
+     *       new request, not another failure of the old one.</li>
+     *   <li>no row → a {@code QUEUED} row is created.</li>
+     * </ul>
+     *
+     * <p>Each message is loaded with {@code findById}, not referenced, for the reason {@link #leaveOut}
+     * gives: an id from another desk must come back empty rather than be written against.
+     *
+     * <p>Each id gets one {@link QueueOutcome.Item} saying which of these happened to it, in the
+     * order the ids were given, each once. The subject and sender are the message's own, so a
+     * person reading the answer can tell which email an id was.
+     *
+     * @param reread whether a message already read is queued again for a fresh reading; {@code false}
+     *               leaves it skipped, as it always was
+     * @return how many were queued, counting those already queued and re-read, how many were skipped,
+     *         and what became of each id
+     */
+    @Transactional
+    public QueueOutcome queue(List<Long> mailMessageIds, boolean reread) {
+        OffsetDateTime now = OffsetDateTime.now();
+        List<QueueOutcome.Item> items = new ArrayList<>();
+        for (Long id : new LinkedHashSet<>(mailMessageIds)) {
+            if (id == null) {
+                items.add(new QueueOutcome.Item(null, QueueOutcome.Result.NOT_FOUND, null, null, null, null));
+                continue;
+            }
+            MailMessage message = messages.findById(id).orElse(null);
+            if (message == null) {
+                items.add(new QueueOutcome.Item(id, QueueOutcome.Result.NOT_FOUND, null, null, null, null));
+                continue;
+            }
+            String subject = message.getSubject();
+            String fromAddress = message.getFromAddress();
+            if (message.getBodyText() == null || message.getBodyText().isBlank()) {
+                items.add(new QueueOutcome.Item(id, QueueOutcome.Result.NO_TEXT, subject, fromAddress, null, null));
+                continue;
+            }
+            Optional<ParsedEmail> existing = parsedEmails.findByMailMessageId(id);
+            if (existing.isEmpty()) {
+                ParsedEmail row = new ParsedEmail();
+                row.setMailMessage(message);
+                row.setAttempts(0);
+                row.setStatus(ParseStatus.QUEUED);
+                row.setParsedAt(now);
+                parsedEmails.save(row);
+                items.add(new QueueOutcome.Item(id, QueueOutcome.Result.QUEUED, subject, fromAddress, null, null));
+                continue;
+            }
+            ParsedEmail row = existing.get();
+            switch (row.getStatus()) {
+                case QUEUED -> items.add(new QueueOutcome.Item(
+                        id, QueueOutcome.Result.ALREADY_QUEUED, subject, fromAddress, null, null));
+                case FAILED, IGNORED -> {
+                    row.setStatus(ParseStatus.QUEUED);
+                    row.setAttempts(0);
+                    row.setError(null);
+                    row.setParsedAt(now);
+                    parsedEmails.save(row);
+                    items.add(new QueueOutcome.Item(id, QueueOutcome.Result.REQUEUED, subject, fromAddress, null, null));
+                }
+                case PARSED, SKIPPED -> {
+                    if (reread) {
+                        // The same row, so the next reading overwrites this one rather than adding a second.
+                        row.setStatus(ParseStatus.QUEUED);
+                        row.setAttempts(0);
+                        row.setError(null);
+                        row.setParsedAt(now);
+                        parsedEmails.save(row);
+                        items.add(new QueueOutcome.Item(id, QueueOutcome.Result.REREAD, subject, fromAddress, null, null));
+                    } else {
+                        items.add(new QueueOutcome.Item(
+                                id, QueueOutcome.Result.ALREADY_READ, subject, fromAddress,
+                                row.getStatus(), row.getParsedAt()));
+                    }
+                }
+            }
+        }
+        int queued = (int) items.stream().filter(i -> i.result() == QueueOutcome.Result.QUEUED
+                || i.result() == QueueOutcome.Result.REQUEUED
+                || i.result() == QueueOutcome.Result.REREAD
+                || i.result() == QueueOutcome.Result.ALREADY_QUEUED).count();
+        return new QueueOutcome(queued, items.size() - queued, items);
+    }
+
+    /**
+     * What {@link #queue} did: requests recorded, ids passed over, and what happened to each id.
+     *
+     * <p>Queued counts requests a row now stands for, including ones that were already queued and
+     * ones queued again for a reread, so pressing the button twice reports the same figure both times.
+     * Skipped is everything else.
+     *
+     * <p>{@code items} has one entry per distinct id asked for, in the order asked. A null id has
+     * no message to name, so it comes back {@link Result#NOT_FOUND} with a null id.
+     */
+    public record QueueOutcome(int queued, int skipped, List<Item> items) {
+
+        /** What became of one requested id. */
+        public enum Result {
+            /** No row existed; a QUEUED row was created. */
+            QUEUED,
+            /** The row was FAILED or IGNORED and is QUEUED again as a first attempt. */
+            REQUEUED,
+            /** The row was already QUEUED and was left as it is. */
+            ALREADY_QUEUED,
+            /** The row is PARSED or SKIPPED; nothing was written. */
+            ALREADY_READ,
+            /**
+             * The row was PARSED or SKIPPED and the request asked for a reread: it is QUEUED again as a
+             * first attempt, and its old reading stays on the row until the sweep overwrites it.
+             */
+            REREAD,
+            /** The message is on this desk but has no body text to read. */
+            NO_TEXT,
+            /** Null, or not a message on this desk. */
+            NOT_FOUND
+        }
+
+        /**
+         * One id's outcome. {@code subject} and {@code fromAddress} come from the message and are
+         * null when it was not found. {@code parseStatus} and {@code parsedAt} are the existing row's,
+         * and are set only for {@link Result#ALREADY_READ}.
+         */
+        public record Item(Long mailMessageId, Result result, String subject, String fromAddress,
+                           ParseStatus parseStatus, OffsetDateTime parsedAt) {
+        }
+    }
+
+    /**
      * Take arrivals off the waiting list before the sweep reads them.
      *
      * <p>The same judgement {@link #ignore} makes, but made before the model has been asked
@@ -300,10 +452,12 @@ public class EmailParseRunner {
      * it back. No new status and no deletion, so there is no new state to learn; a deleted row
      * would be found and read again by tomorrow's sweep.
      *
-     * <p>An arrival that already has a row of any status is left alone and not counted: it is no
-     * longer waiting, and overwriting its verdict with "left out" would be rewriting what the
-     * model or a person already decided. An id not on this desk is skipped the same way, so the
-     * count is of rows created and says nothing about ids that were not this desk's.
+     * <p>An arrival that already has a row is left alone and not counted, with one exception: a row
+     * {@link ParseStatus#QUEUED} is still waiting, so it is turned into this verdict and counted —
+     * the person who queued it has changed their mind. Any other status means it is no longer
+     * waiting, and overwriting its verdict with "left out" would be rewriting what the model or a
+     * person already decided. An id not on this desk is skipped the same way, so the count is of
+     * arrivals taken off the list and says nothing about ids that were not this desk's.
      *
      * <p>Each id is loaded, not referenced, although the row only needs to point at it: a
      * reference to an id a caller sent skips the load that would have found it is another desk's,
@@ -311,7 +465,7 @@ public class EmailParseRunner {
      * costs the bodies of the messages picked, which is a person's selection on one button press
      * and not a timer re-reading a table - the case the transfer budget is about.
      *
-     * @return how many rows were created
+     * @return how many arrivals came off the waiting list: a new row, or a queued row turned to IGNORED
      */
     @Transactional
     public int leaveOut(List<Long> mailMessageIds, List<Long> feedItemIds, String note) {
@@ -323,7 +477,12 @@ public class EmailParseRunner {
         int created = 0;
         if (mailMessageIds != null) {
             for (Long id : mailMessageIds) {
-                if (id == null || parsedEmails.findByMailMessageId(id).isPresent()) continue;
+                if (id == null) continue;
+                Optional<ParsedEmail> existing = parsedEmails.findByMailMessageId(id);
+                if (existing.isPresent()) {
+                    if (takeOffQueue(existing.get(), error)) created++;
+                    continue;
+                }
                 MailMessage message = messages.findById(id).orElse(null);
                 if (message == null) continue;
                 ParsedEmail row = leftOutRow(error);
@@ -334,7 +493,12 @@ public class EmailParseRunner {
         }
         if (feedItemIds != null) {
             for (Long id : feedItemIds) {
-                if (id == null || parsedEmails.findByFeedItemId(id).isPresent()) continue;
+                if (id == null) continue;
+                Optional<ParsedEmail> existing = parsedEmails.findByFeedItemId(id);
+                if (existing.isPresent()) {
+                    if (takeOffQueue(existing.get(), error)) created++;
+                    continue;
+                }
                 FeedItem post = feedItems.findById(id).orElse(null);
                 if (post == null) continue;
                 ParsedEmail row = leftOutRow(error);
@@ -344,6 +508,22 @@ public class EmailParseRunner {
             }
         }
         return created;
+    }
+
+    /**
+     * Turn a queued row into the left-out verdict. Any other row is not touched.
+     *
+     * <p>Attempts are left alone: a queued row has none, and the verdict should not claim one.
+     *
+     * @return whether the row changed
+     */
+    private boolean takeOffQueue(ParsedEmail row, String error) {
+        if (row.getStatus() != ParseStatus.QUEUED) return false;
+        row.setStatus(ParseStatus.IGNORED);
+        row.setError(error);
+        row.setParsedAt(OffsetDateTime.now());
+        parsedEmails.save(row);
+        return true;
     }
 
     /**
@@ -373,6 +553,9 @@ public class EmailParseRunner {
     @Transactional
     public void reopen(Long parsedEmailId) {
         parsedEmails.findById(parsedEmailId).ifPresent(row -> {
+            // Already waiting for the sweep. Turning it into a failure would give it a retry state
+            // it has not earned, and the Log, where Reopen is pressed, never lists a queued row.
+            if (row.getStatus() == ParseStatus.QUEUED) return;
             row.setAttempts(0);
             row.setStatus(ParseStatus.FAILED);
             row.setError("Queued to be read again.");

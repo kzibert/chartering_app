@@ -1,10 +1,12 @@
-import { Alert, Button, Card, Space, Table, Tag, Tooltip, Typography, message } from 'antd';
+import { Alert, Button, Card, Space, Switch, Table, Tag, Tooltip, Typography, message } from 'antd';
 import { CloudDownloadOutlined, GlobalOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import type { ColumnsType } from 'antd/es/table';
 import { intakeApi } from '../../api/intake';
-import type { FeedSource } from '../../api/feed';
+import { feedApi, type FeedSource } from '../../api/feed';
+import { useSession } from '../../auth/session';
+import { roleAtLeast } from '../../api/auth';
 
 /**
  * The open boards this queue reads.
@@ -14,11 +16,12 @@ import type { FeedSource } from '../../api/feed';
  * Durrës", signed with a full style — so they go through the same model as the mail and land
  * in the same places: positions on Open fleet, cargoes on Cargoes, everything else here.
  *
- * <b>Why the list is read-only.</b> These are ordinary feed sources with one flag set, and the
- * Feed tab is where a source is added, renamed or pointed at a different address — beside the
- * Telegram channels and the RSS feeds it does not read. Two forms editing one row would be two
- * places to look when one of them was wrong. What this card offers is the two things a person
- * on this tab actually wants: whether the boards are being read, and a way to fetch them now.
+ * <b>Which boards this desk reads is chosen here.</b> It used to be a switch on the Feed tab,
+ * and the Feed is switched off for now (FEED_ENABLED), so a desk administrator sees every board
+ * the installation has with the switch beside it, and everybody else sees the ones being read.
+ * Adding, renaming or re-pointing a board is still the Feed tab's, a platform administrator's,
+ * for when the Feed is back: two forms editing one row would be two places to look when one of
+ * them was wrong.
  *
  * <b>Fetching is not parsing.</b> This reads the pages and stores what is new; the sweep reads
  * what it stored. They are apart for the reason the mail sync and the sweep are — one is
@@ -27,10 +30,24 @@ import type { FeedSource } from '../../api/feed';
  */
 export default function WebSources({ waiting }: { waiting: number }) {
   const qc = useQueryClient();
+  const choosesIntake = roleAtLeast(useSession().role, 'TENANT_ADMIN');
   const sources = useQuery({
     queryKey: ['intake', 'sources'],
     queryFn: intakeApi.sources,
     staleTime: 30_000,
+    enabled: !choosesIntake,
+  });
+  // A desk administrator chooses among every board, so they read the whole list; a board is a
+  // website source with a parser of its own, never a Telegram channel or an RSS feed.
+  const boards = useQuery({
+    queryKey: ['intake', 'boards'],
+    queryFn: () => feedApi.sources().then((all) => all.filter((s) => s.kind === 'WEBSITE')),
+    staleTime: 30_000,
+    enabled: choosesIntake,
+  });
+  const subscribe = useMutation({
+    mutationFn: (v: { id: number; on: boolean }) => feedApi.setReadIntoIntake(v.id, v.on),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['intake'] }),
   });
 
   const fetchNow = useMutation({
@@ -48,9 +65,29 @@ export default function WebSources({ waiting }: { waiting: number }) {
     onError: (e: Error) => message.error(e.message),
   });
 
-  const rows = sources.data ?? [];
+  const rows = (choosesIntake ? boards.data : sources.data) ?? [];
+  const loading = choosesIntake ? boards.isLoading : sources.isLoading;
 
   const columns: ColumnsType<FeedSource> = [
+    ...(choosesIntake
+      ? [{
+          title: (
+            <Tooltip title="Whether this desk sends the board's posts through the parser as circulars. Each desk chooses for itself.">
+              Read
+            </Tooltip>
+          ),
+          key: 'intake',
+          width: 70,
+          render: (_: unknown, s: FeedSource) => (
+            <Switch
+              size="small"
+              checked={s.intoIntake}
+              loading={subscribe.isPending}
+              onChange={(on) => subscribe.mutate({ id: s.id, on })}
+            />
+          ),
+        }]
+      : []),
     {
       title: 'Board',
       key: 'name',
@@ -149,11 +186,11 @@ export default function WebSources({ waiting }: { waiting: number }) {
             <>
               ship.gr's <Typography.Text code>Open Cargoes</Typography.Text> and{' '}
               <Typography.Text code>Open Ships</Typography.Text> pages carry the same circulars
-              this mailbox does, pasted by the firms themselves. Add them on the Feed tab as a{' '}
+              this mailbox does, pasted by the firms themselves. A desk administrator switches a
+              board on here; a platform administrator adds one as a{' '}
               <Typography.Text code>Website</Typography.Text> source with the{' '}
               <Typography.Text code>ship.gr open cargoes / open ships board</Typography.Text>{' '}
-              parser, and tick <Typography.Text strong>Read into Intake</Typography.Text>. One
-              fetch then serves both tabs — nobody's server is read twice for the same bytes.
+              parser on the Feed tab.
             </>
           }
         />
@@ -163,7 +200,7 @@ export default function WebSources({ waiting }: { waiting: number }) {
             rowKey={(s) => s.id}
             size="small"
             pagination={false}
-            loading={sources.isLoading}
+            loading={loading}
             columns={columns}
             dataSource={rows}
           />

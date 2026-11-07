@@ -2,6 +2,7 @@ package com.chartering.exception;
 
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
+import com.chartering.service.ask.AskUnavailableException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -95,6 +96,15 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(EmbeddingNotConfiguredException.class)
     public ResponseEntity<Map<String, Object>> handleEmbeddingNotConfigured(EmbeddingNotConfiguredException ex) {
+        return body(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
+    }
+
+    /**
+     * The feature is on and configured, but the model or embedding server did not answer the question.
+     * 503 for the same reason as the embedding case above: the fix is a server being started.
+     */
+    @ExceptionHandler(AskUnavailableException.class)
+    public ResponseEntity<Map<String, Object>> handleAskUnavailable(AskUnavailableException ex) {
         return body(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
     }
 

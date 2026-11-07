@@ -1,6 +1,7 @@
 package com.chartering.service.lookup;
 
 import com.chartering.model.Vessel;
+import com.chartering.service.VesselTypes;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -10,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
+import java.util.function.UnaryOperator;
 
 /**
  * What an outside source is allowed to write to a hull, and what it is not.
@@ -40,7 +42,26 @@ public final class LookupFields {
                         String unit,
                         Function<Vessel, Object> current,
                         Function<VesselParticulars, Object> incoming,
-                        BiConsumer<Vessel, Object> write) {
+                        BiConsumer<Vessel, Object> write,
+                        /**
+                         * What the source said, reduced to what this column is allowed to
+                         * hold. Returning null drops the field: no proposal is offered and
+                         * nothing is written, which is the honest answer where a source says
+                         * something this column has no way to store.
+                         */
+                        UnaryOperator<Object> normalise) {
+
+        Spec(String field, String label, String unit,
+             Function<Vessel, Object> current,
+             Function<VesselParticulars, Object> incoming,
+             BiConsumer<Vessel, Object> write) {
+            this(field, label, unit, current, incoming, write, UnaryOperator.identity());
+        }
+
+        /** What this source offers for the field, already reduced to the column's terms. */
+        Object read(VesselParticulars candidate) {
+            return normalise.apply(incoming.apply(candidate));
+        }
     }
 
     private static final List<Spec> SPECS = List.of(
@@ -56,9 +77,17 @@ public final class LookupFields {
             new Spec("flag", "Flag", null,
                     Vessel::getFlag, VesselParticulars::flag,
                     (v, o) -> v.setFlag((String) o)),
+            // Type is a category from a fixed list, never the wording a source happened to
+            // use. vesselfinder says "General Cargo Ship" and "Bulk Carrier"; writing either
+            // straight into the column is how it filled with one-off descriptions in the
+            // first place, and POST /vessels/types/fix is what had to clean that up.
+            // VesselFieldDiff has no type field for the same reason - a broker's wording is
+            // not a disagreement with a category - so a lookup must not be the one door left
+            // open. A wording that names no category is dropped rather than guessed at.
             new Spec("vesselType", "Type", null,
                     Vessel::getVesselType, VesselParticulars::vesselType,
-                    (v, o) -> v.setVesselType((String) o)));
+                    (v, o) -> v.setVesselType((String) o),
+                    o -> o instanceof String s ? VesselTypes.canonical(s) : o));
 
     /**
      * One field the source can supply, beside what the record holds.
@@ -75,7 +104,7 @@ public final class LookupFields {
     public static List<Proposal> proposals(Vessel vessel, VesselParticulars candidate) {
         List<Proposal> out = new ArrayList<>();
         for (Spec spec : SPECS) {
-            Object incoming = spec.incoming().apply(candidate);
+            Object incoming = spec.read(candidate);
             if (isAbsent(incoming)) continue;
             Object current = vessel == null ? null : spec.current().apply(vessel);
             boolean differs = !isAbsent(current) && !same(current, incoming);
@@ -95,7 +124,7 @@ public final class LookupFields {
         List<String> written = new ArrayList<>();
         for (Spec spec : SPECS) {
             if (!fields.contains(spec.field())) continue;
-            Object incoming = spec.incoming().apply(candidate);
+            Object incoming = spec.read(candidate);
             if (isAbsent(incoming)) continue;
             if (same(spec.current().apply(vessel), incoming)) continue;
             spec.write().accept(vessel, incoming);

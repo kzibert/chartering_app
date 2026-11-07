@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useCapabilities } from '../../capabilities/store';
 import { Button, Descriptions, Drawer, List, Popconfirm, Select, Space, Spin, Tag, Tooltip, Typography } from 'antd';
 import { DeleteOutlined, NodeIndexOutlined, PlusOutlined } from '@ant-design/icons';
 import {
   useContactMutations,
   useVessel,
-  useVesselLookupStatus,
   useVesselMutations,
 } from '../../api/hooks';
 import { recordRecent } from '../../recent/store';
@@ -35,9 +35,9 @@ interface Props {
 export default function VesselDrawer({ vesselId, positionId, onClose, onEdit }: Props) {
   const { data, isLoading } = useVessel(vesselId);
   const v = data?.vessel;
-  // A deployment fact, fetched once: where LOOKUP_ENABLED is off the feature is not part of
-  // this instance and the card does not exist rather than failing when pressed.
-  const lookupEnabled = useVesselLookupStatus().data?.enabled ?? false;
+  // A deployment fact, from the one capabilities call: where LOOKUP_ENABLED is off the feature
+  // is not part of this instance and the card does not exist rather than failing when pressed.
+  const lookupEnabled = useCapabilities().data?.lookup ?? false;
 
   const [companyId, setCompanyId] = useState<number>();
   const [companyFormOpen, setCompanyFormOpen] = useState(false);

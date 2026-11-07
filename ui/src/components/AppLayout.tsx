@@ -19,6 +19,7 @@ import {
   ExperimentOutlined,
   RobotOutlined,
   ReadOutlined,
+  MessageOutlined,
   KeyOutlined,
   SafetyOutlined,
   ApartmentOutlined,
@@ -27,8 +28,9 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCurrentList } from '../circulations/store';
 import { useMailboxStatus } from '../mailbox/store';
-import { useAnalysisStatus } from '../analysis/store';
 import { useIntakeStatus } from '../intake/store';
+import { useCapabilities, useIntakeOn } from '../capabilities/store';
+import { useAskStatus } from '../ask/store';
 import { clearToken } from '../auth/store';
 import { useSession } from '../auth/session';
 import { roleAtLeast } from '../api/auth';
@@ -40,7 +42,7 @@ const { Sider, Header, Content } = Layout;
 // No '/contacts': contacts live inside People now, grouped under the person who owns them.
 const KEYS = [
   '/', '/cargoes', '/open-fleet', '/vessels', '/companies', '/people',
-  '/circulation-lists', '/circulars', '/mailbox', '/feed', '/intake', '/analysis', '/history',
+  '/circulation-lists', '/circulars', '/mailbox', '/feed', '/ask', '/intake', '/analysis', '/history',
   '/settings', '/admin/users', '/admin/tenants',
 ];
 
@@ -67,11 +69,13 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const { entries } = useCurrentList();
   const status = useMailboxStatus();
-  // Whether this deployment carries the analysis workbench at all. One cached call — the
-  // answer cannot change without the api restarting — and it is what decides whether the
-  // tab is in the navigation rather than whether it works when clicked.
-  const analysis = useAnalysisStatus();
-  const intake = useIntakeStatus();
+  // Which optional tabs this deployment has: one cached call to /capabilities, which reads the
+  // switches and nothing else. Intake is per person as well — a local model, or the cloud one
+  // under a key their browser holds — and only where it exists is its status asked, for the badge.
+  const caps = useCapabilities().data;
+  const intakeOn = useIntakeOn();
+  const intake = useIntakeStatus({ enabled: intakeOn });
+  const ask = useAskStatus();
   const isMobile = useIsMobile();
   const [navOpen, setNavOpen] = useState(false);
   const selected = KEYS.includes(location.pathname) ? location.pathname : '/';
@@ -119,26 +123,26 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         </span>
       ),
     },
-    // Local deployments only, both of them: ANALYSIS_ENABLED and PARSER_ENABLED are false
-    // on the hosted instance, and an entry that led to a page explaining why it does
-    // nothing is worse than no entry. The routes still exist, so a bookmarked URL lands on
-    // that explanation.
+    // Intake exists where there is a local model, or for a person whose browser holds a cloud
+    // key (Settings > Your parser) - the hosted instance has only the second. Analysis is on
+    // both deployments. An entry that led to a page explaining why it does nothing is worse
+    // than no entry; the routes still exist, so a bookmarked URL lands on that explanation.
     //
     // Intake carries a badge and Analysis does not, because the two ask different things of
     // the user. A corpus is worked through when there is time; a review queue is somebody
     // waiting for an answer before a position can be trusted — the same reason the mailbox
     // carries its unread count. The query is the status endpoint the tab already polls, so
     // the badge costs no extra request.
-    ...(intake.data?.enabled
+    ...(intakeOn
       ? [{
           key: '/intake',
           icon: <RobotOutlined />,
           label: (
             <span>
               Intake
-              {(intake.data.pendingItems ?? 0) > 0 && (
+              {(intake.data?.pendingItems ?? 0) > 0 && (
                 <Badge
-                  count={intake.data.pendingItems}
+                  count={intake.data?.pendingItems}
                   size="small"
                   style={{ marginInlineStart: 8 }}
                 />
@@ -147,13 +151,17 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           ),
         }]
       : []),
-    ...(analysis.data?.enabled
+    ...(caps?.analysis
       ? [{ key: '/analysis', icon: <ExperimentOutlined />, label: 'Analysis' }]
       : []),
-    // On every deployment, unlike the two above: the summaries, sources and topics are rows in
-    // the shared database and read the same from the hosted instance. Only fetching and
-    // summarising are local, and the page itself leaves those buttons out where they cannot work.
-    { key: '/feed', icon: <ReadOutlined />, label: 'Feed' },
+    // Switched off for now (FEED_ENABLED). The boards Intake reads are managed on the Intake tab.
+    ...(caps?.feed ? [{ key: '/feed', icon: <ReadOutlined />, label: 'Feed' }] : []),
+    // Local deployments only, like Intake and Analysis: its answers need the local model and the
+    // embedding server, and neither runs on the hosted instance. Placed after Feed because the
+    // desk's text it searches is what Feed and Intake collect. On a phone it sits in the More drawer.
+    ...(ask.data?.enabled
+      ? [{ key: '/ask', icon: <MessageOutlined />, label: 'Ask the desk' }]
+      : []),
     // Last in the list, and not in the bottom bar on a phone: the change log is where you
     // go when something is already wrong, not somewhere work gets done. It sits above
     // Settings because it is about the data rather than about the application.

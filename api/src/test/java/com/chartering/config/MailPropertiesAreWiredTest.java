@@ -102,8 +102,8 @@ class MailPropertiesAreWiredTest {
      * deployment to SMTP, which is the transport its host blocks.
      */
     @Test
-    void theReplyRouteReadsTheVariableRenderSets() throws IOException {
-        assertThat(applicationYml().get(PREFIX + "reply-provider"))
-                .isEqualTo("${MAIL_REPLY_PROVIDER:}");
+    void theSmtpBlockReadsTheVariableRenderSets() throws IOException {
+        assertThat(applicationYml().get(PREFIX + "smtp-blocked"))
+                .isEqualTo("${SMTP_BLOCKED:false}");
     }
 }

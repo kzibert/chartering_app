@@ -20,6 +20,8 @@ import com.chartering.dto.ParseMessagesRequest;
 import com.chartering.dto.ParsedEmailResponse;
 import com.chartering.dto.ParserSettingsRequest;
 import com.chartering.dto.ParserSettingsResponse;
+import com.chartering.dto.QueueMessagesRequest;
+import com.chartering.dto.QueueMessagesResponse;
 import com.chartering.dto.SweepResponse;
 import com.chartering.dto.WaitingArrivalResponse;
 import com.chartering.model.IntakeItemKind;
@@ -166,6 +168,36 @@ public class IntakeController {
         return ResponseEntity.accepted().body(currentSweep());
     }
 
+    @PostMapping("/queue")
+    @Operation(summary = "Add the messages picked on the Mailbox tab to the waiting list",
+            description = "Reads nothing now. Each picked message is recorded as queued, and the sweep "
+                    + "takes it on its next pass whatever its age, ahead of the ordinary arrivals. "
+                    + "Read into Intake (POST /parse) is the one that reads at once. Messages already "
+                    + "read are skipped unless reread is true, in which case they are queued again and "
+                    + "their new reading replaces the old one on the same parse row. Messages with no "
+                    + "text body and ids not on this desk are skipped; a message already queued is counted "
+                    + "as queued and left as it is. The response also lists each picked message in the order "
+                    + "sent, with its outcome: QUEUED, REQUEUED (a failed or ignored row queued again), "
+                    + "ALREADY_QUEUED, REREAD (a read row queued again), ALREADY_READ (with the row's "
+                    + "parseStatus and parsedAt), NO_TEXT or NOT_FOUND. Subject and sender come with every "
+                    + "message found.")
+    public ResponseEntity<QueueMessagesResponse> queue(@Valid @RequestBody QueueMessagesRequest req) {
+        // Gated like the other intake actions: the same 404 where the feature is not part of this deployment.
+        availability.require();
+        EmailParseRunner.QueueOutcome outcome = runner.queue(req.getMailMessageIds(), req.isReread());
+        return ResponseEntity.ok(new QueueMessagesResponse(outcome.queued(), outcome.skipped(),
+                outcome.items().stream().map(IntakeController::queuedMessage).toList()));
+    }
+
+    /** The runner's per-id answer as the screen reads it. Parse status and time are for a row already read only. */
+    private static QueueMessagesResponse.Message queuedMessage(EmailParseRunner.QueueOutcome.Item item) {
+        boolean alreadyRead = item.result() == EmailParseRunner.QueueOutcome.Result.ALREADY_READ;
+        return new QueueMessagesResponse.Message(item.mailMessageId(), item.subject(), item.fromAddress(),
+                item.result().name(),
+                alreadyRead ? item.parseStatus().name() : null,
+                alreadyRead ? item.parsedAt() : null);
+    }
+
     @PostMapping("/sweep/stop")
     @Operation(summary = "Stop the run going on this desk",
             description = "Asks the run to stop before its next message. The message being read "
@@ -275,6 +307,9 @@ public class IntakeController {
                     + "tomorrow's copy of the same list does not ask again.")
     public ResponseEntity<IntakeItemResponse> resolve(@PathVariable Long id,
                                                       @Valid @RequestBody IntakeResolveRequest req) {
+        // Before the write: the read that ends this method is gated too, but by then the
+        // write had committed and the caller was told 404 for something that happened.
+        availability.require();
         intake.resolve(id, req.getAction(), req.getFields(), req.getCorrections(),
                 req.getVesselId(), req.getNote(), currentUser());
         // Re-read rather than mapping what the write returned: accepting can change the row
@@ -298,6 +333,9 @@ public class IntakeController {
     public ResponseEntity<IntakePasteCompanyResponse> acceptCompany(
             @PathVariable Long id,
             @Valid @RequestBody IntakePasteCompanyRequest req) {
+        // Before the write: the read that ends this method is gated too, but by then the
+        // write had committed and the caller was told 404 for something that happened.
+        availability.require();
         var applied = intake.acceptCompanyDetails(id, req, currentUser());
         // Its own transaction, after the firm and its addresses are committed: what this
         // signature already put on Open Fleet and Cargoes gains its reporter now rather than
@@ -343,6 +381,9 @@ public class IntakeController {
                     + "Everything it returns is a proposal — nothing is written to a vessel "
                     + "until POST /items/{id}/apply-lookup names the fields to believe.")
     public ResponseEntity<IntakeItemResponse> lookup(@PathVariable Long id) {
+        // Before the write: the read that ends this method is gated too, but by then the
+        // write had committed and the caller was told 404 for something that happened.
+        availability.require();
         lookupService.lookUpNow(id);
         // If the number that came back is already on a hull here, this item was never a
         // question about creating a ship — it is a question about her particulars, and the
@@ -363,6 +404,9 @@ public class IntakeController {
                     + "until the item has been accepted.")
     public ResponseEntity<IntakeItemResponse> applyLookup(
             @PathVariable Long id, @Valid @RequestBody ApplyLookupRequest req) {
+        // Before the write: the read that ends this method is gated too, but by then the
+        // write had committed and the caller was told 404 for something that happened.
+        availability.require();
         intake.applyLookup(id, req.getFields(), req.getVesselId());
         return ResponseEntity.ok(queries.get(id));
     }
@@ -383,6 +427,9 @@ public class IntakeController {
                     + "record.")
     public ResponseEntity<IntakeItemResponse> linkSender(
             @PathVariable Long id, @Valid @RequestBody LinkSenderRequest req) {
+        // Before the write: the read that ends this method is gated too, but by then the
+        // write had committed and the caller was told 404 for something that happened.
+        availability.require();
         intake.linkSenderCompany(id, req.getRole(), req.getCompanyId(), req.getNotes());
         return ResponseEntity.ok(queries.get(id));
     }
@@ -438,6 +485,9 @@ public class IntakeController {
                     + "what lets it serve a board post as well — the Log lists these rows, so "
                     + "whatever is on screen has one.")
     public ResponseEntity<Void> reopen(@PathVariable Long id) {
+        // Before the write: the read that ends this method is gated too, but by then the
+        // write had committed and the caller was told 404 for something that happened.
+        availability.require();
         runner.reopen(id);
         return ResponseEntity.noContent().build();
     }
@@ -453,6 +503,9 @@ public class IntakeController {
     public ResponseEntity<Void> ignoreParsed(@PathVariable Long id,
                                              @org.springframework.web.bind.annotation.RequestBody(required = false)
                                              @Valid IgnoreRequest req) {
+        // Before the write: the read that ends this method is gated too, but by then the
+        // write had committed and the caller was told 404 for something that happened.
+        availability.require();
         runner.ignore(id, req == null ? null : req.getNote());
         return ResponseEntity.noContent().build();
     }
@@ -506,11 +559,27 @@ public class IntakeController {
         return ResponseEntity.ok(queries.cargoSources(cargoId));
     }
 
+    @GetMapping("/cargoes/{cargoId}/possible-duplicates")
+    @Operation(summary = "The probable duplicates waiting against this cargo",
+            description = "Other enquiries that look like this cargo but were not certain enough to "
+                    + "merge on arrival, stacked here for the drawer to show. Each is a waiting "
+                    + "CARGO_MERGE item in the same shape as GET /items/{id}, so its reading, the "
+                    + "reasons it was raised and its sources can be shown beside this cargo. "
+                    + "Answering one with ACCEPT merges it into this cargo. An empty list when "
+                    + "nothing is waiting. Behind the parser switch like the other item endpoints.")
+    public ResponseEntity<java.util.List<IntakeItemResponse>> possibleDuplicates(
+            @PathVariable Long cargoId) {
+        return ResponseEntity.ok(queries.possibleDuplicates(cargoId));
+    }
+
     // ------------------------------------------------------------------ settings
 
     @GetMapping("/settings")
-    @Operation(summary = "How often the mailbox is read, and how much of it at a time")
+    @Operation(summary = "How often the mailbox is read, and how much of it at a time",
+            description = "Behind the parser switch like every other Intake endpoint: 404 where the "
+                    + "caller has no model to read with here.")
     public ResponseEntity<ParserSettingsResponse> settings() {
+        availability.require();
         return ResponseEntity.ok(toResponse(settings.values()));
     }
 
@@ -521,12 +590,12 @@ public class IntakeController {
                     + "the whole mailbox. A blank model address or name restores PARSER_URL / "
                     + "PARSER_MODEL. The few-shot examples (0 to 8, 0 is off) and their character "
                     + "budget are installation-wide and need a platform administrator. The cloud "
-                    + "model (PARSER_PROVIDER=CLOUD) has an address, a name and an API key, all "
-                    + "installation-wide. The key is written only, encrypted, and is never returned: "
-                    + "the response carries its last four characters as a hint, and clearCloudApiKey "
-                    + "removes it. Every field is optional, so the form can send one without holding the others.")
+                    + "model's address and name are installation-wide too; its API key is never "
+                    + "sent here - each person's browser holds their own and sends it with their "
+                    + "Intake requests. Every field is optional, so the form can send one without holding the others.")
     public ResponseEntity<ParserSettingsResponse> updateSettings(
             @Valid @RequestBody ParserSettingsRequest req) {
+        availability.require();
         // The address is its own write because it is its own question, and because a form that
         // did not send it must not be read as asking for the configured one back.
         if (req.getModelUrl() != null || req.getModelName() != null) {
@@ -535,10 +604,8 @@ public class IntakeController {
         if (req.getFewShotExamples() != null || req.getFewShotMaxChars() != null) {
             settings.updateFewShot(req.getFewShotExamples(), req.getFewShotMaxChars());
         }
-        if (req.getCloudUrl() != null || req.getCloudModel() != null
-                || req.getCloudApiKey() != null || req.getClearCloudApiKey() != null) {
-            settings.updateCloud(req.getCloudUrl(), req.getCloudModel(),
-                    req.getCloudApiKey(), req.getClearCloudApiKey());
+        if (req.getCloudUrl() != null || req.getCloudModel() != null) {
+            settings.updateCloud(req.getCloudUrl(), req.getCloudModel());
         }
         return ResponseEntity.ok(toResponse(
                 settings.update(req.getSweepIntervalMinutes(), req.getSweepBatchSize(),
@@ -549,10 +616,10 @@ public class IntakeController {
     @Operation(summary = "Back to the configured defaults",
             description = "The pacing, the model addresses and names (local and cloud) and the few-shot "
                     + "experiment together — they are one card, and a Reset that left any of them behind "
-                    + "would leave the screen saying it is using defaults while it is not. The stored cloud "
-                    + "API key is kept: removing it is its own action, PUT with clearCloudApiKey true.")
+                    + "would leave the screen saying it is using defaults while it is not.")
     @ResponseStatus(HttpStatus.OK)
     public ResponseEntity<ParserSettingsResponse> resetSettings() {
+        availability.require();
         settings.resetEndpoint();
         settings.resetFewShot();
         settings.resetCloud();
@@ -574,12 +641,9 @@ public class IntakeController {
                 endpoint.configuredUrl(), endpoint.configuredModel(),
                 fewShot.examples(), fewShot.maxChars(),
                 fewShotDefaults.examples(), fewShotDefaults.maxChars(),
-                settings.provider(),
                 cloud.url(), cloud.model(),
                 cloud.urlCustomised(), cloud.modelCustomised(),
-                cloud.configuredUrl(), cloud.configuredModel(),
-                settings.cloudApiKeySet(), settings.cloudApiKeyHint(),
-                settings.cloudApiKeyStorable());
+                cloud.configuredUrl(), cloud.configuredModel());
     }
 
     private static String currentUser() {

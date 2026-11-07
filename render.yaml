@@ -47,6 +47,17 @@ services:
       # Wall-clock zone for timestamps and for where "today" starts. See the README.
       - key: TZ
         value: Europe/Warsaw
+      # The JVM sized for 512 MB: half for the heap, the rest for metaspace, the code cache and
+      # thread stacks (see api/Dockerfile, which sets the same flags as its default). Added here:
+      # TieredStopAtLevel=1, which gives up the optimising compiler for a cold start that is
+      # markedly faster on a tenth of a CPU - and a free instance cold-starts after every quiet
+      # quarter of an hour.
+      - key: JAVA_TOOL_OPTIONS
+        value: -XX:MaxRAMPercentage=50 -XX:+UseSerialGC -Xss512k -XX:ReservedCodeCacheSize=48m -XX:TieredStopAtLevel=1
+      # Request threads. Tomcat's 200 are 200 stacks a desk of a few people never uses; requests
+      # beyond 20 queue rather than fail.
+      - key: TOMCAT_MAX_THREADS
+        value: 20
 
       # ---- the database -----------------------------------------------------
       # JDBC url, not the postgresql:// one the provider shows you, and TLS is not
@@ -140,31 +151,35 @@ services:
       # by a sync and always were; it is the ones written down here that get enforced.
       - key: MAIL_ENABLED
         sync: false
-      # REPLIES CANNOT GO OVER SMTP FROM HERE, and this is the line that works around it.
+      # NOTHING CAN GO OVER SMTP FROM HERE, and this is the line that works around it.
       #
       # Render blocks outbound traffic to ports 25, 465 and 587 on free instances (and 25
       # on every plan, free or paid, because it runs on EC2). Nothing about that is
-      # visible until somebody answers a broker: IMAP 993 is not blocked, so the Mailbox
-      # tab syncs perfectly, and the reply then fails with "Connect timed out" - the
-      # packets are dropped rather than refused, so there is no refusal to read.
+      # visible until somebody sends: IMAP 993 is not blocked, so the Mailbox tab syncs
+      # perfectly, and the reply then fails with "Connect timed out" - the packets are
+      # dropped rather than refused, so there is no refusal to read.
       #
-      # BREVO sends the identical message through Brevo's API over HTTPS instead, still
-      # from the mailbox address. Two things have to be true for it to work, and the
-      # first is not optional: the sending domain must be AUTHENTICATED in Brevo (Senders
-      # -> Domains, DKIM and SPF in DNS), because the From here is the mailbox address
-      # rather than the verified circulars one. And BREVO_API_KEY must be set below.
+      # SMTP_BLOCKED sends every reply AND every circular through Brevo's API over HTTPS
+      # instead, and refuses switching circulars to SMTP here. It replaced MAIL_REPLY_PROVIDER,
+      # which covered replies only: the circulars provider is a row in the database this
+      # instance shares with the office, so a desk sending circulars over SMTP from the office
+      # had them try SMTP here too.
+      #
+      # Two things have to be true for replies to work: the sending domain must be
+      # AUTHENTICATED in Brevo (Senders -> Domains, DKIM and SPF in DNS), because the From is
+      # the mailbox address rather than the verified circulars one; and the sender needs a
+      # Brevo key (their own on Settings, or BREVO_API_KEY for the server mailbox's owner).
       #
       # What it costs is a Sent-folder copy - the mail never passes through the mailbox -
       # and possibly threading, since Brevo documents its headers field as carrying
-      # non-standard headers only. Both are gone for good on this route. Moving the api
-      # to any paid instance type unblocks 465/587 and makes SMTP work again, at which
-      # point this key should be deleted rather than set to SMTP.
+      # non-standard headers only. Moving the api to any paid instance type unblocks 465/587,
+      # at which point this key should be deleted rather than set to false.
       #
-      # Correspondingly absent from docker-compose: a desk on an ordinary network has no
-      # reason for it, and the office deployment shares this database, so this could not
-      # have been a Settings-tab option.
-      - key: MAIL_REPLY_PROVIDER
-        value: BREVO
+      # Correspondingly false in docker-compose: a desk on an ordinary network has no reason
+      # for it, and the office deployment shares this database, so this could not have been a
+      # Settings-tab option.
+      - key: SMTP_BLOCKED
+        value: true
 
       # ---- analysis workbench -----------------------------------------------
       # ON HERE, and it was deliberately off before, so it is worth saying what changed.
@@ -196,31 +211,25 @@ services:
       - key: ANALYSIS_ENABLED
         value: true
 
-      # Reading incoming mail - the Intake tab - with a hosted cloud model rather than the
-      # office one. The office model is llama.cpp on a GPU (the sibling chartering-ml project,
-      # on :8090) and this instance has no GPU and no route to a home network, which is why
-      # this was pinned false until the cloud provider existed. There is still no PARSER_URL
-      # here, because there is still no address of the office server that would work.
+      # Reading incoming mail - the Intake tab. There is NO local model here: the office one is
+      # llama.cpp on a GPU (the sibling chartering-ml project, on :8090), and this instance has
+      # no GPU and no route to a home network. So PARSER_ENABLED is false - which also means no
+      # timers here: no sweep, no reconcile pass, no board fetch. The office runs those on the
+      # same rows.
       #
-      # PARSER_PROVIDER=CLOUD is what makes it possible, and it is pinned for the reason
-      # MAIL_REPLY_PROVIDER is: the office and this instance share one database and so one
-      # app_settings table, and need opposite answers. What the cloud model is called - its
-      # address, model and API key - is the installation's and lives on the Settings tab;
-      # the key is encrypted under CREDENTIALS_KEY, so it decrypts here only while that key
-      # is the same as the office's.
-      #
-      # CLOUD also means no timers on this instance - no sweep, no reconcile pass, no board
-      # fetch for Intake - and the tab is an administrator's: the tokens are billed against a
-      # key somebody pays for, and the office instance already runs the timed passes. An
-      # administrator reads mail here when asked: Parse now, Parse everything, or the
-      # messages picked on the Mailbox tab.
+      # What this instance offers instead is the cloud model under each person's OWN key: they
+      # type it on the Settings tab, their browser keeps it and sends it with their Intake
+      # requests, and the server never stores it. Anybody holding a key gets the Intake tab and
+      # reads when they ask - Parse now, Parse everything, or the messages picked on the Mailbox
+      # tab. What the cloud model is called (its address and name) is the installation's and
+      # lives on the Settings tab.
       #
       # The tables (parsed_emails, intake_items, cargo_sources) exist here regardless:
       # Flyway builds one schema, not one per environment.
       - key: PARSER_ENABLED
+        value: false
+      - key: PARSER_CLOUD_ENABLED
         value: true
-      - key: PARSER_PROVIDER
-        value: CLOUD
 
       # Reading a public ship database for a hull's IMO. Pinned false for the reason above
       # and one of its own: the review queue here is worked by hand on the cloud model, and the
@@ -230,13 +239,10 @@ services:
       - key: LOOKUP_ENABLED
         value: false
 
-      # The Feed tab's fetching and summarising. Pinned false for PARSER_ENABLED's reason - the
-      # summaries are written by the office model, which this instance cannot reach - and one of
-      # its own: the office instance already fetches the sources, and a second fetcher here would
-      # read the same pages twice from somebody else's server. The tab itself is NOT switched off
-      # by this: sources, topics, the prompt and every summary are rows in the shared database,
-      # and this instance shows and edits them.
-      - key: FEED_ANALYSIS_ENABLED
+      # The Feed: switched off for now, here and at the office. Off, the tab is gone and so are
+      # its fetching and summaries; the board list and a stored post stay readable, because
+      # Intake and the cargo drawer use them. The boards Intake reads are fetched by the office.
+      - key: FEED_ENABLED
         value: false
 
   # ---------------------------------------------------------------------------

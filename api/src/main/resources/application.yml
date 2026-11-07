@@ -89,6 +89,12 @@ server:
   # choose; PORT is that instruction. Unset — compose, local dev — it stays on 8081 and
   # nothing about the existing setup changes.
   port: ${PORT:8081}
+  # Tomcat's default is 200 request threads, each with its own stack. A desk is a handful of
+  # people, and on Render's 512 MB instance those stacks are memory the heap needs; render.yaml
+  # sets 20. Requests beyond the pool queue rather than fail.
+  tomcat:
+    threads:
+      max: ${TOMCAT_MAX_THREADS:200}
 
 springdoc:
   swagger-ui:
@@ -197,20 +203,20 @@ chartering:
     retry-backoff-ms: ${MAIL_RETRY_BACKOFF_MS:10000}
     abort-after-consecutive-failures: ${MAIL_ABORT_AFTER_FAILURES:5}
     log-file: ${MAIL_LOG_FILE:logs/campaign-current.log}
-    # Which transport a REPLY leaves by - blank (the default) means the mailbox over SMTP,
-    # BREVO means Brevo's API. Only a host that blocks outbound SMTP needs the second; see
-    # MailCampaignProperties#replyProvider for why this is an environment variable and not
-    # a Settings-tab option.
+    # Whether this host can open outbound SMTP at all. True (Render's free instances, which
+    # drop 25/465/587) sends replies AND circulars through Brevo's API; see
+    # MailCampaignProperties#smtpBlocked for why this is an environment variable and not a
+    # Settings-tab option.
     #
     # This line is not optional decoration, and leaving it out is a bug that hides well.
-    # Spring's relaxed binding maps CHARTERING_MAIL_REPLY_PROVIDER onto this property by
-    # itself, but MAIL_REPLY_PROVIDER is a name of our own choosing and nothing connects
+    # Spring's relaxed binding maps CHARTERING_MAIL_SMTP_BLOCKED onto this property by
+    # itself, but SMTP_BLOCKED is a name of our own choosing and nothing connects
     # the two except this reference. Without it the field simply stays null, the parse
     # falls back to SMTP exactly as it would for an unset value, and the deployment sends
     # over a port its host drops - with no warning anywhere, because a null here is
     # indistinguishable from a deliberate default. Every key in this block is wired the
     # same way for the same reason.
-    reply-provider: ${MAIL_REPLY_PROVIDER:}
+    smtp-blocked: ${SMTP_BLOCKED:false}
 
   # Reading the mailbox: the Mailbox tab's IMAP sync. Separate from the sending block
   # above because reading and sending fail independently — a broken IMAP host must not
@@ -245,11 +251,11 @@ chartering:
   # opening positions. A workbench, not a desk tool: it accumulates a corpus, it is worked
   # through in long sittings, and what comes out of it is a file that goes somewhere else.
   #
-  # OFF BY DEFAULT AND OFF ON THE HOSTED DEPLOYMENT ON PURPOSE (render.yaml sets it false
-  # explicitly). None of the above wants to happen on a free instance that sleeps after
-  # fifteen minutes idle. The schema is the same everywhere — Flyway builds one schema, not
-  # one per environment — so turning this on anywhere is this one variable and a restart,
-  # and with it off the tab is absent from the UI and every endpoint behind it answers 404.
+  # Off by default, ON in compose and in render.yaml: the corpus is a table in the shared
+  # database rather than state on an instance, so a sleeping free instance costs a cold start
+  # in front of a labelling session and nothing else. The schema is the same everywhere —
+  # Flyway builds one schema, not one per environment — and with this off the tab is absent
+  # from the UI and every endpoint behind it answers 404.
   analysis:
     enabled: ${ANALYSIS_ENABLED:false}
     max-body-chars: ${ANALYSIS_MAX_BODY_CHARS:20000}
@@ -260,22 +266,23 @@ chartering:
   # (llama.cpp with a finetuned Qwen3-4B behind a JSON schema, on :8090). Everything here
   # is the address of that endpoint and what to do when it does not answer.
   #
-  # OFF BY DEFAULT AND OFF ON RENDER, for a harder reason than the analysis workbench: the
-  # hosted instance has no GPU and cannot reach a workstation on a home network, so a
-  # deployment with this on would spend a request every sweep proving it. Off, the tab is
-  # absent from the UI and every endpoint behind it answers 404.
+  # Two routes, each its own switch. The local model is off by default and off on Render, which
+  # has no GPU and no route to one. The cloud route (a person's own key) is what Render offers
+  # instead. With neither on, the tab is absent from the UI and every endpoint behind it
+  # answers 404.
   #
   # How often the sweep runs and how many messages it takes are NOT here. They live in
   # app_settings and on the Settings tab, because they are knobs turned while watching the
   # queue and an environment variable is a redeploy - the same argument that put the
   # circular provider there. See ParserSettings.
   parser:
+    # The local model (the office GPU at the url below) and its timers.
     enabled: ${PARSER_ENABLED:false}
-    # LOCAL (the office GPU at the url below) or CLOUD (a hosted OpenAI-compatible API whose
-    # address, model and key are on the Settings tab). A fact about the deployment, not a
-    # setting: the office and Render share app_settings and need opposite answers. CLOUD runs
-    # no timers and is open to administrators only - see ParserProperties.provider.
-    provider: ${PARSER_PROVIDER:LOCAL}
+    # A hosted OpenAI-compatible model, read with each person's own API key, which their browser
+    # holds and sends with their Intake requests; the server never stores it, and nothing reads
+    # with it on a timer. Its address and model name are on the Settings tab. The office offers
+    # both (a person picks one); Render offers only this - see ParserProperties.
+    cloud-enabled: ${PARSER_CLOUD_ENABLED:false}
     cloud-url: ${PARSER_CLOUD_URL:https://api.groq.com/openai/v1/chat/completions}
     cloud-model: ${PARSER_CLOUD_MODEL:llama-3.3-70b-versatile}
     cloud-max-tokens: ${PARSER_CLOUD_MAX_TOKENS:4096}
@@ -322,7 +329,10 @@ chartering:
   # The context window, answer sizes, lookback, call cap, fetch interval and both prompts are NOT
   # here: they are runtime settings (FeedSettings), turned while reading the output.
   feed:
-    analysis-enabled: ${FEED_ANALYSIS_ENABLED:false}
+    # The Feed tab, its fetching of every enabled source and its summaries. Off in compose and
+    # on Render for now. Off, the boards a desk reads into Intake are still fetched on the
+    # local deployment (ParserAvailability.runsTimers), and only those.
+    enabled: ${FEED_ENABLED:false}
     # The model that writes summaries, as a default the Settings tab can override. Blank means
     # the parser's endpoint - which works, but that model is an extraction finetune: measured on
     # real feed items it missed facts and wrote rates nobody quoted. A general instruct model on

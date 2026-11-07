@@ -244,7 +244,9 @@ public class ParserSweepService {
             }
             throw new IllegalStateException("A sweep is already running.");
         }
-        worker.submit(() -> sweepIfIdle(onlyTenant, mode, mailMessageIds));
+        // The route travels with the run: "Parse everything" from a browser holding a key reads
+        // with that key on the worker, and a timer tick carries the local one.
+        worker.submit(ParserRoute.carry(() -> sweepIfIdle(onlyTenant, mode, mailMessageIds)));
     }
 
     public boolean isRunning() {
@@ -504,8 +506,11 @@ public class ParserSweepService {
         feedItems.unparsedForIntake(values.receivedSince(), PageRequest.of(0, batch))
                 .forEach(i -> queue.add(Job.post(i.getId())));
 
+        // Mail is counted from when it reached us, within a floor of twice the lookback (see
+        // ParsedEmailRepository#unparsed). Both cutoffs come from this one snapshot, as the header does.
         if (queue.size() < batch) {
-            parsedEmails.unparsed(values.receivedSince(), PageRequest.of(0, batch - queue.size()))
+            parsedEmails.unparsed(values.receivedSince(), values.receivedFloor(),
+                            PageRequest.of(0, batch - queue.size()))
                     .forEach(m -> queue.add(Job.mail(m.getId())));
         }
 

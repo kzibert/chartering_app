@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useSendingToday } from '../../api/hooks';
 import {
   Alert,
   App,
@@ -23,6 +24,7 @@ import {
 import {
   BankOutlined,
   CheckCircleOutlined,
+  ClockCircleOutlined,
   DeleteOutlined,
   EditOutlined,
   FilterOutlined,
@@ -48,9 +50,8 @@ import {
   useMailboxStatus,
   useMailboxSync,
 } from '../../mailbox/store';
-import { useIntakeMutations, useIntakeStatus } from '../../intake/store';
-import { useQuery } from '@tanstack/react-query';
-import { circulationsApi } from '../../api/circulations';
+import { useIntakeMutations } from '../../intake/store';
+import { useIntakeOn } from '../../capabilities/store';
 import { SendingTodayTags } from '../../components/SendingToday';
 import { usePersistedState } from '../../components/usePersistedState';
 import { useTableControls } from '../../components/useTableControls';
@@ -61,6 +62,7 @@ import CompanyForm from '../companies/CompanyForm';
 import UnconfirmedCompanyMark from './UnconfirmedCompanyMark';
 import MessageDrawer from './MessageDrawer';
 import FoldersRulesModal from './FoldersRulesModal';
+import QueueResultList, { queueNeedsReport } from './QueueResultList';
 import type {
   CirculationToday,
   CompanyResponse,
@@ -124,7 +126,7 @@ const CLAMP: React.CSSProperties = {
  * and it should cost what it costs only when it was asked for.
  */
 export default function MailboxPage() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [filters, setFilters] = usePersistedState<Filters>('mailbox', DEFAULTS);
   // Typed but not yet searched. Kept apart from filters.search so that every keystroke is
   // not a query against the whole mail table — the search runs on Enter or the button.
@@ -149,14 +151,13 @@ export default function MailboxPage() {
   const status = useMailboxStatus();
   const sync = useMailboxSync();
   const { setReadBulk, markAllRead, moveBulk } = useMailMessageMutations();
-  // Shared with the Intake tab and the shell, so the button appears with the tab and not
-  // before. Absent on a deployment without the parser, where it is simply not offered.
-  const intakeStatus = useIntakeStatus();
-  const intakeOn = intakeStatus.data?.enabled === true;
-  const { parseMessages } = useIntakeMutations();
+  // The same rule the shell draws the Intake tab by, so the button appears with the tab and not
+  // before: a local model, or a cloud key in this browser.
+  const intakeOn = useIntakeOn();
+  const { parseMessages, queueMessages } = useIntakeMutations();
   // The same key the Circulars and Settings tabs read the day's volume from, so a reply
   // sent here moves the number there without either tab counting anything itself.
-  const todayQ = useQuery({ queryKey: ['circulations', 'today'], queryFn: circulationsApi.today });
+  const todayQ = useSendingToday();
 
   /**
    * Which mail is being looked at — the rail's folder and the search box, and nothing about
@@ -312,6 +313,35 @@ export default function MailboxPage() {
         const detail = (e as { response?: { data?: { message?: string } } })?.response?.data
           ?.message;
         message.error(detail || 'These messages could not be queued for reading.');
+      },
+    });
+
+  // Unlike Read now this never meets a running sweep: it only writes the queue, which the next
+  // sweep reads, so it works while a run is going. A failure is said as the server words it.
+  const queuePicked = () =>
+    queueMessages.mutate({ mailMessageIds: picked }, {
+      onSuccess: (r) => {
+        setPicked([]);
+        const { messages } = r;
+        const added = messages.filter((e) => e.outcome === 'QUEUED' || e.outcome === 'REQUEUED').length;
+        const alreadyThere = messages.filter((e) => e.outcome === 'ALREADY_QUEUED').length;
+        if (!queueNeedsReport(messages)) {
+          const there = alreadyThere > 0 ? `, ${alreadyThere} already there` : '';
+          message.success(`${added} added to the waiting list${there}`);
+          return;
+        }
+        // Something was left out, and "1 skipped" does not say which one or why, so every picked
+        // email is listed with its own reason.
+        const notAdded = messages.length - added - alreadyThere;
+        modal.info({
+          title: `${added} added to the waiting list, ${notAdded} not added`,
+          content: <QueueResultList entries={messages} />,
+        });
+      },
+      onError: (e: unknown) => {
+        const detail = (e as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message;
+        message.error(detail || 'These messages could not be added to the waiting list.');
       },
     });
 
@@ -651,27 +681,50 @@ export default function MailboxPage() {
                   </Button>
                 </Dropdown>
                 {intakeOn && (
-                  // The span keeps the tooltip alive while the button is disabled, which
-                  // swallows the pointer events a tooltip needs.
-                  <Tooltip
-                    title={
-                      picked.length > READ_LIMIT
-                        ? `Pick at most ${READ_LIMIT} at a time — this is ${picked.length}`
-                        : 'Read these messages into Intake now, whatever the lookback says'
-                    }
-                  >
-                    <span>
-                      <Button
-                        size="small"
-                        icon={<ThunderboltOutlined />}
-                        loading={parseMessages.isPending}
-                        disabled={picked.length > READ_LIMIT}
-                        onClick={readPicked}
-                      >
-                        Read into Intake
-                      </Button>
-                    </span>
-                  </Tooltip>
+                  // Two small buttons rather than a split button: read now and read later are
+                  // equal choices, and a menu would hide one of them. Both wrap with
+                  // the row on a phone like the rest of it. The span keeps each tooltip alive
+                  // while its button is disabled, which swallows the pointer events it needs.
+                  <>
+                    <Tooltip
+                      title={
+                        picked.length > READ_LIMIT
+                          ? `Pick at most ${READ_LIMIT} at a time — this is ${picked.length}`
+                          : 'Read these messages into Intake now, whatever the lookback says'
+                      }
+                    >
+                      <span>
+                        <Button
+                          size="small"
+                          icon={<ThunderboltOutlined />}
+                          loading={parseMessages.isPending}
+                          disabled={picked.length > READ_LIMIT}
+                          onClick={readPicked}
+                        >
+                          Read now
+                        </Button>
+                      </span>
+                    </Tooltip>
+                    <Tooltip
+                      title={
+                        picked.length > READ_LIMIT
+                          ? `Pick at most ${READ_LIMIT} at a time — this is ${picked.length}`
+                          : 'Put these messages on the Intake waiting list; the next sweep reads them, whatever their age'
+                      }
+                    >
+                      <span>
+                        <Button
+                          size="small"
+                          icon={<ClockCircleOutlined />}
+                          loading={queueMessages.isPending}
+                          disabled={picked.length > READ_LIMIT}
+                          onClick={queuePicked}
+                        >
+                          Add to waiting list
+                        </Button>
+                      </span>
+                    </Tooltip>
+                  </>
                 )}
                 <Button size="small" type="text" onClick={() => setPicked([])}>
                   Clear
