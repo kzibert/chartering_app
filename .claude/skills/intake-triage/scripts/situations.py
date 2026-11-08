@@ -16,6 +16,7 @@ SITUATIONS = {
     "PARSE_FIELD_MISREAD": ("A value landed in the wrong field (build place as flag, note as gear)", "parser prompt / extraction schema"),
     "PARSE_UNIT_WRONG": ("Capacity read in the wrong unit", "parser; CapacityUnits"),
     "PARSE_SOURCE_TYPO": ("The text itself carries an impossible figure (typo in the email)", "VesselFieldDiff plausibility bands"),
+    "PARSE_MASKED_NAME": ("Broker masks the ship as initials ('FG', 'X I'); not a name to create a hull under", "IntakeResolver.isPlaceholderName; parser prompt"),
     "PARSE_PERSON_IS_FIRM": ("The firm's own name read as a person", "CompanyStyleReader"),
     "PARSE_COMPANY_FIELDS": ("Signature block read into the wrong company fields", "CompanyStyleReader / parser company section"),
     # comparison and vocabulary
@@ -29,6 +30,7 @@ SITUATIONS = {
     "QUEUE_ALREADY_SETTLED": ("Answered or made moot by the automatic pass before review", "reconcile / reweigh timing"),
     "QUEUE_NOTHING_NEW": ("Everything the item says is already on file", "aggregate compare before raising"),
     # the web lookup
+    "MATCH_NAME_REUSED": ("Matched by a name (current or former) another ship now carries; lookup names her IMO otherwise, the email describes a different hull", "IntakeResolver name tier; lookup name disagreement"),
     "LOOKUP_CORROBORATED_CREATE": ("Lookup corroborated, IMO not on file: create her with it", "auto-create rule (needs a decision)"),
     "LOOKUP_IMO_ON_FILE": ("Lookup IMO already on a hull here: link", "IntakeService.reconcileIdentifiedHulls"),
     "LOOKUP_AGREES_RECORD": ("Corroborated lookup agrees with the record against the email", "VesselReviewPolicy: minor / auto-keep"),
