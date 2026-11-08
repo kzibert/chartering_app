@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * What the model gives back, as Java.
@@ -64,6 +65,27 @@ public record Extraction(
      */
     public static String text(String value) {
         return value == null || value.isBlank() ? null : value.strip();
+    }
+
+    /**
+     * MV, M/V, M.V., MT, MS, SS and their spellings, standing alone in front of a name.
+     *
+     * <p>Narrower than {@code VesselNameQuery}'s prefix on purpose. That one shapes a search
+     * and may drop TUG or BARGE to find more; this one decides what is stored as her name, and
+     * a tug called "TUG ATLAS" on her papers keeps it. Anchored and ended by a word boundary,
+     * so a name that merely starts with the letters ("MVK ATLANTIC", "MTS VALOUR") is untouched.
+     */
+    private static final Pattern VESSEL_PREFIX = Pattern.compile(
+            "^\\s*(?:m[./\\s]?[vts]|s[./\\s]?s)\\b[\\s./:-]*", Pattern.CASE_INSENSITIVE);
+
+    /**
+     * A vessel's name with its type prefix taken off, or the name as given when the prefix is
+     * all there is - a reading called just "MV" is better kept than turned into no ship.
+     */
+    public static String vesselName(String raw) {
+        if (raw == null) return null;
+        String cleaned = VESSEL_PREFIX.matcher(raw).replaceFirst("").strip();
+        return cleaned.isEmpty() ? raw : cleaned;
     }
 
     /**
@@ -161,6 +183,23 @@ public record Extraction(
             String lastCargo,
             String cargoPreferences,
             String notes) {
+
+        /**
+         * The name without the "MV" in front of it, from the moment it is read.
+         *
+         * <p>A model (the hosted ones above all) hands back "MV Queen Vivian" or "M/V DOLPHIN
+         * 505" as the name, and the prefix is not part of it: it is what the ship is, not what
+         * she is called. Left on, it reached everything a name reaches - the exact-name match
+         * found nothing, so a hull on file came back as a new ship; a hull matched by IMO raised
+         * a rename row "DOLPHIN 505 -> M/V DOLPHIN 505" for a person to decline; and a hull
+         * created from the reading was stored under it. Cleaning it here, in the record, rather
+         * than at each of those places is what makes it one rule: the sweep, the paste and a
+         * stored payload read back all deserialise through this constructor.
+         * {@code raw_json} keeps the model's own string, so what the model said is still on file.
+         */
+        public ExtractedVessel {
+            name = vesselName(name);
+        }
 
         /** A position with no ship on it cannot be filed against anything. */
         public boolean isUsable() {
