@@ -23,6 +23,10 @@ import {
   KeyOutlined,
   SafetyOutlined,
   ApartmentOutlined,
+  ClusterOutlined,
+  DatabaseOutlined,
+  FundOutlined,
+  NotificationOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -85,44 +89,62 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   // asked for is hidden behind the thing you asked for it from.
   useEffect(() => setNavOpen(false), [location.pathname]);
 
-  const items = [
+  const intakePending = intakeOn ? intake.data?.pendingItems ?? 0 : 0;
+
+  // Fourteen tabs in one column was a list to read rather than a menu to use, so the work is
+  // grouped by what it is about — the ships, the firms and people, the mail going in and out,
+  // the machine reading of it — and only the two places a day starts stay on their own. The
+  // routes did not move: a group is a heading, never a page, and every URL still lands where
+  // it did (KEYS below is unchanged for that reason).
+  const items: NavEntry[] = [
     { key: '/', icon: <DashboardOutlined />, label: 'Dashboard' },
     // The trading tabs sit above the record tabs because that is the order of the day:
     // cargoes and positions arrive, they get matched, and the vessel and company records
     // are what you go and read when one of them raises a question.
     { key: '/cargoes', icon: <InboxOutlined />, label: 'Cargoes' },
-    { key: '/open-fleet', icon: <CompassOutlined />, label: 'Open fleet' },
-    { key: '/vessels', icon: <ContainerOutlined />, label: 'Vessels' },
-    { key: '/companies', icon: <BankOutlined />, label: 'Companies' },
-    { key: '/people', icon: <TeamOutlined />, label: 'People & contacts' },
-    {
-      key: '/circulation-lists',
-      icon: <UnorderedListOutlined />,
-      // The badge counts the current list specifically — that is what the Circulars tab
-      // will send to, so it is the number worth carrying in the nav.
-      label: (
-        <span>
-          Circulation lists
-          {entries.length > 0 && (
-            <Badge count={entries.length} size="small" style={{ marginInlineStart: 8 }} />
-          )}
-        </span>
-      ),
-    },
-    { key: '/circulars', icon: <SendOutlined />, label: 'Circulars' },
-    {
-      key: '/mailbox',
-      icon: <MailOutlined />,
-      // Unread mail is the one count in this app that means "somebody is waiting for you",
-      // so it is worth carrying in the nav the way the current list's size is. The query is
-      // the mailbox status endpoint the tab already polls, so this costs no extra request.
-      label: (
-        <span>
-          Mailbox
-          {unread > 0 && <Badge count={unread} size="small" style={{ marginInlineStart: 8 }} />}
-        </span>
-      ),
-    },
+    navGroup('group:vessels', <ContainerOutlined />, 'Vessels', [
+      { key: '/open-fleet', icon: <CompassOutlined />, label: 'Open fleet' },
+      // "Fleet" here, because the group above it is called Vessels; the page and the phone's
+      // bottom bar still call it Vessels, where nothing beside it shares the name.
+      { key: '/vessels', icon: <DatabaseOutlined />, label: 'Fleet' },
+    ]),
+    navGroup('group:network', <ClusterOutlined />, 'Network', [
+      { key: '/companies', icon: <BankOutlined />, label: 'Companies' },
+      { key: '/people', icon: <TeamOutlined />, label: 'People & contacts' },
+    ]),
+    // The group repeats the unread count its Mailbox entry carries, so a collapsed group still
+    // says somebody is waiting. The list size stays on its own entry only: it is a working
+    // number, not a waiting one.
+    navGroup('group:mail', <NotificationOutlined />, 'Mail & circulars', [
+      {
+        key: '/mailbox',
+        icon: <MailOutlined />,
+        // Unread mail is the one count in this app that means "somebody is waiting for you",
+        // so it is worth carrying in the nav the way the current list's size is. The query is
+        // the mailbox status endpoint the tab already polls, so this costs no extra request.
+        label: (
+          <span>
+            Mailbox
+            {unread > 0 && <Badge count={unread} size="small" style={{ marginInlineStart: 8 }} />}
+          </span>
+        ),
+      },
+      { key: '/circulars', icon: <SendOutlined />, label: 'Circulars' },
+      {
+        key: '/circulation-lists',
+        icon: <UnorderedListOutlined />,
+        // The badge counts the current list specifically — that is what the Circulars tab
+        // will send to, so it is the number worth carrying in the nav.
+        label: (
+          <span>
+            Circulation lists
+            {entries.length > 0 && (
+              <Badge count={entries.length} size="small" style={{ marginInlineStart: 8 }} />
+            )}
+          </span>
+        ),
+      },
+    ], unread),
     // Intake exists where there is a local model, or for a person whose browser holds a cloud
     // key (Settings > Your parser) - the hosted instance has only the second. Analysis is on
     // both deployments. An entry that led to a page explaining why it does nothing is worse
@@ -132,41 +154,55 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     // the user. A corpus is worked through when there is time; a review queue is somebody
     // waiting for an answer before a position can be trusted — the same reason the mailbox
     // carries its unread count. The query is the status endpoint the tab already polls, so
-    // the badge costs no extra request.
-    ...(intakeOn
-      ? [{
-          key: '/intake',
-          icon: <RobotOutlined />,
-          label: (
-            <span>
-              Intake
-              {(intake.data?.pendingItems ?? 0) > 0 && (
-                <Badge
-                  count={intake.data?.pendingItems}
-                  size="small"
-                  style={{ marginInlineStart: 8 }}
-                />
-              )}
-            </span>
-          ),
-        }]
-      : []),
-    ...(caps?.analysis
-      ? [{ key: '/analysis', icon: <ExperimentOutlined />, label: 'Analysis' }]
-      : []),
-    // Switched off for now (FEED_ENABLED). The boards Intake reads are managed on the Intake tab.
-    ...(caps?.feed ? [{ key: '/feed', icon: <ReadOutlined />, label: 'Feed' }] : []),
-    // Local deployments only, like Intake and Analysis: its answers need the local model and the
-    // embedding server, and neither runs on the hosted instance. Placed after Feed because the
-    // desk's text it searches is what Feed and Intake collect. On a phone it sits in the More drawer.
-    ...(ask.data?.enabled
-      ? [{ key: '/ask', icon: <MessageOutlined />, label: 'Ask the desk' }]
-      : []),
-    // Last in the list, and not in the bottom bar on a phone: the change log is where you
+    // the badge costs no extra request — and the group carries it too, for the reason the
+    // Mail group carries the unread count.
+    //
+    // Every entry here is optional, so the group may be empty (not drawn) or hold one entry
+    // (drawn as that entry, not a submenu of one): navGroup decides.
+    navGroup('group:analysis', <FundOutlined />, 'Analysis', [
+      ...(intakeOn
+        ? [{
+            key: '/intake',
+            icon: <RobotOutlined />,
+            label: (
+              <span>
+                Intake
+                {intakePending > 0 && (
+                  <Badge count={intakePending} size="small" style={{ marginInlineStart: 8 }} />
+                )}
+              </span>
+            ),
+          }]
+        : []),
+      // "Corpus" in the menu, so the group and its entry do not share a name; the page keeps
+      // its own title.
+      ...(caps?.analysis
+        ? [{ key: '/analysis', icon: <ExperimentOutlined />, label: 'Corpus' }]
+        : []),
+      // Local deployments only, like Intake: its answers need the local model and the
+      // embedding server, and neither runs on the hosted instance.
+      ...(ask.data?.enabled
+        ? [{ key: '/ask', icon: <MessageOutlined />, label: 'Ask the desk' }]
+        : []),
+      // Switched off for now (FEED_ENABLED). The boards Intake reads are managed on the Intake tab.
+      ...(caps?.feed ? [{ key: '/feed', icon: <ReadOutlined />, label: 'Feed' }] : []),
+    ], intakePending),
+    // Last in the list, ungrouped, and not in the bottom bar on a phone: the change log is where you
     // go when something is already wrong, not somewhere work gets done. It sits above
     // Settings because it is about the data rather than about the application.
     { key: '/history', icon: <HistoryOutlined />, label: 'History' },
-  ];
+  ].filter((e): e is NavEntry => e !== null);
+
+  // The group holding the current page opens by itself, on load and on every navigation, so
+  // the highlighted entry is never hidden inside a closed one. Groups the user opened stay
+  // open; only the current one is added. Keyed on the group rather than the path, because the
+  // optional groups appear only once /capabilities answers — a deep link to /intake has to
+  // open Analysis when Analysis turns up, not only when the path changes.
+  const selectedGroup = items.find((e) => 'children' in e && e.children.some((c) => c.key === selected))?.key;
+  const [openKeys, setOpenKeys] = useState<string[]>(selectedGroup ? [selectedGroup] : []);
+  useEffect(() => {
+    if (selectedGroup) setOpenKeys((keys) => (keys.includes(selectedGroup) ? keys : [...keys, selectedGroup]));
+  }, [selectedGroup]);
 
   // Settings sits in its own menu pinned to the foot of the sidebar rather than trailing
   // the list: it is not a place you work, it is where you go when something about how the
@@ -215,6 +251,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       <MobileLayout
         selected={selected}
         items={items}
+        openKeys={openKeys}
+        setOpenKeys={setOpenKeys}
         settingsItems={settingsItems}
         navOpen={navOpen}
         setNavOpen={setNavOpen}
@@ -256,6 +294,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             theme="dark"
             mode="inline"
             selectedKeys={[selected]}
+            openKeys={openKeys}
+            onOpenChange={setOpenKeys}
             items={items}
             onClick={(e) => navigate(e.key)}
             style={{ flex: 1, minHeight: 0, overflowY: 'auto', borderInlineEnd: 0 }}
@@ -315,6 +355,44 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 }
 
 type NavItem = { key: string; icon: ReactNode; label: ReactNode };
+type NavGroup = NavItem & { children: NavItem[] };
+type NavEntry = NavItem | NavGroup;
+
+/**
+ * A sidebar group, or less than one when there is not enough to group.
+ *
+ * Its entries arrive already filtered by what this deployment and this person have, so the
+ * group follows: none visible draws nothing, and one visible draws that entry in the group's
+ * place — a submenu holding a single item is a click that only ever reveals one answer.
+ * `badge` is a count an entry inside carries, repeated on the heading so a closed group
+ * still shows it; with one entry drawn directly the entry's own badge is already showing.
+ */
+function navGroup(
+  key: string,
+  icon: ReactNode,
+  title: string,
+  children: NavItem[],
+  badge = 0,
+): NavEntry | null {
+  if (children.length === 0) return null;
+  if (children.length === 1) return children[0];
+  return {
+    key,
+    icon,
+    label: (
+      <span>
+        {title}
+        {badge > 0 && <Badge count={badge} size="small" style={{ marginInlineStart: 8 }} />}
+      </span>
+    ),
+    children,
+  };
+}
+
+/** Every page entry, groups opened up: what the phone's bottom bar picks its tabs from. */
+function leaves(entries: NavEntry[]): NavItem[] {
+  return entries.flatMap((e) => ('children' in e ? e.children : [e]));
+}
 
 /**
  * The phone shell: a short header, a bottom tab bar, and the full menu in a drawer.
@@ -329,6 +407,8 @@ function MobileLayout({
   children,
   selected,
   items,
+  openKeys,
+  setOpenKeys,
   settingsItems,
   navOpen,
   setNavOpen,
@@ -341,7 +421,9 @@ function MobileLayout({
 }: {
   children: ReactNode;
   selected: string;
-  items: NavItem[];
+  items: NavEntry[];
+  openKeys: string[];
+  setOpenKeys: (keys: string[]) => void;
   settingsItems: NavItem[];
   navOpen: boolean;
   setNavOpen: (open: boolean) => void;
@@ -352,7 +434,10 @@ function MobileLayout({
   changePassword: () => void;
   moreDot: boolean;
 }) {
-  const tabs = TAB_KEYS.map((k) => items.find((i) => i.key === k)!).filter(Boolean);
+  // The bar is unchanged by the grouping: its four tabs are found among the entries inside
+  // the groups, and only the drawer below shows the groups themselves.
+  const all = leaves(items);
+  const tabs = TAB_KEYS.map((k) => all.find((i) => i.key === k)!).filter(Boolean);
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -426,6 +511,8 @@ function MobileLayout({
         <Menu
           mode="inline"
           selectedKeys={[selected]}
+          openKeys={openKeys}
+          onOpenChange={setOpenKeys}
           items={items}
           onClick={(e) => navigate(e.key)}
           style={{ borderInlineEnd: 0 }}
