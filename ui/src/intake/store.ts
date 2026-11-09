@@ -148,6 +148,20 @@ export const useParserSettings = (enabled: boolean) =>
   });
 
 /**
+ * The cloud provider's chat models for the Settings card's picker. Under the settings key, so a
+ * save of the cloud address asks the new address. Keyed by the address and the last characters of
+ * the key, never the key itself, which would otherwise sit in the query cache's devtools view.
+ * Cached ten minutes: the list changes when the provider ships a model, not while a form is open.
+ */
+export const useCloudModels = (apiKey: string | undefined, cloudUrl: string | undefined) =>
+  useQuery({
+    queryKey: [...intakeKeys.settings, 'cloud-models', cloudUrl, apiKey?.slice(-6)] as const,
+    queryFn: () => intakeApi.cloudModels(apiKey as string),
+    enabled: !!apiKey && !!cloudUrl,
+    staleTime: 10 * 60_000,
+  });
+
+/**
  * The company question waiting about one firm, for its own record to offer. Under the intake
  * key, so answering the item anywhere takes the button away.
  */

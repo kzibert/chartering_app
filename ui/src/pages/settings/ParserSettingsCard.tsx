@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   App,
   Alert,
+  AutoComplete,
   Button,
   Card,
   Col,
@@ -23,6 +24,7 @@ import {
 import dayjs from 'dayjs';
 import {
   useIntakeMutations,
+  useCloudModels,
   useIntakeStatus,
   useParserSettings,
   useSweep,
@@ -82,6 +84,11 @@ export default function ParserSettingsCard() {
   // Which model reads this person's mail: the cloud one when their browser holds a key and they
   // chose it (Settings > Your parser), else the office one.
   const cloud = readsWithCloud(route);
+  // The provider's own list for the picker, asked with this browser's key whichever model the
+  // person reads with. No key, no list, and the field is typed as before.
+  const cloudModels = useCloudModels(enabled ? route.apiKey : undefined, settings?.cloudUrl);
+  const [modelSearch, setModelSearch] = useState('');
+  const typedCloudModel = Form.useWatch('cloudModel', form);
 
   // Reset from the server's answer so a save or a reset leaves the fields showing what is
   // actually stored, not what was typed.
@@ -355,16 +362,44 @@ export default function ParserSettingsCard() {
               label="Cloud model name"
               extra={
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  Sent with every request. <b>Clear it</b> to go back to{' '}
-                  <code>{settings?.defaultCloudModel}</code>.
+                  Sent with every request. Pick one from the provider's list or type a name.{' '}
+                  <b>Clear it</b> to go back to <code>{settings?.defaultCloudModel}</code>.
+                  <CloudModelsNote
+                    hasKey={!!route.apiKey}
+                    loading={cloudModels.isFetching}
+                    error={cloudModels.data?.error}
+                    count={cloudModels.data?.models.length}
+                    listed={
+                      !typedCloudModel?.trim() ||
+                      cloudModels.data?.models.some((m) => m.id === typedCloudModel.trim()) !== false
+                    }
+                  />
                 </Typography.Text>
               }
             >
-              <Input
+              <AutoComplete
                 placeholder={settings?.defaultCloudModel}
                 allowClear
-                autoComplete="off"
-                spellCheck={false}
+                // Filtered by what was typed since focus, not by the value already in the field:
+                // the saved name would otherwise hide every other model until it was cleared.
+                filterOption={false}
+                onSearch={setModelSearch}
+                onFocus={() => setModelSearch('')}
+                options={(cloudModels.data?.models ?? [])
+                  .filter((m) => !modelSearch || m.id.toLowerCase().includes(modelSearch.toLowerCase()))
+                  .map((m) => ({
+                    value: m.id,
+                    label: (
+                      <Space size={6}>
+                        {m.id}
+                        {m.contextWindow != null && (
+                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                            {Math.round(m.contextWindow / 1024)}k context
+                          </Typography.Text>
+                        )}
+                      </Space>
+                    ),
+                  }))}
               />
             </Form.Item>
           </Col>
@@ -453,6 +488,48 @@ export default function ParserSettingsCard() {
         <code>.env</code>, not here.
       </Typography.Paragraph>
     </Card>
+  );
+}
+
+/**
+ * What the cloud model picker could or could not list, under the field.
+ *
+ * A name missing from the list is a warning rather than an error: providers retire models, but a
+ * key on a tier that lists fewer models than another person's may still be the odd one out.
+ */
+function CloudModelsNote({
+  hasKey,
+  loading,
+  error,
+  count,
+  listed,
+}: {
+  hasKey: boolean;
+  loading: boolean;
+  error?: string;
+  count?: number;
+  listed: boolean;
+}) {
+  let text: string | null;
+  let type: 'secondary' | 'warning' = 'secondary';
+  if (!hasKey) {
+    text = "Save your API key under Your parser to pick from the provider's list.";
+  } else if (loading) {
+    text = 'Asking the provider for its models…';
+  } else if (error) {
+    text = `No list: ${error}`;
+    type = 'warning';
+  } else if (count != null && !listed) {
+    text = "This name is not in the provider's list for your key, so a cloud read will probably be refused.";
+    type = 'warning';
+  } else {
+    text = count != null ? `${count} chat models offered for your key.` : null;
+  }
+  if (!text) return null;
+  return (
+    <Typography.Text type={type} style={{ fontSize: 12, display: 'block' }}>
+      {text}
+    </Typography.Text>
   );
 }
 

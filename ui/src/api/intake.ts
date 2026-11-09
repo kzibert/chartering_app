@@ -360,6 +360,19 @@ export interface ParserSettingsResponse {
   defaultCloudModel: string;
 }
 
+/** One chat model the cloud provider serves; the two figures are absent where it does not say. */
+export interface CloudModel {
+  id: string;
+  ownedBy?: string;
+  contextWindow?: number;
+}
+
+/** The cloud provider's chat models for this key, or why there are none (never an error status). */
+export interface CloudModelsResponse {
+  models: CloudModel[];
+  error?: string;
+}
+
 export interface ParserSettingsRequest {
   sweepIntervalMinutes?: number;
   sweepBatchSize?: number;
@@ -827,6 +840,17 @@ export const intakeApi = {
 
   updateSettings: (body: ParserSettingsRequest) =>
     client.put<ParserSettingsResponse>('/intake/settings', body).then((r) => r.data),
+
+  /**
+   * Sent with this browser's key whichever model the person reads with, since an administrator
+   * reading with the office model may still hold a key to list the cloud's with.
+   */
+  cloudModels: (apiKey: string) =>
+    client
+      .get<CloudModelsResponse>('/intake/settings/cloud-models', {
+        headers: { 'X-Parser-Provider': 'CLOUD', 'X-Parser-Key': apiKey },
+      })
+      .then((r) => r.data),
 
   resetSettings: () =>
     client.delete<ParserSettingsResponse>('/intake/settings').then((r) => r.data),

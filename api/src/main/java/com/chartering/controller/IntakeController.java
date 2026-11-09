@@ -2,6 +2,7 @@ package com.chartering.controller;
 
 import com.chartering.dto.ApplyLookupRequest;
 import com.chartering.dto.CargoSourceResponse;
+import com.chartering.dto.CloudModelsResponse;
 import com.chartering.dto.LinkSenderRequest;
 import com.chartering.dto.IgnoreRequest;
 import com.chartering.dto.FeedSourceResponse;
@@ -29,6 +30,7 @@ import com.chartering.model.IntakeItemStatus;
 import com.chartering.model.ParseStatus;
 import com.chartering.service.ParserSettings;
 import com.chartering.service.parser.EmailParseRunner;
+import com.chartering.service.parser.EmailParserClient;
 import com.chartering.service.parser.IntakePasteService;
 import com.chartering.service.parser.ParserAvailability;
 import com.chartering.service.parser.IntakeQueryService;
@@ -83,6 +85,7 @@ public class IntakeController {
     private final ParserSettings settings;
     private final VesselLookupService lookupService;
     private final IntakePasteService paste;
+    private final EmailParserClient parserClient;
     private final com.chartering.service.feed.FeedFetchService fetches;
 
     // ------------------------------------------------------------------ pasted text
@@ -610,6 +613,27 @@ public class IntakeController {
         return ResponseEntity.ok(toResponse(
                 settings.update(req.getSweepIntervalMinutes(), req.getSweepBatchSize(),
                         req.getSweepMaxAgeDays())));
+    }
+
+    @GetMapping("/settings/cloud-models")
+    @Operation(summary = "The chat models the cloud provider serves to the caller's key",
+            description = "Asks the cloud address in force for its /v1/models with the key this "
+                    + "request carries (X-Parser-Key), and lists the chat models in it - speech, "
+                    + "text-to-speech, moderation and inactive models left out. For the Settings "
+                    + "card to offer as choices for the cloud model name. Always 200 once Intake "
+                    + "exists: with no key, a refused key or a provider that does not answer, the "
+                    + "list is empty and error says why, because the name can still be typed.")
+    public ResponseEntity<CloudModelsResponse> cloudModels() {
+        availability.require();
+        try {
+            return ResponseEntity.ok(new CloudModelsResponse(
+                    parserClient.cloudModels().stream()
+                            .map(m -> new CloudModelsResponse.Model(m.id(), m.ownedBy(), m.contextWindow()))
+                            .toList(),
+                    null));
+        } catch (EmailParserClient.ParserUnavailableException e) {
+            return ResponseEntity.ok(new CloudModelsResponse(java.util.List.of(), e.getMessage()));
+        }
     }
 
     @DeleteMapping("/settings")
