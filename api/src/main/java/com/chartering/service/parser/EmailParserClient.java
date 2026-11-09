@@ -23,8 +23,11 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.OptionalDouble;
+import java.util.regex.Pattern;
 
 /**
  * The one thing in this application that talks to the model.
@@ -475,6 +478,84 @@ public class EmailParserClient {
             lastError = e.getMessage();
             return false;
         }
+    }
+
+    /** One model the cloud provider offers; {@code contextWindow} is null where it does not say. */
+    public record CloudModel(String id, String ownedBy, Integer contextWindow) {}
+
+    /**
+     * Ids a provider lists that answer no chat request: speech to text, text to speech, and the
+     * moderation classifiers. Groq serves all three from the same list as its chat models, and a
+     * picker offering whisper-large-v3 as the model to read a circular would be one click from
+     * every sweep failing. A name only, so a provider that lists none of them loses nothing.
+     */
+    private static final Pattern NOT_CHAT =
+            Pattern.compile("(?i)whisper|tts|guard|orpheus");
+
+    /**
+     * What the cloud provider will serve to the caller's key: its {@code /v1/models}, the call
+     * {@link #cloudReachable} already makes, read rather than discarded.
+     *
+     * <p>For the Settings card to offer as choices, so the model name is picked from what exists
+     * rather than typed from a provider's docs page and found wrong on the first sweep. Asked of
+     * the address in force, not of one the caller names: the key is the caller's own, and an
+     * endpoint that sent it wherever it was told would be a way to post it to any server.
+     *
+     * <p>Only {@code id} is part of the OpenAI shape; {@code owned_by} and Groq's
+     * {@code context_window} are read where present. Models the provider marks inactive are left
+     * out, and so are those {@link #NOT_CHAT} names.
+     *
+     * @throws ParserUnavailableException when nothing is bound to ask with, or the provider does
+     *                                    not answer with a list
+     */
+    public List<CloudModel> cloudModels() {
+        ParserRoute route = ParserRoute.current();
+        if (!route.cloud()) {
+            throw new ParserUnavailableException(
+                    "Save your API key under Your parser to list the cloud models.");
+        }
+        String models = settings.cloudEndpoint().base() + "/v1/models";
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(models))
+                    .header("Authorization", "Bearer " + route.apiKey())
+                    .timeout(Duration.ofMillis(props.getConnectTimeoutMs()))
+                    .GET().build();
+            HttpResponse<String> response =
+                    http.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (response.statusCode() / 100 != 2) {
+                throw new ParserUnavailableException(response.statusCode() == 401 || response.statusCode() == 403
+                        ? "The cloud provider refused the API key (HTTP " + response.statusCode() + ")."
+                        : "HTTP " + response.statusCode() + " from " + models + ": " + abbreviate(response.body()));
+            }
+            return readModels(json.readTree(response.body()));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ParserUnavailableException("Listing the cloud models was interrupted.", e);
+        } catch (ParserUnavailableException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ParserUnavailableException("Could not list the models at " + models + ": " + e.getMessage(), e);
+        }
+    }
+
+    /** Package-private so the filtering can be tested without a provider. */
+    static List<CloudModel> readModels(JsonNode body) {
+        JsonNode data = body == null ? null : body.get("data");
+        if (data == null || !data.isArray()) {
+            throw new ParserUnavailableException("The provider's model list was not in the expected shape.");
+        }
+        List<CloudModel> out = new ArrayList<>();
+        for (JsonNode m : data) {
+            String id = m.path("id").asText("");
+            if (id.isBlank() || NOT_CHAT.matcher(id).find()) continue;
+            if (m.has("active") && !m.path("active").asBoolean(true)) continue;
+            String owner = m.path("owned_by").asText("");
+            JsonNode window = m.get("context_window");
+            out.add(new CloudModel(id, owner.isBlank() ? null : owner,
+                    window != null && window.canConvertToInt() ? window.asInt() : null));
+        }
+        out.sort(Comparator.comparing(CloudModel::id, String.CASE_INSENSITIVE_ORDER));
+        return out;
     }
 
     /**

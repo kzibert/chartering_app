@@ -1071,7 +1071,8 @@ cloud does (Render) saving a key is what brings the Intake tab in. The cloud rou
 system prompt, user turn and few-shot turns to an OpenAI-compatible chat API (Groq by default)
 with the key as a Bearer token. What the cloud model is *called* is the installation's and lives
 on the Settings tab (`ParserSettings.cloudEndpoint`, `parser.cloudUrl`/`cloudModel`, platform
-keys). Two things differ in the request, both because a general model is not the finetune. The
+keys); the model name is picked there from the provider's own `/v1/models` as the viewer's key sees it
+(`GET /intake/settings/cloud-models`, speech and moderation models left out) or typed. Two things differ in the request, both because a general model is not the finetune. The
 schema goes into the system prompt as text, and the format is `json_object` rather than
 `json_schema`, which only some hosted models accept. The answer ceiling is
 `PARSER_CLOUD_MAX_TOKENS` (4,096), because a free tier counts the requested ceiling against its
